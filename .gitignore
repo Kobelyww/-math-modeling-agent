@@ -1,0 +1,37 @@
+# API keys & secrets
+.env
+cc_switch.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# agent_app runtime artifacts
+agent_app/output/*
+!agent_app/output/.gitkeep
+agent_app/notes/*
+!agent_app/notes/.gitkeep
+
+# data (RAG index - rebuildable)
+agent_app/data/*
+!agent_app/data/.gitkeep
+
+# other project dirs (not part of agent_app)
+Day1/
+Day2/
+FastAPI/
+DeepSeekV4Agent/
+distilled_skills/

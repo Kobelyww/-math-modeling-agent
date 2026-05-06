@@ -1,0 +1,8 @@
+langchain
+langchain-core
+langchain-deepseek
+python-dotenv
+scikit-learn
+pypdf
+jieba
+streamlit
