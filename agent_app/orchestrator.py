@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .agents import (
+    DataEngineerAgent,
     ModelerAgent,
     ProgrammerAgent,
     ReviewerAgent,
@@ -84,6 +85,7 @@ class Orchestrator:
         reviewer_llm = create_llm(settings, temperature=reviewer_temp)
 
         agents = create_agents(base_llm, reviewer_llm=reviewer_llm, max_retries=settings.max_retries)
+        self.data_engineer: DataEngineerAgent = agents["data_engineer"]
         self.modeler: ModelerAgent = agents["modeler"]
         self.programmer: ProgrammerAgent = agents["programmer"]
         self.writer: WriterAgent = agents["writer"]
@@ -104,12 +106,22 @@ class Orchestrator:
         question: str,
         top_k: int = 6,
         memory: SharedMemory | None = None,
+        enable_data_engineer: bool = False,
     ) -> WorkflowResult:
         mem = memory or SharedMemory()
         rag_ctx = self._rag_context(question, top_k)
 
+        # 数据预处理（可选）
+        data_ctx = ""
+        if enable_data_engineer:
+            data_out = self.data_engineer.invoke(
+                f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
+            )
+            mem.post("data_engineer", data_out)
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
         # 建模
-        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}")
+        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
         mem.post("modeling", model_out)
         mem.advance_round()
 
@@ -151,6 +163,19 @@ class Orchestrator:
             memory=mem,
         )
 
+    # ---- 评审辅助 ----
+
+    def _review_needs_revision(self, review_text: str, stage_name: str) -> bool:
+        """用 LLM 判断评审意见是否表明需要修改（替代关键词匹配）。"""
+        prompt = (
+            f"以下是评审专家对 {stage_name} 输出的评审意见。\n\n"
+            f"{review_text[:1500]}\n\n"
+            f"请判断：这份评审意见是否认为输出存在需要修复的实质性问题？\n"
+            f"只需回复一个词：需要修改 或 无需修改。"
+        )
+        result = self.synthesizer.invoke(prompt).strip()
+        return "无需修改" not in result
+
     # ---- 策略二：带评审反思的深度协作 ----
 
     def solve_with_review(
@@ -159,17 +184,26 @@ class Orchestrator:
         top_k: int = 6,
         max_review_rounds: int = 1,
         memory: SharedMemory | None = None,
+        enable_data_engineer: bool = False,
     ) -> WorkflowResult:
         mem = memory or SharedMemory()
         rag_ctx = self._rag_context(question, top_k)
 
+        data_ctx = ""
+        if enable_data_engineer:
+            data_out = self.data_engineer.invoke(
+                f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
+            )
+            mem.post("data_engineer", data_out)
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
         # --- 建模 + 评审循环 ---
-        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}")
+        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
         model_review = ""
         for rnd in range(max_review_rounds):
             review = self.reviewer.review("建模智能体", model_out, question)
             mem.post("reviewer(modeling)", review)
-            if "无问题" in review and rnd > 0:
+            if rnd > 0 and not self._review_needs_revision(review, "建模"):
                 break
             refine_prompt = (
                 f"任务：{question}\n\n"
@@ -189,7 +223,7 @@ class Orchestrator:
         for rnd in range(max_review_rounds):
             review = self.reviewer.review("编程智能体", prog_out, question)
             mem.post("reviewer(programming)", review)
-            if "无问题" in review and rnd > 0:
+            if rnd > 0 and not self._review_needs_revision(review, "编程"):
                 break
             refine_prompt = (
                 f"任务：{question}\n\n"
@@ -215,7 +249,7 @@ class Orchestrator:
         for rnd in range(max_review_rounds):
             review = self.reviewer.review("写作智能体", write_out, question)
             mem.post("reviewer(writing)", review)
-            if "无问题" in review and rnd > 0:
+            if rnd > 0 and not self._review_needs_revision(review, "写作"):
                 break
             refine_prompt = (
                 f"任务：{question}\n\n"
@@ -256,12 +290,21 @@ class Orchestrator:
         question: str,
         top_k: int = 6,
         memory: SharedMemory | None = None,
+        enable_data_engineer: bool = False,
     ) -> WorkflowResult:
         mem = memory or SharedMemory()
         rag_ctx = self._rag_context(question, top_k)
 
+        data_ctx = ""
+        if enable_data_engineer:
+            data_out = self.data_engineer.invoke(
+                f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
+            )
+            mem.post("data_engineer", data_out)
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
         # 建模先行（编程和写作都依赖建模结果）
-        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}")
+        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
         mem.post("modeling", model_out)
 
         # 编程和写作并行
@@ -314,11 +357,19 @@ class Orchestrator:
         on_programming_token: Callable[[str], None] | None = None,
         on_writing_token: Callable[[str], None] | None = None,
         on_synthesis_token: Callable[[str], None] | None = None,
+        enable_data_engineer: bool = False,
     ) -> WorkflowResult:
         rag_ctx = self._rag_context(question, top_k)
 
+        data_ctx = ""
+        if enable_data_engineer:
+            data_out = self.data_engineer.invoke(
+                f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
+            )
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
         model_out = self.modeler.stream(
-            f"任务：{question}\n\nRAG参考：\n{rag_ctx}",
+            f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}",
             on_token=on_modeling_token,
         )
         prog_out = self.programmer.stream(

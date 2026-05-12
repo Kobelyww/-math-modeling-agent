@@ -35,3 +35,11 @@ Day2/
 FastAPI/
 DeepSeekV4Agent/
 distilled_skills/
+
+# zhihu_fiction runtime artifacts
+zhihu_fiction/output/*
+!zhihu_fiction/output/.gitkeep
+zhihu_fiction/data/scraped/*
+!zhihu_fiction/data/scraped/.gitkeep
+zhihu_fiction/data/skills/*
+!zhihu_fiction/data/skills/.gitkeep

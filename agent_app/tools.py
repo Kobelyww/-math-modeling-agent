@@ -97,16 +97,57 @@ def list_notes() -> str:
 # ===================== Python / data tools =====================
 
 
+_SAFETY_PREAMBLE = """# --- safety preamble (auto-injected) ---
+import sys as __sys
+import os as __os
+import builtins as __builtins
+import resource as __resource
+
+# 内存限制：512 MB
+_MEM_LIMIT = 512 * 1024 * 1024
+try:
+    __resource.setrlimit(__resource.RLIMIT_AS, (_MEM_LIMIT, _MEM_LIMIT))
+except (ValueError, AttributeError):
+    pass
+
+# 限制危险操作
+__dangerous = {"os.system", "subprocess.call", "subprocess.run", "subprocess.Popen",
+               "eval", "exec", "__import__", "compile", "open"}
+__originals = {}
+for __name in __dangerous:
+    if hasattr(__builtins, __name):
+        __originals[__name] = getattr(__builtins, __name)
+        setattr(__builtins, __name,
+                lambda *a, __n=__name, **kw: (_ for _ in ()).throw(
+                    PermissionError(f"Operation blocked for safety: {__n}")))
+
+# 限制文件读写范围
+__orig_open = __builtins.open
+__allowed_dir = __os.path.abspath(".")
+def __safe_open(file, mode="r", *args, **kwargs):
+    __abspath = __os.path.abspath(file)
+    if "w" in mode and not __abspath.startswith(__allowed_dir):
+        raise PermissionError(f"Write outside sandbox blocked: {file}")
+    return __orig_open(file, mode, *args, **kwargs)
+__builtins.open = __safe_open
+# --- end safety preamble ---
+
+"""
+
+
 @tool
 def python_exec(code: str) -> str:
     """Execute Python code in a sandbox subprocess and return the output.
     Use this to run calculations, test algorithms, generate plots, or
     verify a code snippet. Prints to stdout/stderr are captured.
-    The code runs with a 30-second timeout.
+
+    Safety: memory capped at 512MB, dangerous builtins blocked, file writes
+    restricted to sandbox directory. Network access is not disabled —
+    do NOT use in untrusted multi-user environments without Docker.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     tmp_path = OUTPUT_DIR / "_tmp_exec.py"
-    tmp_path.write_text(code, encoding="utf-8")
+    tmp_path.write_text(_SAFETY_PREAMBLE + code, encoding="utf-8")
 
     try:
         result = subprocess.run(
@@ -121,7 +162,7 @@ def python_exec(code: str) -> str:
             out += f"\n[stderr]\n{result.stderr}"
         if not out.strip():
             out = "(no output)"
-        return out[:4000]  # truncate very long output
+        return out[:4000]
     except subprocess.TimeoutExpired:
         return f"Execution timed out after {PYTHON_TIMEOUT}s."
     except Exception as exc:

@@ -1,11 +1,52 @@
 from __future__ import annotations
 
+import re
 import time
 from abc import ABC
 from typing import Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+
+_RETRYABLE_PATTERNS = [
+    re.compile(r"rate.?limit", re.I),
+    re.compile(r"too many requests", re.I),
+    re.compile(r"429"),
+    re.compile(r"5\d\d"),
+    re.compile(r"server error", re.I),
+    re.compile(r"timeout", re.I),
+    re.compile(r"connection", re.I),
+    re.compile(r"network", re.I),
+    re.compile(r"temporary", re.I),
+    re.compile(r"unavailable", re.I),
+    re.compile(r"overloaded", re.I),
+]
+
+_NON_RETRYABLE_PATTERNS = [
+    re.compile(r"401"),
+    re.compile(r"403"),
+    re.compile(r"unauthorized", re.I),
+    re.compile(r"forbidden", re.I),
+    re.compile(r"invalid api key", re.I),
+    re.compile(r"authentication", re.I),
+    re.compile(r"400"),
+    re.compile(r"invalid request", re.I),
+    re.compile(r"model not found", re.I),
+    re.compile(r"context length", re.I),
+    re.compile(r"maximum context", re.I),
+    re.compile(r"token limit", re.I),
+]
+
+
+def _is_retryable(error: Exception) -> bool:
+    msg = str(error)
+    for pattern in _NON_RETRYABLE_PATTERNS:
+        if pattern.search(msg):
+            return False
+    for pattern in _RETRYABLE_PATTERNS:
+        if pattern.search(msg):
+            return True
+    return True
 
 
 class BaseAgent(ABC):
@@ -43,8 +84,14 @@ class BaseAgent(ABC):
                 return self._normalize_content(response.content)
             except Exception as exc:
                 last_error = exc
+                if not _is_retryable(exc):
+                    raise RuntimeError(
+                        f"Agent [{self.role}] non-retryable error: {exc}"
+                    ) from exc
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2 ** attempt))
+                    wait = self.retry_delay * (2 ** attempt)
+                    print(f"[{self.role}] 重试 {attempt + 1}/{self.max_retries}（{wait:.0f}s 后）: {exc}")
+                    time.sleep(wait)
         raise RuntimeError(
             f"Agent [{self.role}] failed after {self.max_retries} attempts: {last_error}"
         )
@@ -73,8 +120,14 @@ class BaseAgent(ABC):
             except Exception as exc:
                 last_error = exc
                 parts.clear()
+                if not _is_retryable(exc):
+                    raise RuntimeError(
+                        f"Agent [{self.role}] non-retryable error: {exc}"
+                    ) from exc
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2 ** attempt))
+                    wait = self.retry_delay * (2 ** attempt)
+                    print(f"[{self.role}] 重试 {attempt + 1}/{self.max_retries}（{wait:.0f}s 后）...")
+                    time.sleep(wait)
         raise RuntimeError(
             f"Agent [{self.role}] failed after {self.max_retries} attempts: {last_error}"
         )
