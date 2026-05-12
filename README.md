@@ -10,7 +10,6 @@
 |------|------|----------|
 | **[agent_app](./agent_app/)** | 数模多智能体协作系统 | 问题分析→模型建立→算法实现→论文写作→评审反思 |
 | **[zhihu_fiction](./zhihu_fiction/)** | 知乎爆款小说创作系统 | 数据抓取→技能蒸馏→选题分析→大纲规划→创作润色→多平台发布 |
-| **[werewolf](./werewolf/)** | AI 狼人杀多智能体博弈 | 12 人局引擎、信息隔离、评测复盘、自进化、自演化 |
 
 ---
 
@@ -118,19 +117,9 @@ python -m zhihu_fiction.cli
 │   ├── publishers/          # 三平台发布适配器
 │   └── cli.py               # 命令行入口
 │
-├── werewolf/                # AI 狼人杀多智能体博弈
-│   ├── agents/              # 6 个角色 Agent（狼人/村民/预言家/女巫/猎人/白痴）
-│   ├── orchestrator.py      # 对局协调器（黑夜/白天完整流转）
-│   ├── engine.py            # 游戏引擎（行动处理、投票、胜负裁决）
-│   ├── state.py             # 游戏状态 + 信息隔离 context 构建
-│   ├── evaluation/          # 进阶 ②：多维评测 + 复盘 + Leaderboard
-│   ├── evolution/           # 进阶 ③：自进化（分析→优化→锦标赛）
-│   ├── self_modify/         # 进阶 ①：自演化（读代码→改代码→沙箱验证）
-│   └── README.md
-│
 └── knowledge_base/          # 共享知识库（论文 PDF）
 ```
 
 ---
 
-*三个项目的核心架构思想一致：Agent 基类 → 专业化 System Prompt → 编排器协调 → 工具增强。agent_app 面向严谨的数学建模，zhihu_fiction 面向创意小说创作，werewolf 面向信息不对称下的多智能体博弈。*
+*两个项目的核心架构思想一致：Agent 基类 → 专业化 Agent System Prompt → 编排器协调 → 工具增强。区别在于一个面向严谨的数学建模，一个面向创意的小说创作。*
