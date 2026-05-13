@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数模多智能体协作系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <h1>数模多智能体协作系统</h1>
+    <span class="badge">DeepSeek V4 · 6 Agents</span>
+  </header>
+
+  <div class="main-grid">
+    <!-- 侧边栏 -->
+    <aside>
+      <div class="card">
+        <h3>协作策略</h3>
+        <select id="strategy">
+          <option value="sequential">串行流水线</option>
+          <option value="review">深度反思</option>
+          <option value="parallel">快速并行</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <h3>输入问题</h3>
+        <textarea id="question" rows="4" placeholder="例如：建立新能源车充电站布局优化模型"></textarea>
+        <button id="btn-solve" onclick="startSolve()">▶ 开始协作分析</button>
+        <div id="status" class="status-text"></div>
+      </div>
+
+      <div class="card">
+        <h3>RAG 知识库</h3>
+        <div id="rag-status">{{ '已就绪' if rag_ready else '未构建' }}</div>
+        <input id="rag-query" placeholder="检索论文...">
+        <button onclick="searchRAG()">检索</button>
+        <button onclick="rebuildRAG()">重建索引</button>
+        <div id="rag-results"></div>
+      </div>
+
+      <div class="card">
+        <h3>Nature Skills</h3>
+        <div id="skills-list">加载中...</div>
+      </div>
+    </aside>
+
+    <!-- 建模 + 编程 + 写作 三栏 -->
+    <section class="agents-row">
+      <div class="agent-panel" id="panel-modeling">
+        <div class="agent-header">
+          <span class="agent-icon">📐</span> 建模智能体
+          <span class="spinner hidden" id="spin-modeling">⏳</span>
+        </div>
+        <div class="agent-output" id="out-modeling"></div>
+        <div class="progress"><div class="progress-bar" id="bar-modeling"></div></div>
+      </div>
+      <div class="agent-panel" id="panel-programming">
+        <div class="agent-header">
+          <span class="agent-icon">💻</span> 编程智能体
+          <span class="spinner hidden" id="spin-programming">⏳</span>
+        </div>
+        <div class="agent-output" id="out-programming"></div>
+        <div class="progress"><div class="progress-bar" id="bar-programming"></div></div>
+      </div>
+      <div class="agent-panel" id="panel-writing">
+        <div class="agent-header">
+          <span class="agent-icon">📝</span> 写作智能体
+          <span class="spinner hidden" id="spin-writing">⏳</span>
+        </div>
+        <div class="agent-output" id="out-writing"></div>
+        <div class="progress"><div class="progress-bar" id="bar-writing"></div></div>
+      </div>
+    </section>
+
+    <!-- 总控整合 -->
+    <section class="synthesis-row">
+      <div class="agent-panel full-width" id="panel-synthesis">
+        <div class="agent-header">
+          <span class="agent-icon">🎯</span> 总控整合方案
+          <span class="spinner hidden" id="spin-synthesis">⏳</span>
+        </div>
+        <div class="agent-output" id="out-synthesis"></div>
+        <div class="progress"><div class="progress-bar" id="bar-synthesis"></div></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

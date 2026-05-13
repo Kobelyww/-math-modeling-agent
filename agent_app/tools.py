@@ -362,6 +362,59 @@ $\displaystyle {latex_expr}$
     return latex_compile.func(doc, filename="_math_preview")
 
 
+# ===================== Nature Skills tools =====================
+
+
+@tool
+def nature_viz_template(template_name: str) -> str:
+    """Return a Nature journal style matplotlib template code for MCM/ICM papers.
+    Available templates: standard_line, 3d_grid, stacked_plots, hysteresis,
+    performance_3d_bar, performance_radar, performance_lollipop, regression.
+
+    Example: nature_viz_template('standard_line')
+    """
+    from .nature_skills import get_viz_template
+
+    mapping = {
+        "standard_line": "01_standard_line_plot",
+        "3d_grid": "02_nature_3d_grid_refactored",
+        "stacked_plots": "03_stacked_plots_highlight",
+        "hysteresis": "04_hysteresis_loops_nature",
+        "3d_bar": "05_performance_3d_bar",
+        "radar": "06_performance_radar",
+        "lollipop": "07_performance_lollipop",
+        "regression": "08_complex_regression_analysis",
+    }
+    file_name = mapping.get(template_name, template_name)
+    code = get_viz_template(file_name)
+    if code:
+        return code[:4000]
+    available = ", ".join(mapping.keys())
+    return f"Template '{template_name}' not found. Available: {available}"
+
+
+@tool
+def model_reference() -> str:
+    """Return the mathematical model selection reference guide.
+    Covers optimization, prediction, evaluation, dynamic systems, and graph/network models.
+    Use when unsure which model type to apply to a problem.
+    """
+    from .nature_skills import get_model_reference
+
+    return get_model_reference()[:4000]
+
+
+@tool
+def writing_rules() -> str:
+    """Return MCM/ICM academic writing standards: structure, de-AI-fication rules,
+    abstract requirements, formatting, and citation format.
+    Use when writing or revising competition papers.
+    """
+    from .nature_skills import get_writing_rules
+
+    return get_writing_rules()[:4000]
+
+
 # ===================== tool list =====================
 
 TOOLS = [
@@ -380,4 +433,7 @@ TOOLS = [
     search_semantic_scholar,
     search_crossref,
     fetch_paper_to_kb,
+    nature_viz_template,
+    model_reference,
+    writing_rules,
 ]
