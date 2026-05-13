@@ -88,6 +88,25 @@ button:hover { opacity: 0.85; }
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+.btn-group { margin-left: auto; display: flex; gap: 4px; }
+.btn-sm {
+  width: auto !important; padding: 3px 10px !important;
+  font-size: 11px !important; border-radius: 4px !important;
+  margin: 0 !important;
+}
+.btn-sm.primary { background: var(--green); }
+.code-output pre, .latex-output pre {
+  background: #0d1117; color: #c9d1d9; padding: 12px;
+  border-radius: 6px; overflow-x: auto; font: 12px 'Menlo', 'Monaco', monospace;
+  line-height: 1.5;
+}
+.code-result {
+  padding: 10px 14px; font: 12px monospace; background: var(--bg);
+  border-top: 1px solid var(--border); max-height: 160px; overflow-y: auto;
+}
+.code-result.hidden { display: none; }
+.code-result pre { margin: 0; white-space: pre-wrap; color: var(--text-dim); }
+
 @media (max-width: 900px) {
   .main-grid { grid-template-columns: 1fr; }
   .agents-row { grid-template-columns: 1fr; }

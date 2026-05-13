@@ -62,16 +62,26 @@
         <div class="agent-header">
           <span class="agent-icon">💻</span> 编程智能体
           <span class="spinner hidden" id="spin-programming">⏳</span>
+          <span class="btn-group">
+            <button class="btn-sm" onclick="runCode()" title="在沙箱中运行代码">▶ 运行</button>
+            <button class="btn-sm" onclick="exportCode()" title="下载 .py 文件">📥 导出.py</button>
+          </span>
         </div>
-        <div class="agent-output" id="out-programming"></div>
+        <div class="agent-output code-output" id="out-programming"></div>
+        <div id="code-result" class="code-result hidden"></div>
         <div class="progress"><div class="progress-bar" id="bar-programming"></div></div>
       </div>
       <div class="agent-panel" id="panel-writing">
         <div class="agent-header">
           <span class="agent-icon">📝</span> 写作智能体
           <span class="spinner hidden" id="spin-writing">⏳</span>
+          <span class="btn-group">
+            <button class="btn-sm" onclick="compileLatex()" title="编译 LaTeX 为 PDF">📝 编译PDF</button>
+            <button class="btn-sm" onclick="exportLatex()" title="下载 .tex 文件">📥 导出.tex</button>
+          </span>
         </div>
-        <div class="agent-output" id="out-writing"></div>
+        <div class="agent-output latex-output" id="out-writing"></div>
+        <div id="latex-result" class="code-result hidden"></div>
         <div class="progress"><div class="progress-bar" id="bar-writing"></div></div>
       </div>
     </section>
@@ -80,8 +90,11 @@
     <section class="synthesis-row">
       <div class="agent-panel full-width" id="panel-synthesis">
         <div class="agent-header">
-          <span class="agent-icon">🎯</span> 总控整合方案
+          <span class="agent-icon">🎯</span> 总控整合
           <span class="spinner hidden" id="spin-synthesis">⏳</span>
+          <span class="btn-group">
+            <button class="btn-sm primary" onclick="downloadAll()">📦 打包下载全部</button>
+          </span>
         </div>
         <div class="agent-output" id="out-synthesis"></div>
         <div class="progress"><div class="progress-bar" id="bar-synthesis"></div></div>

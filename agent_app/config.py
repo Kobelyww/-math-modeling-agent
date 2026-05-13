@@ -50,7 +50,7 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
     max_retries = int(os.getenv("DEEPSEEK_MAX_RETRIES", "3"))
 
     agent_configs: dict[str, AgentConfig] = {}
-    for role in ["data_engineer", "modeler", "programmer", "writer", "reviewer", "synthesizer"]:
+    for role in ["data_engineer", "modeler", "programmer", "code_debugger", "writer", "reviewer", "synthesizer"]:
         key = f"DEEPSEEK_{role.upper()}_TEMPERATURE"
         if key in os.environ:
             agent_configs[role] = AgentConfig(role=role, temperature=float(os.getenv(key, "0.3")))

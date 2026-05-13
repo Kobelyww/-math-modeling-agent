@@ -34,8 +34,7 @@ _orch = Orchestrator(_settings, rag=_rag)
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "rag_ready": _rag.is_ready,
     })
 

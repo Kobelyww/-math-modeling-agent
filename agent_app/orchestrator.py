@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .agents import (
+    CodeDebuggerAgent,
     DataEngineerAgent,
     ModelerAgent,
     ProgrammerAgent,
@@ -88,6 +89,7 @@ class Orchestrator:
         self.data_engineer: DataEngineerAgent = agents["data_engineer"]
         self.modeler: ModelerAgent = agents["modeler"]
         self.programmer: ProgrammerAgent = agents["programmer"]
+        self.code_debugger: CodeDebuggerAgent = agents["code_debugger"]
         self.writer: WriterAgent = agents["writer"]
         self.reviewer: ReviewerAgent = agents["reviewer"]
         self.synthesizer: SynthesizerAgent = agents["synthesizer"]
@@ -131,6 +133,12 @@ class Orchestrator:
         )
         prog_out = self.programmer.invoke(prog_in)
         mem.post("programming", prog_out)
+
+        # 代码审查
+        debug_out = self.code_debugger.invoke(
+            f"原始任务：{question}\n\n编程输出：\n{prog_out[:4000]}\n\n请审查以上代码。"
+        )
+        mem.post("code_debugger", debug_out)
         mem.advance_round()
 
         # 写作
@@ -138,6 +146,7 @@ class Orchestrator:
             f"任务：{question}\n\n"
             f"建模专家输出：\n{model_out}\n\n"
             f"编程专家输出：\n{prog_out}\n\n"
+            f"代码审查：\n{debug_out}\n\n"
             f"RAG参考：\n{rag_ctx}"
         )
         write_out = self.writer.invoke(write_in)
@@ -235,6 +244,12 @@ class Orchestrator:
             prog_out = self.programmer.invoke(refine_prompt)
             prog_review = review
         mem.post("programming", prog_out)
+
+        # 代码审查
+        debug_out = self.code_debugger.invoke(
+            f"原始任务：{question}\n\n编程输出（已评审修改）：\n{prog_out[:4000]}"
+        )
+        mem.post("code_debugger", debug_out)
         mem.advance_round()
 
         # --- 写作 + 评审循环 ---
@@ -242,6 +257,7 @@ class Orchestrator:
             f"任务：{question}\n\n"
             f"建模专家输出：\n{model_out}\n\n"
             f"编程专家输出：\n{prog_out}\n\n"
+            f"代码审查：\n{debug_out}\n\n"
             f"RAG参考：\n{rag_ctx}"
         )
         write_out = self.writer.invoke(write_in)
@@ -326,6 +342,12 @@ class Orchestrator:
 
         mem.post("programming", prog_out)
         mem.post("writing", write_out)
+
+        # 代码审查（并行模式下额外对代码质量把关）
+        debug_out = self.code_debugger.invoke(
+            f"原始任务：{question}\n\n编程输出：\n{prog_out[:4000]}"
+        )
+        mem.post("code_debugger", debug_out)
         mem.advance_round()
 
         # 总控整合
@@ -333,6 +355,7 @@ class Orchestrator:
             f"任务：{question}\n\n"
             f"建模专家：\n{model_out}\n\n"
             f"编程专家：\n{prog_out}\n\n"
+            f"代码审查：\n{debug_out}\n\n"
             f"写作专家：\n{write_out}"
         )
         synth_out = self.synthesizer.invoke(synth_in)
