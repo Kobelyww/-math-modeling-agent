@@ -17,7 +17,7 @@ from .agents import (
 from .base import BaseAgent
 from .config import Settings
 from .llm import create_llm
-from .memory import SharedMemory
+from .memory import MemoryManager, SharedMemory
 from .rag import Chunk, PaperRAG
 
 
@@ -80,12 +80,13 @@ def _format_rag_context(chunks: list[Chunk]) -> str:
 class Orchestrator:
     """多智能体编排器，支持多种协作策略"""
 
-    def __init__(self, settings: Settings, rag: PaperRAG | None = None) -> None:
+    def __init__(self, settings: Settings, rag: PaperRAG | None = None, memory_manager: MemoryManager | None = None) -> None:
         base_llm = create_llm(settings)
         reviewer_temp = settings.get_agent_config("reviewer").temperature
         reviewer_llm = create_llm(settings, temperature=reviewer_temp)
 
         agents = create_agents(base_llm, reviewer_llm=reviewer_llm, max_retries=settings.max_retries)
+        self.memory = memory_manager
         self.data_engineer: DataEngineerAgent = agents["data_engineer"]
         self.modeler: ModelerAgent = agents["modeler"]
         self.programmer: ProgrammerAgent = agents["programmer"]
@@ -96,13 +97,24 @@ class Orchestrator:
         self.rag = rag
 
     def _rag_context(self, question: str, top_k: int = 6) -> str:
-        if self.rag is None:
-            return "暂无检索上下文。"
-        if self.rag.has_embeddings:
-            chunks = self.rag.query_hybrid(question, top_k=top_k, alpha=0.6)
-        else:
-            chunks = self.rag.query(question, top_k=top_k)
-        return _format_rag_context(chunks)
+        parts: list[str] = []
+
+        # 1. 长期记忆召回（历史相似题目、成功模式）
+        if self.memory:
+            ltm_context = self.memory.recall(question, top_k=3)
+            if ltm_context:
+                parts.append(ltm_context)
+
+        # 2. RAG 论文检索
+        if self.rag:
+            if self.rag.has_embeddings:
+                chunks = self.rag.query_hybrid(question, top_k=top_k, alpha=0.6)
+            else:
+                chunks = self.rag.query(question, top_k=top_k)
+            if chunks:
+                parts.append(_format_rag_context(chunks))
+
+        return "\n\n---\n\n".join(parts) if parts else "暂无检索上下文。"
 
     # ---- 策略一：串行流水线（原始行为） ----
 
