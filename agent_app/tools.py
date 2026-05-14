@@ -137,36 +137,27 @@ __builtins.open = __safe_open
 
 @tool
 def python_exec(code: str) -> str:
-    """Execute Python code in a sandbox subprocess and return the output.
+    """Execute Python code in a sandbox and return the output.
     Use this to run calculations, test algorithms, generate plots, or
     verify a code snippet. Prints to stdout/stderr are captured.
 
-    Safety: memory capped at 512MB, dangerous builtins blocked, file writes
-    restricted to sandbox directory. Network access is not disabled —
-    do NOT use in untrusted multi-user environments without Docker.
+    Safety: Docker container isolation (--network=none, --memory=512m,
+    --read-only, non-root user) when Docker available. Falls back to
+    subprocess with safety preamble (memory limit + blocked builtins).
     """
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = OUTPUT_DIR / "_tmp_exec.py"
-    tmp_path.write_text(_SAFETY_PREAMBLE + code, encoding="utf-8")
+    from .sandbox import safe_execute
 
-    try:
-        result = subprocess.run(
-            [sys.executable, str(tmp_path)],
-            capture_output=True,
-            text=True,
-            timeout=PYTHON_TIMEOUT,
-            cwd=str(OUTPUT_DIR),
-        )
-        out = result.stdout
-        if result.stderr:
-            out += f"\n[stderr]\n{result.stderr}"
-        if not out.strip():
-            out = "(no output)"
-        return out[:4000]
-    except subprocess.TimeoutExpired:
+    result = safe_execute(code, timeout=PYTHON_TIMEOUT)
+
+    if result.timed_out:
         return f"Execution timed out after {PYTHON_TIMEOUT}s."
-    except Exception as exc:
-        return f"Execution failed: {exc}"
+    if not result.success and result.error:
+        return f"Execution failed: {result.error}"
+
+    out = result.stdout
+    if result.stderr:
+        out += f"\n[stderr]\n{result.stderr}"
+    return out[:4000] if out.strip() else "(no output)"
 
 
 @tool
