@@ -64,7 +64,7 @@ class CLI:
         self.settings = load_settings()
         data_dir = APP_ROOT / "data"
         knowledge_dir = APP_ROOT.parent / "knowledge_base"
-        self.rag = PaperRAG(knowledge_dir=knowledge_dir, index_path=data_dir / "rag_index.pkl")
+        self.rag = PaperRAG(knowledge_dir=knowledge_dir, index_path=data_dir / "rag_index.pkl", embedding_api_key=self.settings.embedding_api_key)
         if self.rag.load_index():
             print(f"[RAG] 已加载索引（{len(self.rag.chunks)} 个片段）")
         else:

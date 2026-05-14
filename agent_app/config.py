@@ -28,6 +28,7 @@ class Settings:
     temperature: float
     max_retries: int = 3
     agent_configs: dict[str, AgentConfig] = field(default_factory=dict)
+    embedding_api_key: str | None = None
 
     def get_agent_config(self, role: str) -> AgentConfig:
         return self.agent_configs.get(role, AgentConfig(role=role, temperature=self.temperature))
@@ -55,6 +56,8 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         if key in os.environ:
             agent_configs[role] = AgentConfig(role=role, temperature=float(os.getenv(key, "0.3")))
 
+    embedding_api_key = os.getenv("EMBEDDING_API_KEY", api_key)
+
     return Settings(
         api_key=api_key,
         api_base=os.getenv("DEEPSEEK_API_BASE") or None,
@@ -62,4 +65,5 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         temperature=temperature,
         max_retries=max_retries,
         agent_configs=agent_configs,
+        embedding_api_key=embedding_api_key,
     )

@@ -96,12 +96,14 @@ def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 120) -> list[st
 
 
 class PaperRAG:
-    def __init__(self, knowledge_dir: Path, index_path: Path) -> None:
+    def __init__(self, knowledge_dir: Path, index_path: Path, embedding_api_key: str | None = None) -> None:
         self.knowledge_dir = knowledge_dir
         self.index_path = index_path
         self.vectorizer: TfidfVectorizer | None = None
         self.matrix = None
         self.chunks: list[Chunk] = []
+        self.embedding_api_key = embedding_api_key
+        self._embedding_matrix = None
 
     def _iter_files(self) -> list[Path]:
         if not self.knowledge_dir.exists():
@@ -219,3 +221,114 @@ class PaperRAG:
     @property
     def is_ready(self) -> bool:
         return self.vectorizer is not None and len(self.chunks) > 0
+
+    # =============== 阿里云百练 Embedding 检索 ===============
+
+    def build_embedding_index(self, batch_size: int = 25) -> dict:
+        """使用阿里云百练 text-embedding-v2 构建向量索引。"""
+        if not self.embedding_api_key:
+            return {"error": "未配置 embedding_api_key"}
+
+        # 确保 chunks 已加载
+        if not self.chunks:
+            files = self._iter_files()
+            if not files:
+                return {"files": 0, "chunks": 0}
+
+        try:
+            import numpy as np
+            from dashscope import TextEmbedding
+        except ImportError:
+            return {"error": "请安装 dashscope: pip install dashscope"}
+
+        chunk_texts = [c.content for c in self.chunks]
+        all_embeddings: list[np.ndarray] = []
+
+        for i in range(0, len(chunk_texts), batch_size):
+            batch = chunk_texts[i : i + batch_size]
+            resp = TextEmbedding.call(
+                model="text-embedding-v2",
+                api_key=self.embedding_api_key,
+                input=batch,
+            )
+            if resp.status_code != 200:
+                return {"error": f"Embedding API 失败: {resp.code} {resp.message}"}
+            for item in resp.output.get("embeddings", []):
+                all_embeddings.append(np.array(item["embedding"]))
+
+        self._embedding_matrix = np.stack(all_embeddings)
+        return {"files": len(set(c.source for c in self.chunks)), "chunks": len(self.chunks), "dim": self._embedding_matrix.shape[1]}
+
+    def query_embedding(self, question: str, top_k: int = 6) -> list[tuple[Chunk, float]]:
+        """使用 embedding 向量相似度检索（语义匹配）。"""
+        if self._embedding_matrix is None:
+            if not self.build_embedding_index():
+                return []
+
+        import numpy as np
+        from dashscope import TextEmbedding
+
+        resp = TextEmbedding.call(
+            model="text-embedding-v2",
+            api_key=self.embedding_api_key,
+            input=question,
+        )
+        if resp.status_code != 200:
+            return []
+
+        query_vec = np.array(resp.output["embeddings"][0]["embedding"])
+        scores = np.dot(self._embedding_matrix, query_vec) / (
+            np.linalg.norm(self._embedding_matrix, axis=1) * np.linalg.norm(query_vec) + 1e-10
+        )
+        ranked = scores.argsort()[::-1][:top_k]
+        return [(self.chunks[i], float(scores[i])) for i in ranked if scores[i] > 0.3]
+
+    def query_hybrid(self, question: str, top_k: int = 6, alpha: float = 0.5) -> list[Chunk]:
+        """混合检索：TF-IDF（关键词） + Embedding（语义），alpha 控制语义权重。"""
+        tfidf_results = self.query(question, top_k=top_k)
+        if self._embedding_matrix is None and not self.embedding_api_key:
+            return tfidf_results
+
+        emb_results = self.query_embedding(question, top_k=top_k)
+
+        if not emb_results:
+            return tfidf_results
+        if not tfidf_results:
+            return [c for c, _ in emb_results]
+
+        # 融合分数
+        tfidf_scores: dict[str, float] = {}
+        for i, c in enumerate(tfidf_results):
+            tfidf_scores[c.content[:60]] = 1.0 - i / max(len(tfidf_results), 1)
+
+        emb_scores: dict[int, float] = {}
+        for c, s in emb_results:
+            for j, tc in enumerate(self.chunks):
+                if tc.source == c.source and tc.chunk_id == c.chunk_id:
+                    emb_scores[j] = s
+                    break
+
+        combined: list[tuple[Chunk, float]] = []
+        for i, c in enumerate(tfidf_results):
+            key = c.content[:60]
+            tfidf_s = tfidf_scores.get(key, 0.0)
+            emb_s = emb_scores.get(i, 0.0)
+            score = alpha * emb_s + (1 - alpha) * tfidf_s
+            combined.append((c, score))
+
+        combined.sort(key=lambda x: x[1], reverse=True)
+        return self._dedup([c for c, _ in combined[: top_k * 2]])[:top_k]
+
+    def _dedup(self, chunks: list[Chunk]) -> list[Chunk]:
+        seen: set[str] = set()
+        result: list[Chunk] = []
+        for c in chunks:
+            key = c.content[:60]
+            if key not in seen:
+                seen.add(key)
+                result.append(c)
+        return result
+
+    @property
+    def has_embeddings(self) -> bool:
+        return self._embedding_matrix is not None

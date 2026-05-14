@@ -26,8 +26,18 @@ _settings = load_settings()
 DATA_DIR = APP_ROOT / "data"
 KNOWLEDGE_DIR = APP_ROOT.parent / "knowledge_base"
 
-_rag = PaperRAG(knowledge_dir=KNOWLEDGE_DIR, index_path=DATA_DIR / "rag_index.pkl")
+_rag = PaperRAG(
+    knowledge_dir=KNOWLEDGE_DIR,
+    index_path=DATA_DIR / "rag_index.pkl",
+    embedding_api_key=_settings.embedding_api_key,
+)
 _rag.load_index()
+if _rag.embedding_api_key and _rag.chunks:
+    try:
+        emb_stats = _rag.build_embedding_index()
+        print(f"[RAG] Embedding 索引: {emb_stats.get('dim', '?')} 维, {emb_stats.get('chunks', 0)} 片段")
+    except Exception as e:
+        print(f"[RAG] Embedding 索引暂不可用: {e}")
 
 _orch = Orchestrator(_settings, rag=_rag)
 

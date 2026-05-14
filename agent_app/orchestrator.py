@@ -98,7 +98,10 @@ class Orchestrator:
     def _rag_context(self, question: str, top_k: int = 6) -> str:
         if self.rag is None:
             return "暂无检索上下文。"
-        chunks = self.rag.query(question, top_k=top_k)
+        if self.rag.has_embeddings:
+            chunks = self.rag.query_hybrid(question, top_k=top_k, alpha=0.6)
+        else:
+            chunks = self.rag.query(question, top_k=top_k)
         return _format_rag_context(chunks)
 
     # ---- 策略一：串行流水线（原始行为） ----
