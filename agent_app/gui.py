@@ -24,6 +24,7 @@ import streamlit as st
 
 from .config import APP_ROOT, load_settings
 from .llm import create_llm
+from .memory import MemoryManager
 from .orchestrator import Orchestrator, StageResult, WorkflowResult
 from .rag import PaperRAG
 from .tools import TOOLS
@@ -71,9 +72,16 @@ def _init_session():
         rag.load_index()
         st.session_state.rag = rag
     if "orchestrator" not in st.session_state:
+        try:
+            memory_manager = MemoryManager(use_redis=True)
+            from .memory.redis_backends import _redis_client
+            _redis_client().ping()
+        except Exception:
+            memory_manager = MemoryManager(use_redis=False)
         st.session_state.orchestrator = Orchestrator(
             st.session_state.settings,
             rag=st.session_state.rag,
+            memory_manager=memory_manager,
         )
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []

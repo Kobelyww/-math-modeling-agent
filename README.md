@@ -20,7 +20,7 @@ DataEngineer → Modeler → Programmer → CodeDebugger → Writer → (Reviewe
 - **4 种协作策略**：串行流水线 / 深度反思（LLM 语义判断退出）/ 快速并行 / 流式输出
 - **产出即交付**：Programmer 输出可运行 Python 代码，Writer 输出可编译 LaTeX 论文，Synthesizer 打包最终交付
 - **混合 RAG 检索**：TF-IDF 关键词匹配 + 阿里云百练 text-embedding-v2（1536 维）语义检索，加权融合
-- **长短时记忆**：短期（进程内消息总线，token 超限自动压缩）+ 长期（SQLite + FTS5 全文搜索，三类知识持久化）
+- **长短时记忆**：短期（进程内消息总线 + Redis 持久化 + TTL 自动过期）+ 长期（Redis Stack: RedisJSON + RediSearch 全文搜索，或 SQLite+FTS5 回退）
 - **Nature Skills**：学术写作铁律、Nature 期刊绑图模板（9 个）、模型选型速查
 - **18 个工具**：Python 安全沙箱（512MB 限制 + 危险函数拦截）、LaTeX 编译、文献检索（arXiv/Semantic Scholar/Crossref）
 - **三界面**：FastAPI Web（WebSocket 实时流式 + 代码导出/LaTeX 编译）+ Streamlit GUI + CLI
@@ -44,6 +44,7 @@ python -m agent_app.evolution.evolve --generations 3 --games 20
 
 | 日期 | 更新 | 说明 |
 |------|------|------|
+| 05-15 | Redis Stack 记忆升级 | RedisJSON + RediSearch 全文搜索，STM TTL 持久化，Docker 一键部署，自动回退 SQLite |
 | 05-14 | 长短时记忆系统 | STM 消息总线 + LTM SQLite/FTS5 持久化 + 上下文自动压缩 |
 | 05-14 | 百练 Embedding RAG | text-embedding-v2 混合检索，TF-IDF + 语义加权融合 |
 | 05-14 | CodeDebugger Agent | 第 7 个 Agent，代码审查 + bug 检测 + 性能建议 |
@@ -62,7 +63,9 @@ python -m agent_app.evolution.evolve --generations 3 --games 20
 | **DeepSeek V4** | 核心 LLM |
 | **阿里云百练 text-embedding-v2** | RAG 语义向量检索（1536 维） |
 | **FastAPI + WebSocket** | Web 界面 + 实时流式输出 |
-| **SQLite + FTS5** | 长期记忆持久化 + 全文搜索 |
+| **Redis Stack** | 短期记忆持久化（TTL）+ 长期记忆（RedisJSON + RediSearch） |
+| **SQLite + FTS5** | 长期记忆回退方案（Redis 不可用时） |
+| **Docker Compose** | Redis Stack 一键部署 |
 | **scikit-learn + jieba** | TF-IDF 关键词检索（61 项数学词典） |
 | **DashScope** | 百练 Embedding API |
 
@@ -74,6 +77,10 @@ cd -math-modeling-agent
 echo 'DEEPSEEK_API_KEY=你的key' >> .env
 echo 'EMBEDDING_API_KEY=你的百练key' >> .env
 pip install -r agent_app/requirements.txt
+
+# 启动 Redis Stack（记忆系统后端）
+docker compose up -d
+
 uvicorn agent_app.web.main:app --port 8000
 ```
 
@@ -83,13 +90,17 @@ uvicorn agent_app.web.main:app --port 8000
 agent_app/
 ├── web/                  # FastAPI Web 界面 + WebSocket 流式
 ├── nature_skills/        # MCM 学术写作 + 可视化 + 模型选型技能包
-├── memory/               # 长短时记忆系统（STM + LTM + 压缩）
+├── memory/               # 长短时记忆系统（Redis Stack / SQLite + 压缩）
 ├── evolution/            # Hermes 风格自进化管线（7 步文本优化）
 ├── agents.py             # 7 个专业 Agent（含 CodeDebugger）
-├── orchestrator.py       # 编排器（4 种策略 + LTM 召回 + 数据预处理）
+├── orchestrator.py       # 编排器（4 种策略 + LTM 召回 + 自动归档）
 ├── rag.py                # 混合 RAG（TF-IDF + Embedding 加权融合）
 ├── tools.py              # 18 个工具（安全沙箱 + Nature Skills）
 ├── base.py               # Agent 基类（重试 + 错误分类）
 ├── cli.py / gui.py       # CLI + Streamlit 入口
 └── README.md
+
+docker-compose.yml        # Redis Stack 一键部署
+redis_utils.py            # 通用 Redis 工具（连接/JSON/搜索）
+env_utils.py              # 环境变量加载（API Key + Redis 配置）
 ```

@@ -1,0 +1,15 @@
+services:
+  redis-stack:
+    image: redis/redis-stack:latest
+    container_name: redis-stack
+    ports:
+      - "6379:6379"   # Redis
+      - "8001:8001"   # RedisInsight (管理界面)
+    environment:
+      REDIS_ARGS: "--requirepass ${REDIS_PASSWORD:-redis-secure}"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:

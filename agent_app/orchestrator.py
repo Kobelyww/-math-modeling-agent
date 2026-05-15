@@ -96,6 +96,26 @@ class Orchestrator:
         self.synthesizer: SynthesizerAgent = agents["synthesizer"]
         self.rag = rag
 
+    # ─── 记忆辅助 ─────────────────────────────────────────────────────
+
+    def _get_stm(self, memory: SharedMemory | None = None) -> SharedMemory:
+        """解析使用哪个 STM 实例。MemoryManager 存在时优先使用其 STM。"""
+        if self.memory:
+            return self.memory.stm
+        return memory or SharedMemory()
+
+    def _post(self, stm: SharedMemory, role: str, content: str) -> None:
+        """记录一条消息。MemoryManager 存在时走 remember() 获得自动压缩。"""
+        if self.memory:
+            self.memory.remember(role, content)
+        else:
+            stm.post(role, content)
+
+    def _maybe_archive(self, question: str, result_summary: str) -> None:
+        """求解完成后归档到长期记忆。"""
+        if self.memory:
+            self.memory.archive_solve(question, result_summary)
+
     def _rag_context(self, question: str, top_k: int = 6) -> str:
         parts: list[str] = []
 
@@ -125,7 +145,7 @@ class Orchestrator:
         memory: SharedMemory | None = None,
         enable_data_engineer: bool = False,
     ) -> WorkflowResult:
-        mem = memory or SharedMemory()
+        mem = self._get_stm(memory)
         rag_ctx = self._rag_context(question, top_k)
 
         # 数据预处理（可选）
@@ -134,12 +154,12 @@ class Orchestrator:
             data_out = self.data_engineer.invoke(
                 f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
             )
-            mem.post("data_engineer", data_out)
+            self._post(mem, "data_engineer", data_out)
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         # 建模
         model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
-        mem.post("modeling", model_out)
+        self._post(mem, "modeling", model_out)
         mem.advance_round()
 
         # 编程
@@ -147,13 +167,13 @@ class Orchestrator:
             f"任务：{question}\n\n建模专家输出：\n{model_out}\n\nRAG参考：\n{rag_ctx}"
         )
         prog_out = self.programmer.invoke(prog_in)
-        mem.post("programming", prog_out)
+        self._post(mem, "programming", prog_out)
 
         # 代码审查
         debug_out = self.code_debugger.invoke(
             f"原始任务：{question}\n\n编程输出：\n{prog_out[:4000]}\n\n请审查以上代码。"
         )
-        mem.post("code_debugger", debug_out)
+        self._post(mem, "code_debugger", debug_out)
         mem.advance_round()
 
         # 写作
@@ -165,7 +185,7 @@ class Orchestrator:
             f"RAG参考：\n{rag_ctx}"
         )
         write_out = self.writer.invoke(write_in)
-        mem.post("writing", write_out)
+        self._post(mem, "writing", write_out)
         mem.advance_round()
 
         # 总控整合
@@ -176,7 +196,9 @@ class Orchestrator:
             f"写作专家：\n{write_out}"
         )
         synth_out = self.synthesizer.invoke(synth_in)
-        mem.post("synthesizer", synth_out)
+        self._post(mem, "synthesizer", synth_out)
+
+        self._maybe_archive(question, synth_out)
 
         return WorkflowResult(
             question=question,
@@ -210,7 +232,7 @@ class Orchestrator:
         memory: SharedMemory | None = None,
         enable_data_engineer: bool = False,
     ) -> WorkflowResult:
-        mem = memory or SharedMemory()
+        mem = self._get_stm(memory)
         rag_ctx = self._rag_context(question, top_k)
 
         data_ctx = ""
@@ -218,7 +240,7 @@ class Orchestrator:
             data_out = self.data_engineer.invoke(
                 f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
             )
-            mem.post("data_engineer", data_out)
+            self._post(mem, "data_engineer", data_out)
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         # --- 建模 + 评审循环 ---
@@ -226,7 +248,7 @@ class Orchestrator:
         model_review = ""
         for rnd in range(max_review_rounds):
             review = self.reviewer.review("建模智能体", model_out, question)
-            mem.post("reviewer(modeling)", review)
+            self._post(mem, "reviewer(modeling)", review)
             if rnd > 0 and not self._review_needs_revision(review, "建模"):
                 break
             refine_prompt = (
@@ -237,7 +259,7 @@ class Orchestrator:
             )
             model_out = self.modeler.invoke(refine_prompt)
             model_review = review
-        mem.post("modeling", model_out)
+        self._post(mem, "modeling", model_out)
         mem.advance_round()
 
         # --- 编程 + 评审循环 ---
@@ -246,7 +268,7 @@ class Orchestrator:
         prog_review = ""
         for rnd in range(max_review_rounds):
             review = self.reviewer.review("编程智能体", prog_out, question)
-            mem.post("reviewer(programming)", review)
+            self._post(mem, "reviewer(programming)", review)
             if rnd > 0 and not self._review_needs_revision(review, "编程"):
                 break
             refine_prompt = (
@@ -258,13 +280,13 @@ class Orchestrator:
             )
             prog_out = self.programmer.invoke(refine_prompt)
             prog_review = review
-        mem.post("programming", prog_out)
+        self._post(mem, "programming", prog_out)
 
         # 代码审查
         debug_out = self.code_debugger.invoke(
             f"原始任务：{question}\n\n编程输出（已评审修改）：\n{prog_out[:4000]}"
         )
-        mem.post("code_debugger", debug_out)
+        self._post(mem, "code_debugger", debug_out)
         mem.advance_round()
 
         # --- 写作 + 评审循环 ---
@@ -279,7 +301,7 @@ class Orchestrator:
         write_review = ""
         for rnd in range(max_review_rounds):
             review = self.reviewer.review("写作智能体", write_out, question)
-            mem.post("reviewer(writing)", review)
+            self._post(mem, "reviewer(writing)", review)
             if rnd > 0 and not self._review_needs_revision(review, "写作"):
                 break
             refine_prompt = (
@@ -292,7 +314,7 @@ class Orchestrator:
             )
             write_out = self.writer.invoke(refine_prompt)
             write_review = review
-        mem.post("writing", write_out)
+        self._post(mem, "writing", write_out)
         mem.advance_round()
 
         # --- 总控整合 ---
@@ -303,7 +325,9 @@ class Orchestrator:
             f"写作专家（已评审）：\n{write_out}"
         )
         synth_out = self.synthesizer.invoke(synth_in)
-        mem.post("synthesizer", synth_out)
+        self._post(mem, "synthesizer", synth_out)
+
+        self._maybe_archive(question, synth_out)
 
         return WorkflowResult(
             question=question,
@@ -323,7 +347,7 @@ class Orchestrator:
         memory: SharedMemory | None = None,
         enable_data_engineer: bool = False,
     ) -> WorkflowResult:
-        mem = memory or SharedMemory()
+        mem = self._get_stm(memory)
         rag_ctx = self._rag_context(question, top_k)
 
         data_ctx = ""
@@ -331,12 +355,12 @@ class Orchestrator:
             data_out = self.data_engineer.invoke(
                 f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
             )
-            mem.post("data_engineer", data_out)
+            self._post(mem, "data_engineer", data_out)
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         # 建模先行（编程和写作都依赖建模结果）
         model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
-        mem.post("modeling", model_out)
+        self._post(mem, "modeling", model_out)
 
         # 编程和写作并行
         def run_programmer() -> str:
@@ -355,14 +379,14 @@ class Orchestrator:
             prog_out = prog_future.result()
             write_out = write_future.result()
 
-        mem.post("programming", prog_out)
-        mem.post("writing", write_out)
+        self._post(mem, "programming", prog_out)
+        self._post(mem, "writing", write_out)
 
         # 代码审查（并行模式下额外对代码质量把关）
         debug_out = self.code_debugger.invoke(
             f"原始任务：{question}\n\n编程输出：\n{prog_out[:4000]}"
         )
-        mem.post("code_debugger", debug_out)
+        self._post(mem, "code_debugger", debug_out)
         mem.advance_round()
 
         # 总控整合
@@ -374,7 +398,9 @@ class Orchestrator:
             f"写作专家：\n{write_out}"
         )
         synth_out = self.synthesizer.invoke(synth_in)
-        mem.post("synthesizer", synth_out)
+        self._post(mem, "synthesizer", synth_out)
+
+        self._maybe_archive(question, synth_out)
 
         return WorkflowResult(
             question=question,

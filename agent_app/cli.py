@@ -1,4 +1,6 @@
 
+
+
 from __future__ import annotations
 
 # 支持直接执行：python cli.py 或 python -m agent_app.cli
@@ -20,6 +22,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from .config import APP_ROOT, load_settings
 from .llm import create_llm
+from .memory import MemoryManager
 from .orchestrator import Orchestrator
 from .rag import PaperRAG
 from .tools import TOOLS
@@ -45,6 +48,7 @@ ORCHESTRATOR_HELP = f"""
   /mode <模式名>  - 切换工作流模式（默认 sequential）
   /solve <问题>   - 启动多智能体协作分析
   /chat           - 切换到单智能体对话模式
+  /memory         - 查看记忆系统统计（STM/LTM/压缩次数）
   /help           - 显示此帮助
   /exit           - 退出程序
 """.strip()
@@ -70,7 +74,17 @@ class CLI:
         else:
             print("[RAG] 未找到索引文件，运行 build_index() 可构建")
 
-        self.orchestrator = Orchestrator(self.settings, rag=self.rag)
+        # 初始化记忆系统（Redis Stack）
+        try:
+            self.memory_manager = MemoryManager(use_redis=True)
+            from .memory.redis_backends import _redis_client
+            _redis_client().ping()
+            print("[Memory] Redis Stack 已连接，记忆系统就绪")
+        except Exception:
+            self.memory_manager = MemoryManager(use_redis=False)
+            print("[Memory] Redis 不可用，使用 SQLite 回退方案")
+
+        self.orchestrator = Orchestrator(self.settings, rag=self.rag, memory_manager=self.memory_manager)
         self.mode: str = "sequential"
 
     def build_rag_index(self) -> dict:
@@ -197,6 +211,12 @@ class CLI:
             if raw.lower() == "/chat":
                 print("已切换到单智能体模式。")
                 return self.run_single_agent()
+            if raw.lower() == "/memory":
+                stats = self.memory_manager.stats()
+                print(f"\n短期记忆：{stats['stm_messages']} 条消息，{stats['stm_tokens']} tokens")
+                print(f"压缩次数：{stats['compressions']}")
+                print(f"长期记忆：{stats['ltm_total']} 条知识，{stats['ltm_by_type']}")
+                continue
             if raw.lower() == "/help":
                 print(ORCHESTRATOR_HELP)
                 continue
