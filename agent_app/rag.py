@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import jieba
+import base64
+import io
+
+import fitz  # PyMuPDF
 from pypdf import PdfReader
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -70,13 +74,92 @@ class Chunk:
     content: str
 
 
+def _extract_pdf_images(path: Path) -> list[bytes]:
+    """使用 PyMuPDF 从 PDF 中提取嵌入图片的原始字节。"""
+    images: list[bytes] = []
+    try:
+        doc = fitz.open(str(path))
+        for page in doc:
+            for img_tuple in page.get_images(full=True):
+                xref = img_tuple[0]
+                try:
+                    base_image = doc.extract_image(xref)
+                    if base_image and base_image.get("image"):
+                        images.append(base_image["image"])
+                except Exception:
+                    continue
+        doc.close()
+    except Exception:
+        pass
+    return images
+
+
+def _describe_images_with_vl(images: list[bytes], api_key: str) -> list[str]:
+    """使用 Qwen-VL 多模态模型对图片生成文字描述。"""
+    if not images or not api_key:
+        return []
+
+    try:
+        from dashscope import MultiModalConversation
+    except ImportError:
+        return []
+
+    descriptions: list[str] = []
+    for i, img_bytes in enumerate(images):
+        # 跳过太小的图片（可能是图标或装饰元素）
+        if len(img_bytes) < 2048:
+            continue
+
+        # 限制图片数量，避免 API 调用过多
+        if i >= 10:
+            break
+
+        b64 = base64.b64encode(img_bytes).decode()
+        messages = [{
+            "role": "user",
+            "content": [
+                {"image": f"data:image/png;base64,{b64}"},
+                {"text": "请详细描述这张图片中的内容。如果是数据图表，说明图表类型、坐标轴、趋势和关键数据；如果是数学公式，完整写出公式；如果是流程图或示意图，说明结构和关键节点。请用中文回答，控制在200字以内。"},
+            ],
+        }]
+        try:
+            resp = MultiModalConversation.call(
+                model="qwen-vl-plus",
+                api_key=api_key,
+                messages=messages,
+            )
+            if resp.status_code == 200:
+                text = resp.output.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if isinstance(text, list):
+                    text = " ".join(
+                        item.get("text", "") if isinstance(item, dict) else str(item)
+                        for item in text
+                    )
+                if text.strip():
+                    descriptions.append(f"[图片描述 {len(descriptions) + 1}] {text.strip()}")
+        except Exception:
+            continue
+
+    return descriptions
+
+
 def _read_text_file(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
-def _read_pdf_file(path: Path) -> str:
+def _read_pdf_file(path: Path, vl_api_key: str | None = None) -> str:
     reader = PdfReader(str(path))
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+
+    # 提取 PDF 中嵌入的图片，用 Qwen-VL 生成描述
+    if vl_api_key:
+        images = _extract_pdf_images(path)
+        if images:
+            descriptions = _describe_images_with_vl(images, vl_api_key)
+            if descriptions:
+                text += "\n\n## 图片内容描述\n" + "\n".join(descriptions)
+
+    return text
 
 
 def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 120) -> list[str]:
@@ -96,13 +179,14 @@ def _chunk_text(text: str, chunk_size: int = 900, overlap: int = 120) -> list[st
 
 
 class PaperRAG:
-    def __init__(self, knowledge_dir: Path, index_path: Path, embedding_api_key: str | None = None) -> None:
+    def __init__(self, knowledge_dir: Path, index_path: Path, embedding_api_key: str | None = None, vl_api_key: str | None = None) -> None:
         self.knowledge_dir = knowledge_dir
         self.index_path = index_path
         self.vectorizer: TfidfVectorizer | None = None
         self.matrix = None
         self.chunks: list[Chunk] = []
         self.embedding_api_key = embedding_api_key
+        self.vl_api_key = vl_api_key or embedding_api_key
         self._embedding_matrix = None
 
     def _iter_files(self) -> list[Path]:
@@ -115,7 +199,7 @@ class PaperRAG:
 
     def _read_file(self, path: Path) -> str:
         if path.suffix.lower() == ".pdf":
-            return _read_pdf_file(path)
+            return _read_pdf_file(path, self.vl_api_key)
         return _read_text_file(path)
 
     def build_index(self) -> dict:
