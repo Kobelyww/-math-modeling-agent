@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+
+logger = logging.getLogger(__name__)
 
 from ..config import APP_ROOT, load_settings
 from ..nature_skills import list_available_skills
@@ -35,9 +38,9 @@ _rag.load_index()
 if _rag.embedding_api_key and _rag.chunks:
     try:
         emb_stats = _rag.build_embedding_index()
-        print(f"[RAG] Embedding 索引: {emb_stats.get('dim', '?')} 维, {emb_stats.get('chunks', 0)} 片段")
+        logger.info("[RAG] Embedding 索引: %s 维, %s 片段", emb_stats.get('dim', '?'), emb_stats.get('chunks', 0))
     except Exception as e:
-        print(f"[RAG] Embedding 索引暂不可用: {e}")
+        logger.info("[RAG] Embedding 索引暂不可用: %s", e)
 
 _orch = Orchestrator(_settings, rag=_rag)
 

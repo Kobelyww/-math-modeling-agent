@@ -15,6 +15,14 @@
 - gui: Streamlit 图形界面入口
 """
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 from .config import Settings, load_settings
 from .orchestrator import Orchestrator, WorkflowResult
 

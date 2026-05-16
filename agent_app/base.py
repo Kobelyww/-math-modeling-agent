@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 from abc import ABC
@@ -7,6 +8,8 @@ from typing import Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+
+logger = logging.getLogger(__name__)
 
 _RETRYABLE_PATTERNS = [
     re.compile(r"rate.?limit", re.I),
@@ -90,7 +93,7 @@ class BaseAgent(ABC):
                     ) from exc
                 if attempt < self.max_retries - 1:
                     wait = self.retry_delay * (2 ** attempt)
-                    print(f"[{self.role}] 重试 {attempt + 1}/{self.max_retries}（{wait:.0f}s 后）: {exc}")
+                    logger.warning("[%s] 重试 %d/%d（%ds 后）: %s", self.role, attempt + 1, self.max_retries, int(wait), exc)
                     time.sleep(wait)
         raise RuntimeError(
             f"Agent [{self.role}] failed after {self.max_retries} attempts: {last_error}"
@@ -126,7 +129,7 @@ class BaseAgent(ABC):
                     ) from exc
                 if attempt < self.max_retries - 1:
                     wait = self.retry_delay * (2 ** attempt)
-                    print(f"[{self.role}] 重试 {attempt + 1}/{self.max_retries}（{wait:.0f}s 后）...")
+                    logger.warning("[%s] 重试 %d/%d（%ds 后）...", self.role, attempt + 1, self.max_retries, int(wait))
                     time.sleep(wait)
         raise RuntimeError(
             f"Agent [{self.role}] failed after {self.max_retries} attempts: {last_error}"

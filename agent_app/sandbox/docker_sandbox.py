@@ -11,8 +11,11 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
+
+logger = logging.getLogger(__name__)
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -70,7 +73,7 @@ class DockerSandbox:
         if result.returncode == 0:
             self._image_built = True
             return True
-        print(f"[Sandbox] Image build failed: {result.stderr[:500]}")
+        logger.error("[Sandbox] Image build failed: %s", result.stderr[:500])
         return False
 
     def run(self, code: str, timeout: int | None = None) -> SandboxResult:

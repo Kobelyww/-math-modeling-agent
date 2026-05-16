@@ -73,9 +73,11 @@ class MemoryManager:
     # ─── 求解归档 ─────────────────────────────────────────────────────
 
     def archive_solve(self, question: str, result_summary: str, model_types: list[str] | None = None) -> None:
-        """求解完成后，自动归档到长期记忆。"""
+        """求解完成后，自动归档到长期记忆（problem + pattern + mistake）。"""
+        # 归档问题
         self.learn("problem", question[:120], result_summary[:2000], tags=model_types or [])
 
+        # 归档成功模式（建模方案）
         modeler_output = self.stm.latest_by_role("modeling")
         if modeler_output:
             self.learn(
@@ -84,6 +86,39 @@ class MemoryManager:
                 modeler_output.content[:1500],
                 tags=model_types or [],
             )
+
+        # 自动从代码审查输出中提取错误记录
+        debugger_output = self.stm.latest_by_role("code_debugger")
+        if debugger_output and self._has_code_issues(debugger_output.content):
+            self.learn(
+                "mistake",
+                f"代码问题 - {question[:60]}",
+                debugger_output.content[:800],
+                tags=(model_types or []) + ["code"],
+            )
+
+        # 检查评审反馈中是否有值得记录的问题
+        for reviewer_role in ["reviewer(modeling)", "reviewer(programming)", "reviewer(writing)"]:
+            review = self.stm.latest_by_role(reviewer_role)
+            if review and self._has_review_issues(review.content):
+                self.learn(
+                    "mistake",
+                    f"评审意见 - {reviewer_role} - {question[:50]}",
+                    review.content[:800],
+                    tags=(model_types or []) + ["review"],
+                )
+
+    @staticmethod
+    def _has_code_issues(content: str) -> bool:
+        """检测代码审查是否发现了实质问题。"""
+        indicators = ["bug", "错误", "修复", "性能问题", "边界条件", "未处理", "溢出", "死循环"]
+        return any(w in content for w in indicators)
+
+    @staticmethod
+    def _has_review_issues(content: str) -> bool:
+        """检测评审意见是否指出了实质问题。"""
+        indicators = ["需要修改", "问题", "不足", "建议改进", "错误", "遗漏", "不完整"]
+        return any(w in content for w in indicators)
 
     def stats(self) -> dict:
         """记忆系统统计。"""

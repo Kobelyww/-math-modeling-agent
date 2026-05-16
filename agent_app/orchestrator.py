@@ -423,6 +423,7 @@ class Orchestrator:
         on_synthesis_token: Callable[[str], None] | None = None,
         enable_data_engineer: bool = False,
     ) -> WorkflowResult:
+        mem = self._get_stm()
         rag_ctx = self._rag_context(question, top_k)
 
         data_ctx = ""
@@ -430,24 +431,34 @@ class Orchestrator:
             data_out = self.data_engineer.invoke(
                 f"任务：{question}\n\nRAG参考：\n{rag_ctx}"
             )
+            self._post(mem, "data_engineer", data_out)
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         model_out = self.modeler.stream(
             f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}",
             on_token=on_modeling_token,
         )
+        self._post(mem, "modeling", model_out)
+
         prog_out = self.programmer.stream(
             f"任务：{question}\n\n建模专家输出：\n{model_out}\n\nRAG参考：\n{rag_ctx}",
             on_token=on_programming_token,
         )
+        self._post(mem, "programming", prog_out)
+
         write_out = self.writer.stream(
             f"任务：{question}\n\n建模专家输出：\n{model_out}\n\n编程专家输出：\n{prog_out}\n\nRAG参考：\n{rag_ctx}",
             on_token=on_writing_token,
         )
+        self._post(mem, "writing", write_out)
+
         synth_out = self.synthesizer.stream(
             f"任务：{question}\n\n建模专家：\n{model_out}\n\n编程专家：\n{prog_out}\n\n写作专家：\n{write_out}",
             on_token=on_synthesis_token,
         )
+        self._post(mem, "synthesizer", synth_out)
+
+        self._maybe_archive(question, synth_out)
 
         return WorkflowResult(
             question=question,
@@ -455,4 +466,5 @@ class Orchestrator:
             programming=StageResult("编程智能体", prog_out),
             writing=StageResult("写作智能体", write_out),
             synthesis=synth_out,
+            memory=mem,
         )
