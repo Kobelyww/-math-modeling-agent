@@ -20,7 +20,7 @@ DataEngineer → Modeler → Programmer → CodeDebugger → Writer → (Reviewe
 - **4 种协作策略**：串行流水线 / 深度反思（LLM 语义判断退出）/ 快速并行 / 流式输出
 - **产出即交付**：Programmer 输出可运行 Python 代码，Writer 输出可编译 LaTeX 论文，Synthesizer 打包最终交付
 - **混合 RAG 检索**：TF-IDF 关键词匹配 + 阿里云百练 text-embedding-v2（1536 维）语义检索，加权融合
-- **长短时记忆**：短期（进程内消息总线 + Redis 持久化 + TTL 自动过期）+ 长期（Redis Stack: RedisJSON + RediSearch 全文搜索，或 SQLite+FTS5 回退）
+- **长短时记忆**：短期（进程内消息总线 + Redis 持久化 + TTL 自动过期）+ 长期（Redis Stack: RedisJSON + RediSearch 全文搜索，或 SQLite+FTS5 回退）+ 求解自动归档（problem/pattern/mistake 三类知识）+ 代码审查问题自动记录
 - **Nature Skills**：学术写作铁律、Nature 期刊绑图模板（9 个）、模型选型速查
 - **18 个工具**：Python 安全沙箱（512MB 限制 + 危险函数拦截）、LaTeX 编译、文献检索（arXiv/Semantic Scholar/Crossref）
 - **三界面**：FastAPI Web（WebSocket 实时流式 + 代码导出/LaTeX 编译）+ Streamlit GUI + CLI
@@ -44,6 +44,7 @@ python -m agent_app.evolution.evolve --generations 3 --games 20
 
 | 日期 | 更新 | 说明 |
 |------|------|------|
+| 05-16 | 记忆系统完善 | solve_stream 接入记忆、mistake 自动归档、print→logging、.env.example、死代码清理 |
 | 05-15 | Redis Stack 记忆升级 | RedisJSON + RediSearch 全文搜索，STM TTL 持久化，Docker 一键部署，自动回退 SQLite |
 | 05-14 | 长短时记忆系统 | STM 消息总线 + LTM SQLite/FTS5 持久化 + 上下文自动压缩 |
 | 05-14 | 百练 Embedding RAG | text-embedding-v2 混合检索，TF-IDF + 语义加权融合 |
@@ -74,8 +75,7 @@ python -m agent_app.evolution.evolve --generations 3 --games 20
 ```bash
 git clone git@github.com:Kobelyww/-math-modeling-agent.git
 cd -math-modeling-agent
-echo 'DEEPSEEK_API_KEY=你的key' >> .env
-echo 'EMBEDDING_API_KEY=你的百练key' >> .env
+cp .env.example .env   # 编辑 .env 填入你的 API Key
 pip install -r agent_app/requirements.txt
 
 # 启动 Redis Stack（记忆系统后端）
@@ -101,6 +101,7 @@ agent_app/
 └── README.md
 
 docker-compose.yml        # Redis Stack 一键部署
+.env.example              # 环境变量模板（复制为 .env 后填入密钥）
 redis_utils.py            # 通用 Redis 工具（连接/JSON/搜索）
 env_utils.py              # 环境变量加载（API Key + Redis 配置）
 ```
