@@ -58,11 +58,11 @@ def radar_factory(num_vars, frame='circle'):
 
         def _close_line(self, line):
             x, y = line.get_data()
-            # FIXME: markers at x[0], y[0] get doubled-up
             if x[0] != x[-1]:
                 x = np.append(x, x[0])
                 y = np.append(y, y[0])
                 line.set_data(x, y)
+                line.set_markevery([True] * (len(x) - 1) + [False])
 
         def set_varlabels(self, labels):
             self.set_thetagrids(np.degrees(theta), labels, fontsize=10, fontweight='bold')

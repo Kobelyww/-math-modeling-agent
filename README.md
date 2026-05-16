@@ -16,13 +16,14 @@ DataEngineer → Modeler → Programmer → CodeDebugger → Writer → (Reviewe
 
 ### 核心特性
 
-- **7 大智能体**：数据工程师 / 建模 / 编程 / 代码审查 / 写作 / 评审 / 总控
+- **8 大模块**：7 个专业 Agent + Hermes 自进化引擎
 - **4 种协作策略**：串行流水线 / 深度反思（LLM 语义判断退出）/ 快速并行 / 流式输出
 - **产出即交付**：Programmer 输出可运行 Python 代码，Writer 输出可编译 LaTeX 论文，Synthesizer 打包最终交付
 - **混合 RAG 检索**：TF-IDF 关键词匹配 + 阿里云百练 text-embedding-v2（1536 维）语义检索，加权融合
 - **长短时记忆**：短期（进程内消息总线 + Redis 持久化 + TTL 自动过期）+ 长期（Redis Stack: RedisJSON + RediSearch 全文搜索，或 SQLite+FTS5 回退）+ 求解自动归档（problem/pattern/mistake 三类知识）+ 代码审查问题自动记录
 - **Nature Skills**：学术写作铁律、Nature 期刊绑图模板（9 个）、模型选型速查
 - **18 个工具**：Python 安全沙箱（512MB 限制 + 危险函数拦截）、LaTeX 编译、文献检索（arXiv/Semantic Scholar/Crossref）
+- **Hermes 自进化**：7 步文本优化管线（SELECT→BUILD→BASELINE→CONSTRAIN→OPTIMIZE→VALIDATE→DEPLOY），自动优化 Agent Prompt
 - **三界面**：FastAPI Web（WebSocket 实时流式 + 代码导出/LaTeX 编译）+ Streamlit GUI + CLI
 - **安全工程**：AST 白名单计算器、错误分类重试（401/403 不重试）、LaTeX 公式分词保护
 
@@ -32,8 +33,8 @@ DataEngineer → Modeler → Programmer → CodeDebugger → Writer → (Reviewe
 # Web 界面（推荐）
 uvicorn agent_app.web.main:app --reload --port 8000
 
-# 一键进化（Hermes 风格 7 步文本优化管线）
-python -m agent_app.evolution.evolve --generations 3 --games 20
+# Hermes 自进化（7 步文本优化管线，自动优化 Agent Prompt）
+python -m agent_app.evolution.evolve --generations 3 --tasks 5
 ```
 
 详见 [agent_app/README.md](./agent_app/README.md)
@@ -44,6 +45,7 @@ python -m agent_app.evolution.evolve --generations 3 --games 20
 
 | 日期 | 更新 | 说明 |
 |------|------|------|
+| 05-16 | Hermes 自进化引擎 | 7 步管线（SELECT→DEPLOY），GEPA 优化器，多维适应度评估，Prompt 自动变异择优 |
 | 05-16 | 记忆系统完善 | solve_stream 接入记忆、mistake 自动归档、print→logging、.env.example、死代码清理 |
 | 05-15 | Redis Stack 记忆升级 | RedisJSON + RediSearch 全文搜索，STM TTL 持久化，Docker 一键部署，自动回退 SQLite |
 | 05-14 | 长短时记忆系统 | STM 消息总线 + LTM SQLite/FTS5 持久化 + 上下文自动压缩 |
@@ -91,7 +93,7 @@ agent_app/
 ├── web/                  # FastAPI Web 界面 + WebSocket 流式
 ├── nature_skills/        # MCM 学术写作 + 可视化 + 模型选型技能包
 ├── memory/               # 长短时记忆系统（Redis Stack / SQLite + 压缩）
-├── evolution/            # Hermes 风格自进化管线（7 步文本优化）
+├── evolution/            # Hermes 自进化（7 步管线 + GEPA + 适应度评估）
 ├── agents.py             # 7 个专业 Agent（含 CodeDebugger）
 ├── orchestrator.py       # 编排器（4 种策略 + LTM 召回 + 自动归档）
 ├── rag.py                # 混合 RAG（TF-IDF + Embedding 加权融合）

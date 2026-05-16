@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 from ..config import APP_ROOT, load_settings
 from ..nature_skills import list_available_skills
 from ..orchestrator import Orchestrator, WorkflowResult
+from ..memory import MemoryManager
 from ..rag import PaperRAG
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -42,7 +43,15 @@ if _rag.embedding_api_key and _rag.chunks:
     except Exception as e:
         logger.info("[RAG] Embedding 索引暂不可用: %s", e)
 
-_orch = Orchestrator(_settings, rag=_rag)
+_init_memory = None
+try:
+    from ..memory.redis_backends import _redis_client
+    _redis_client().ping()
+    _init_memory = MemoryManager(use_redis=True)
+except Exception:
+    _init_memory = MemoryManager(use_redis=False)
+
+_orch = Orchestrator(_settings, rag=_rag, memory_manager=_init_memory)
 
 
 @router.get("/", response_class=HTMLResponse)
