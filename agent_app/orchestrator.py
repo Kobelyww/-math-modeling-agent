@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -723,5 +724,240 @@ class Orchestrator:
             errors=errors,
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
+            elapsed_seconds=time_module.monotonic() - started_at,
+        )
+
+    # ═════════════════════════════════════════════════════════════════
+    # 流式变体（review / parallel）
+    # ═════════════════════════════════════════════════════════════════
+
+    def solve_with_review_stream(
+        self,
+        question: str,
+        top_k: int = 6,
+        max_review_rounds: int = 1,
+        on_modeling_token: Callable[[str], None] | None = None,
+        on_programming_token: Callable[[str], None] | None = None,
+        on_writing_token: Callable[[str], None] | None = None,
+        on_synthesis_token: Callable[[str], None] | None = None,
+        enable_data_engineer: bool = False,
+        conditions: list[BaseCondition] | None = None,
+    ) -> WorkflowResult:
+        """solve_with_review 的流式版本：主阶段输出 token 实时推送。"""
+        mem = self._get_stm()
+        rag_ctx = self._rag_context(question, top_k)
+        errors: list[str] = []
+        token_budget = TokenBudgetCondition(max_total_tokens=200000)
+        timeout = TimeoutCondition(timeout_seconds=600.0)
+        timeout.start()
+        started_at = time_module.monotonic()
+
+        active_conditions: list[BaseCondition] = [
+            MaxRoundCondition(max_review_rounds), token_budget, timeout,
+        ]
+        if conditions:
+            active_conditions.extend(conditions)
+
+        data_ctx, data_out = "", ""
+        if enable_data_engineer:
+            data_out = self._safe_invoke(
+                self.data_engineer,
+                f"任务：{question}\n\nRAG参考：\n{rag_ctx}",
+                "data_engineer", mem, errors, token_budget=token_budget,
+            )
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
+        # 建模 + 评审循环
+        model_in = self._build_prompt(question, "", rag_ctx,
+                                      {"数据预处理结果": data_out} if data_ctx else None)
+        model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
+                                      token_budget=token_budget, on_token=on_modeling_token)
+        model_review = ""
+        for rnd in range(max_review_rounds):
+            stop_reason = self._check_conditions(active_conditions, mem, rnd, timeout.elapsed)
+            if stop_reason:
+                break
+            review = self.reviewer.review("建模智能体", model_out, question)
+            self._post(mem, "reviewer(modeling)", review, triggered_by="modeling")
+            if rnd > 0 and not self._review_needs_revision(review, "建模"):
+                break
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+                "你的上一版输出": model_out, "评审反馈": review,
+            })
+            model_out = self._safe_stream(self.modeler, refine_prompt, "modeling", mem, errors,
+                                          triggered_by="reviewer(modeling)",
+                                          token_budget=token_budget, on_token=on_modeling_token)
+            model_review = review
+        mem.advance_round()
+
+        # 编程 + 评审循环
+        stm_ctx = self._get_stm_context(mem)
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
+        prog_out = self._safe_stream(self.programmer, prog_in, "programming", mem, errors,
+                                     triggered_by="modeling", token_budget=token_budget,
+                                     on_token=on_programming_token)
+        prog_review = ""
+        for rnd in range(max_review_rounds):
+            stop_reason = self._check_conditions(active_conditions, mem, rnd, timeout.elapsed)
+            if stop_reason:
+                break
+            review = self.reviewer.review("编程智能体", prog_out, question)
+            self._post(mem, "reviewer(programming)", review, triggered_by="programming")
+            if rnd > 0 and not self._review_needs_revision(review, "编程"):
+                break
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+                "建模方案": model_out, "你的上一版输出": prog_out, "评审反馈": review,
+            })
+            prog_out = self._safe_stream(self.programmer, refine_prompt, "programming", mem, errors,
+                                         triggered_by="reviewer(programming)",
+                                         token_budget=token_budget, on_token=on_programming_token)
+            prog_review = review
+
+        debug_out = self._safe_invoke(
+            self.code_debugger,
+            self._build_prompt(question, self._get_stm_context(mem), "",
+                               {"编程输出（已评审修改）": prog_out[:4000]}),
+            "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
+        )
+        mem.advance_round()
+
+        # 写作 + 评审循环
+        stm_ctx = self._get_stm_context(mem)
+        write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
+            "建模方案": model_out, "编程方案": prog_out, "代码审查": debug_out,
+        })
+        write_out = self._safe_stream(self.writer, write_in, "writing", mem, errors,
+                                      triggered_by="code_debugger", token_budget=token_budget,
+                                      on_token=on_writing_token)
+        write_review = ""
+        for rnd in range(max_review_rounds):
+            stop_reason = self._check_conditions(active_conditions, mem, rnd, timeout.elapsed)
+            if stop_reason:
+                break
+            review = self.reviewer.review("写作智能体", write_out, question)
+            self._post(mem, "reviewer(writing)", review, triggered_by="writing")
+            if rnd > 0 and not self._review_needs_revision(review, "写作"):
+                break
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+                "建模方案": model_out, "编程方案": prog_out,
+                "你的上一版输出": write_out, "评审反馈": review,
+            })
+            write_out = self._safe_stream(self.writer, refine_prompt, "writing", mem, errors,
+                                          triggered_by="reviewer(writing)",
+                                          token_budget=token_budget, on_token=on_writing_token)
+            write_review = review
+        mem.advance_round()
+
+        # 总控整合
+        stm_ctx = self._get_stm_context(mem)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案（已评审）": model_out,
+            "编程方案（已评审）": prog_out,
+            "写作方案（已评审）": write_out,
+        })
+        synth_out = self._safe_stream(self.synthesizer, synth_in, "synthesizer", mem, errors,
+                                      triggered_by="writing", token_budget=token_budget,
+                                      on_token=on_synthesis_token)
+
+        self._maybe_archive(question, synth_out)
+        self._reset_conditions(active_conditions)
+
+        return WorkflowResult(
+            question=question,
+            modeling=StageResult("建模智能体", model_out, model_review, mem.round_idx),
+            programming=StageResult("编程智能体", prog_out, prog_review, mem.round_idx),
+            writing=StageResult("写作智能体", write_out, write_review, mem.round_idx),
+            synthesis=synth_out, memory=mem, errors=errors,
+            total_prompt_tokens=token_budget.accumulated, total_completion_tokens=0,
+            elapsed_seconds=time_module.monotonic() - started_at,
+        )
+
+    def solve_parallel_stream(
+        self,
+        question: str,
+        top_k: int = 6,
+        on_modeling_token: Callable[[str], None] | None = None,
+        on_programming_token: Callable[[str], None] | None = None,
+        on_writing_token: Callable[[str], None] | None = None,
+        on_synthesis_token: Callable[[str], None] | None = None,
+        enable_data_engineer: bool = False,
+    ) -> WorkflowResult:
+        """solve_parallel 的流式版本：建模 → 编程/写作并行流式 → 总控整合流式。"""
+        mem = self._get_stm()
+        rag_ctx = self._rag_context(question, top_k)
+        errors: list[str] = []
+        token_budget = TokenBudgetCondition(max_total_tokens=200000)
+        started_at = time_module.monotonic()
+
+        data_ctx, data_out = "", ""
+        if enable_data_engineer:
+            data_out = self._safe_invoke(
+                self.data_engineer,
+                f"任务：{question}\n\nRAG参考：\n{rag_ctx}",
+                "data_engineer", mem, errors, token_budget=token_budget,
+            )
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
+        model_in = self._build_prompt(question, "", rag_ctx,
+                                      {"数据预处理结果": data_out} if data_ctx else None)
+        model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
+                                      token_budget=token_budget, on_token=on_modeling_token)
+        stm_ctx = self._get_stm_context(mem)
+
+        def run_programmer_stream():
+            return self.programmer.stream(
+                self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out}),
+                on_token=on_programming_token,
+            )
+
+        def run_writer_stream():
+            return self.writer.stream(
+                self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out}),
+                on_token=on_writing_token,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            pf = executor.submit(run_programmer_stream)
+            wf = executor.submit(run_writer_stream)
+            try:
+                prog_out = pf.result()
+            except Exception as exc:
+                prog_out = f"[编程智能体 执行失败: {exc}]"
+                errors.append(f"[programming] {exc}")
+            try:
+                write_out = wf.result()
+            except Exception as exc:
+                write_out = f"[写作智能体 执行失败: {exc}]"
+                errors.append(f"[writing] {exc}")
+
+        self._post(mem, "programming", prog_out, triggered_by="modeling")
+        self._post(mem, "writing", write_out, triggered_by="modeling")
+
+        debug_out = self._safe_invoke(
+            self.code_debugger,
+            self._build_prompt(question, self._get_stm_context(mem), "",
+                               {"编程输出": prog_out[:4000]}),
+            "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
+        )
+        mem.advance_round()
+
+        stm_ctx = self._get_stm_context(mem)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案": model_out, "编程方案": prog_out,
+            "代码审查": debug_out, "写作方案": write_out,
+        })
+        synth_out = self._safe_stream(self.synthesizer, synth_in, "synthesizer", mem, errors,
+                                      triggered_by="writing", token_budget=token_budget,
+                                      on_token=on_synthesis_token)
+
+        self._maybe_archive(question, synth_out)
+
+        return WorkflowResult(
+            question=question,
+            modeling=StageResult("建模智能体", model_out),
+            programming=StageResult("编程智能体", prog_out),
+            writing=StageResult("写作智能体", write_out),
+            synthesis=synth_out, memory=mem, errors=errors,
+            total_prompt_tokens=token_budget.accumulated, total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
         )

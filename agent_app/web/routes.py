@@ -79,43 +79,54 @@ async def solve(data: dict):
 
 
 async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
-    """后台运行协作任务，结果通过 WebSocket 推送。"""
+    """后台运行协作任务，全部使用流式输出推送 token。"""
     async with _active_tasks_lock:
         ws = _active_tasks.get(task_id)
     if not ws:
         return
 
+    # 流式回调：token 推送到 WebSocket
+    on_m = (lambda t: _sync_send_token(ws, "modeling", t, 0.0, 0.25)) if ws else None
+    on_p = (lambda t: _sync_send_token(ws, "programming", t, 0.25, 0.5)) if ws else None
+    on_w = (lambda t: _sync_send_token(ws, "writing", t, 0.5, 0.75)) if ws else None
+    on_s = (lambda t: _sync_send_token(ws, "synthesis", t, 0.75, 1.0)) if ws else None
+
     try:
         await ws.send_json({"type": "start", "task_id": task_id, "strategy": strategy})
 
-        if strategy in ("review", "parallel"):
-            run_fn = _orch.solve_with_review if strategy == "review" else _orch.solve_parallel
+        if strategy == "review":
             result = await asyncio.wait_for(
-                asyncio.to_thread(run_fn, question, top_k=top_k),
+                asyncio.to_thread(
+                    _orch.solve_with_review_stream,
+                    question, top_k=top_k,
+                    on_modeling_token=on_m, on_programming_token=on_p,
+                    on_writing_token=on_w, on_synthesis_token=on_s,
+                ),
                 timeout=SOLVE_TASK_TIMEOUT,
             )
-            for agent, content in [
-                ("modeling", result.modeling.content),
-                ("programming", result.programming.content),
-                ("writing", result.writing.content),
-                ("synthesis", result.synthesis),
-            ]:
-                await ws.send_json({"type": "phase", "agent": agent, "status": "completed", "result": content})
+        elif strategy == "parallel":
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _orch.solve_parallel_stream,
+                    question, top_k=top_k,
+                    on_modeling_token=on_m, on_programming_token=on_p,
+                    on_writing_token=on_w, on_synthesis_token=on_s,
+                ),
+                timeout=SOLVE_TASK_TIMEOUT,
+            )
         else:
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     _orch.solve_stream,
-                    question,
-                    top_k=top_k,
-                    on_modeling_token=lambda t: _sync_send_token(ws, "modeling", t, 0.0, 0.25),
-                    on_programming_token=lambda t: _sync_send_token(ws, "programming", t, 0.25, 0.5),
-                    on_writing_token=lambda t: _sync_send_token(ws, "writing", t, 0.5, 0.75),
-                    on_synthesis_token=lambda t: _sync_send_token(ws, "synthesis", t, 0.75, 1.0),
+                    question, top_k=top_k,
+                    on_modeling_token=on_m, on_programming_token=on_p,
+                    on_writing_token=on_w, on_synthesis_token=on_s,
                 ),
                 timeout=SOLVE_TASK_TIMEOUT,
             )
-            for a in ["modeling", "programming", "writing", "synthesis"]:
-                await ws.send_json({"type": "phase", "agent": a, "status": "completed"})
+
+        for a in ["modeling", "programming", "writing", "synthesis"]:
+            await ws.send_json({"type": "phase", "agent": a, "status": "completed"})
 
         await ws.send_json({
             "type": "done",
