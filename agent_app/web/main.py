@@ -9,11 +9,25 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from starlette.middleware.base import BaseHTTPMiddleware
+
 from .routes import _token_drainer, router
 
 WEB_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="数模多智能体协作系统", version="2.0")
+
+class _NoCacheMiddleware(BaseHTTPMiddleware):
+    """对 /static/ 路径添加 no-cache 头，防止浏览器缓存旧版 JS/CSS。"""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
+
+app = FastAPI(title="数模多智能体协作系统", version="2.1")
+app.add_middleware(_NoCacheMiddleware)
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 app.include_router(router)
 
