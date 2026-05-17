@@ -4,18 +4,18 @@
 
 ## 功能概览
 
-- **7 个专业智能体**：数据 / 建模 / 编程 / 审码 / 写作 / 评审 / 总控，分工协作
-- **4 种协作策略**：串行流水线、评审反思迭代、快速并行、流式输出（全部含容错恢复）
+- **7 个专业智能体**：数据 / 建模 / 编程 / 审码 / 写作 / 评审 / 总控，分工协作 + 因果追溯
+- **4 种协作策略**：串行流水线、评审反思迭代（6 种可组合终止条件）、快速并行、流式输出
 - **RAG 知识库**：TF-IDF + Embedding 混合检索，支持 PDF/MD/TXT，PDF 图像理解
-- **长短时记忆系统**：STM 两段式存储 + 3 策略上下文压缩 + LTM SQLite/Redis 持久化
+- **长短时记忆系统**：STM 两段式 + 3 策略压缩 + LTM LLM 自动索引（scope/importance）+ 复合重排序召回
 - **18 个工具**：Python 安全沙箱、LaTeX 编译、文献检索、数据分析、笔记管理
-- **三界面**：CLI 命令行 + Streamlit 图形界面 + Web (FastAPI)
-- **文献检索**：接入 arXiv、Semantic Scholar、Crossref 三大免费学术 API
-- **流式输出**：所有 Agent 支持 token 级实时流式生成
+- **三界面**：CLI + Streamlit GUI + FastAPI Web（WebSocket 流式 + 健康检查）
+- **Token 追踪**：捕获真实 LLM token 消耗，费用估算（DeepSeek V4 定价）
+- **状态检查点**：WorkflowResult JSON 序列化/反序列化，支持中断恢复
 - **容错恢复**：Agent 失败返回降级文本，保留部分结果不丢失
-- **自动重试**：LLM 调用失败自动指数退避重试（区分可重试/不可重试错误）
-- **智能体自进化**：Hermes 风格 7 步 prompt 优化管道 + GEPA 遗传进化
-- **49 个测试**：覆盖记忆系统、压缩器、重试逻辑、自进化
+- **自动重试**：LLM 调用失败指数退避重试（区分可重试/不可重试错误）
+- **智能体自进化**：Hermes 7 步 prompt 优化 + GEPA 遗传进化
+- **65 个测试**：终止条件 / 记忆系统 / 压缩器 / 重试逻辑 / 自进化
 
 ## 项目结构
 
@@ -26,8 +26,9 @@ agent_app/
 ├── llm.py                   # LLM 工厂（ChatDeepSeek）
 ├── base.py                  # Agent 基类（invoke / stream / 重试 / 错误分类）
 ├── agents.py                # 7 个专业 Agent + 工厂函数
-├── orchestrator.py          # 编排器（4 种协作策略 + 压缩上下文注入）
-├── tools.py                 # 工具集（15 个工具）
+├── orchestrator.py          # 编排器（4 策略 + 6 终止条件 + 检查点 + 费用估算）
+├── conditions.py            # 6 种可组合终止条件（Token/超时/轮次/质量/外部）
+├── tools.py                 # 工具集（18 个工具）
 ├── rag.py                   # 论文知识库（TF-IDF + Embedding 混合检索）
 ├── literature.py            # 学术文献检索（arXiv / Semantic Scholar / Crossref）
 ├── cli.py                   # 命令行入口
@@ -342,6 +343,29 @@ dashscope       # 可选，百练 Embedding / Qwen-VL 需要
 ```
 
 ## 更新日志
+
+### 2026-05-17：跨项目架构优化（借鉴 AutoGen / CrewAI / MetaGPT）
+
+**Token 追踪与终止条件（AutoGen）**
+- `extract_token_usage()` 从 LLM 响应提取真实 prompt/completion tokens
+- `AgentMessage` 新增 `prompt_tokens`、`completion_tokens`、`triggered_by` 字段
+- 新建 `conditions.py`：6 种可组合终止条件（`MaxRound`、`TokenBudget`、`Timeout`、`QualityThreshold`、`External`、`Compound`）
+- `solve_with_review` 每轮检查终止条件，任一触发即优雅退出
+- `WorkflowResult.save_state()` / `load_state()` JSON 检查点，支持中断恢复
+
+**LLM 驱动记忆索引（CrewAI）**
+- `MemoryManager._analyze_for_archive()` 调用 LLM 自动提取 `scope`、`importance`、`model_types`
+- LTM 新增 `importance`/`scope` 字段，层级 scope 组织 + `search_by_scope()` 前缀搜索
+- 复合重排序：FTS5 rank + 时间衰减（180 天半衰期）+ 访问热度 + 重要性
+- 过采样因子 2x + `adaptive_recall()` 置信度驱动加深搜索
+
+**因果追溯与成本追踪（MetaGPT）**
+- `AgentMessage.triggered_by` 记录上游 Agent，`format_for_context()` 展示 ← 追溯链
+- `create_llm()` 支持 `max_tokens`，`.env` 支持 `DEEPSEEK_{ROLE}_MAX_TOKENS` 按 Agent 限制
+- `WorkflowResult` 统计 `total_prompt_tokens`、`total_completion_tokens`、`estimated_cost_usd`、`elapsed_seconds`
+- DeepSeek V4 定价费用估算（$0.27/1M prompt + $1.10/1M completion）
+
+**测试 49 → 65**（新增 16 个：终止条件、Token 提取、AgentMessage 字段）
 
 ### 2026-05-17：工程质量全面升级
 
