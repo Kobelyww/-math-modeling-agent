@@ -271,9 +271,12 @@ function onPDFSelected() {
       questionEl.value = data.text;
       questionEl.style.border = '2px solid var(--green)';
       setTimeout(function() { questionEl.style.border = ''; }, 2000);
-      statusEl.textContent =
-        '✓ 已提取 ' + data.pages + ' 页, ' + data.full_length + ' 字符' +
-        (data.truncated ? ' (已截取前8000字)' : '');
+      var details = '✓ ' + data.pages + ' 页, ' + data.full_length + ' 字符';
+      if (data.table_count) details += ', ' + data.table_count + ' 个表格';
+      if (data.image_count) details += ', ' + data.image_count + ' 张图片';
+      if (data.image_described) details += '(' + data.image_described + '张已识别)';
+      details += data.truncated ? ' (已截取前12000字)' : '';
+      statusEl.textContent = details;
       statusEl.style.color = 'var(--green)';
       setStatus('题目已从PDF提取，点击下方按钮开始分析', 'var(--green)');
     })

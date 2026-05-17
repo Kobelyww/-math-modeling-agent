@@ -208,11 +208,28 @@ async def status():
     }
 
 
+def _md_table_from_cells(cells: list, row_count: int, col_count: int) -> str:
+    """将表格 cell 列表转为 Markdown 表格字符串。"""
+    matrix = [["" for _ in range(col_count)] for _ in range(row_count)]
+    for cell in cells:
+        r = min(cell["row"], row_count - 1)
+        c = min(cell["col"], col_count - 1)
+        matrix[r][c] = str(cell.get("text", "")).replace("\n", " ").strip()
+
+    lines = []
+    for ri, row in enumerate(matrix):
+        lines.append("| " + " | ".join(row) + " |")
+        if ri == 0:
+            lines.append("| " + " | ".join(["---"] * col_count) + " |")
+    return "\n".join(lines)
+
+
 @router.post("/api/upload/pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    """上传 PDF 文件，提取文本作为题目内容。
+    """上传 PDF 文件，提取文本、表格、图片描述作为题目内容。
 
-    使用 PyMuPDF (fitz) 从内存直接读取 PDF，返回前 8000 字符。
+    使用 PyMuPDF 提取：文字 + 表格（转 Markdown）+ 嵌入图片（可选 VL 描述）。
+    返回前 12000 字符。
     """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         return JSONResponse({"error": "仅支持 PDF 文件"}, status_code=400)
@@ -224,30 +241,124 @@ async def upload_pdf(file: UploadFile = File(...)):
         if len(content) < 100:
             return JSONResponse({"error": "文件过小或损坏"}, status_code=400)
 
-        # PyMuPDF 支持从 bytes 直接读取（无需临时文件）
         import fitz
         doc = fitz.open(stream=content, filetype="pdf")
-        text_parts = []
-        for page in doc:
-            text = page.get_text()
-            if text.strip():
-                text_parts.append(text.strip())
+
+        page_parts: list[str] = []
+        table_count = 0
+        image_count = 0
+
+        for pi, page in enumerate(doc):
+            page_lines: list[str] = []
+            page_lines.append(f"── 第 {pi + 1} 页 ──")
+
+            # 1. 提取文本
+            text = page.get_text().strip()
+            if text:
+                page_lines.append(text)
+
+            # 2. 提取表格
+            tabs = page.find_tables()
+            if tabs and tabs.tables:
+                for t in tabs.tables:
+                    cells = []
+                    if hasattr(t, "cells"):
+                        for cell in t.cells:
+                            cells.append({
+                                "row": getattr(cell, "row", 0) if not isinstance(cell, dict) else cell.get("row", 0),
+                                "col": getattr(cell, "col", 0) if not isinstance(cell, dict) else cell.get("col", 0),
+                                "text": getattr(cell, "text", "") if not isinstance(cell, dict) else cell.get("text", ""),
+                            })
+                    rc = getattr(t, "row_count", 0)
+                    cc = getattr(t, "col_count", 0)
+                    if cells and rc > 0 and cc > 0:
+                        page_lines.append(f"\n[表格 {table_count + 1}]")
+                        page_lines.append(_md_table_from_cells(cells, rc, cc))
+                        table_count += 1
+
+            # 3. 检测嵌入图片
+            imgs = page.get_images(full=True)
+            if imgs:
+                page_lines.append(f"\n[本页含 {len(imgs)} 张嵌入图片]")
+                image_count += len(imgs)
+
+            page_parts.append("\n".join(page_lines))
+
         doc.close()
 
-        full_text = "\n\n".join(text_parts)
-        if not full_text.strip():
-            return JSONResponse({"error": "PDF 无可提取文本（可能是扫描件图片）"}, status_code=400)
+        full_text = "\n\n".join(page_parts)
+        if not any(line for line in page_parts if "──" not in line):
+            return JSONResponse({"error": "PDF 无可提取内容（可能是扫描件图片）"}, status_code=400)
 
-        extracted = full_text[:8000]
-        page_count = len(text_parts)
+        # 图片描述：异步用 VL 模型（如果有 API key）
+        image_descriptions: list[str] = []
+        vl_api_key = _settings.embedding_api_key
+        if image_count > 0 and vl_api_key:
+            try:
+                import base64 as _b64
+                # 重新打开提取图片
+                doc2 = fitz.open(stream=content, filetype="pdf")
+                img_descs = []
+                seen = 0
+                for page in doc2:
+                    for img_tuple in page.get_images(full=True):
+                        if seen >= 8:
+                            break
+                        xref = img_tuple[0]
+                        try:
+                            base_image = doc2.extract_image(xref)
+                            if base_image and base_image.get("image"):
+                                img_bytes = base_image["image"]
+                                if len(img_bytes) < 2048:
+                                    continue
+                                b64 = _b64.b64encode(img_bytes).decode()
+                                from dashscope import MultiModalConversation
+                                resp = MultiModalConversation.call(
+                                    model="qwen-vl-plus",
+                                    api_key=vl_api_key,
+                                    messages=[{
+                                        "role": "user",
+                                        "content": [
+                                            {"image": f"data:image/png;base64,{b64}"},
+                                            {"text": "请简要描述这张图片的内容（中文，100字以内）。如果是数据表格或图表，说明关键数据和趋势。"},
+                                        ],
+                                    }],
+                                )
+                                if resp.status_code == 200:
+                                    out = resp.output.get("choices", [{}])[0].get("message", {}).get("content", "")
+                                    if isinstance(out, list):
+                                        out = " ".join(
+                                            i.get("text", "") if isinstance(i, dict) else str(i) for i in out
+                                        )
+                                    if out.strip():
+                                        img_descs.append(f"[图片 {len(img_descs) + 1} 描述] {out.strip()}")
+                                seen += 1
+                        except Exception:
+                            continue
+                doc2.close()
+                image_descriptions = img_descs
+            except (ImportError, Exception):
+                pass
+
+        # 组装最终文本：正文 + 图片描述
+        final_parts = [full_text]
+        if image_descriptions:
+            final_parts.append("\n\n── 图片内容描述 ──")
+            final_parts.extend(image_descriptions)
+
+        combined = "\n\n".join(final_parts)
+        extracted = combined[:12000]
 
         return {
             "filename": file.filename,
-            "pages": page_count,
+            "pages": doc.page_count if hasattr(doc, 'page_count') else len(page_parts),
             "text": extracted,
             "text_preview": extracted[:300] + ("..." if len(extracted) > 300 else ""),
-            "truncated": len(full_text) > 8000,
-            "full_length": len(full_text),
+            "truncated": len(combined) > 12000,
+            "full_length": len(combined),
+            "table_count": table_count,
+            "image_count": image_count,
+            "image_described": len(image_descriptions),
         }
     except ImportError:
         return JSONResponse({"error": "PyMuPDF 未安装，无法解析 PDF"}, status_code=500)
