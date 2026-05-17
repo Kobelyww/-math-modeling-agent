@@ -244,6 +244,8 @@ async function onPDFSelected() {
   const file = fileInput.files[0];
   if (!file) return;
 
+  console.log('[PDF Upload]', file.name, file.size, 'bytes');
+
   document.getElementById('pdf-name').textContent = file.name;
   const statusEl = document.getElementById('upload-status');
   statusEl.textContent = '提取中...';
@@ -255,6 +257,7 @@ async function onPDFSelected() {
   try {
     const resp = await fetch('/api/upload/pdf', { method: 'POST', body: formData });
     const data = await resp.json();
+    console.log('[PDF Upload] response:', data);
     if (data.error) {
       statusEl.textContent = '✗ ' + data.error;
       statusEl.style.color = 'var(--red)';
@@ -266,9 +269,12 @@ async function onPDFSelected() {
       (data.truncated ? ' (已截取前8000字)' : '');
     statusEl.style.color = 'var(--green)';
   } catch (e) {
+    console.error('[PDF Upload]', e);
     statusEl.textContent = '上传失败: ' + e.message;
     statusEl.style.color = 'var(--red)';
   }
+  // Reset file input so same file can be re-selected
+  fileInput.value = '';
 }
 
 loadSkills();

@@ -30,8 +30,8 @@
         <h3>输入问题</h3>
         <textarea id="question" rows="4" placeholder="例如：建立新能源车充电站布局优化模型"></textarea>
         <div class="upload-row">
-          <input type="file" id="pdf-file" accept=".pdf" onchange="onPDFSelected()" style="display:none">
-          <button class="btn-sm" onclick="document.getElementById('pdf-file').click()">📄 上传PDF</button>
+          <label for="pdf-file" class="btn-sm" style="cursor:pointer; padding: 6px 12px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); color: var(--text);">📄 上传PDF题目</label>
+          <input type="file" id="pdf-file" accept=".pdf" onchange="onPDFSelected()" style="position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;">
           <span id="pdf-name" class="upload-hint"></span>
         </div>
         <div id="upload-status" class="status-text" style="font-size: 0.8rem;"></div>

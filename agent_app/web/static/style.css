@@ -108,7 +108,8 @@ button:hover { opacity: 0.85; }
 .code-result pre { margin: 0; white-space: pre-wrap; color: var(--text-dim); }
 
 .upload-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-.upload-hint { color: var(--text-dim); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-hint { color: var(--text-dim); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.btn-sm:hover, label.btn-sm:hover { opacity: 0.8; }
 
 @media (max-width: 900px) {
   .main-grid { grid-template-columns: 1fr; }
