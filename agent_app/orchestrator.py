@@ -111,6 +111,17 @@ class Orchestrator:
         else:
             stm.post(role, content)
 
+    def _get_stm_context(self, stm: SharedMemory, max_tokens: int = 3000) -> str:
+        """获取 STM 上下文（含压缩前缀），用于注入 Agent prompt。
+
+        当 MemoryManager 存在时走其 get_context()，否则直接调用 stm.format_context()。
+        """
+        if self.memory:
+            ctx = self.memory.get_context(max_tokens=max_tokens)
+        else:
+            ctx = stm.format_context(max_tokens=max_tokens)
+        return ctx
+
     def _maybe_archive(self, question: str, result_summary: str) -> None:
         """求解完成后归档到长期记忆。"""
         if self.memory:
@@ -119,13 +130,11 @@ class Orchestrator:
     def _rag_context(self, question: str, top_k: int = 6) -> str:
         parts: list[str] = []
 
-        # 1. 长期记忆召回（历史相似题目、成功模式）
         if self.memory:
             ltm_context = self.memory.recall(question, top_k=3)
             if ltm_context:
                 parts.append(ltm_context)
 
-        # 2. RAG 论文检索
         if self.rag:
             if self.rag.has_embeddings:
                 chunks = self.rag.query_hybrid(question, top_k=top_k, alpha=0.6)
@@ -136,7 +145,33 @@ class Orchestrator:
 
         return "\n\n---\n\n".join(parts) if parts else "暂无检索上下文。"
 
-    # ---- 策略一：串行流水线（原始行为） ----
+    # ─── 提示词构建 ───────────────────────────────────────────────────
+
+    def _build_prompt(self, question: str, stm_ctx: str, rag_ctx: str,
+                      extra_contexts: dict[str, str] | None = None) -> str:
+        """统一构建带压缩上下文的 Agent prompt。
+
+        Args:
+            question: 用户问题
+            stm_ctx: STM 上下文（含压缩摘要）
+            rag_ctx: RAG + LTM 检索上下文
+            extra_contexts: 额外的阶段特定上下文，如 {"建模方案": model_out, "编程方案": prog_out}
+        """
+        parts = [f"任务：{question}"]
+
+        if stm_ctx:
+            parts.append(f"协作历史（压缩）：\n{stm_ctx}")
+
+        if rag_ctx and rag_ctx != "暂无检索上下文。":
+            parts.append(f"参考资料：\n{rag_ctx}")
+
+        if extra_contexts:
+            for label, content in extra_contexts.items():
+                parts.append(f"{label}：\n{content}")
+
+        return "\n\n".join(parts)
+
+    # ---- 策略一：串行流水线 ----
 
     def solve_sequential(
         self,
@@ -148,7 +183,6 @@ class Orchestrator:
         mem = self._get_stm(memory)
         rag_ctx = self._rag_context(question, top_k)
 
-        # 数据预处理（可选）
         data_ctx = ""
         if enable_data_engineer:
             data_out = self.data_engineer.invoke(
@@ -157,44 +191,46 @@ class Orchestrator:
             self._post(mem, "data_engineer", data_out)
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
-        # 建模
-        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
+        # 建模 — 首阶段无 STM 历史
+        model_in = self._build_prompt(question, "", rag_ctx,
+                                      {"数据预处理结果": data_out} if data_ctx else None)
+        model_out = self.modeler.invoke(model_in)
         self._post(mem, "modeling", model_out)
         mem.advance_round()
 
-        # 编程
-        prog_in = (
-            f"任务：{question}\n\n建模专家输出：\n{model_out}\n\nRAG参考：\n{rag_ctx}"
-        )
+        # 编程 — 注入 STM 上下文 + 完整建模方案
+        stm_ctx = self._get_stm_context(mem)
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx,
+                                     {"建模方案": model_out})
         prog_out = self.programmer.invoke(prog_in)
         self._post(mem, "programming", prog_out)
 
         # 代码审查
         debug_out = self.code_debugger.invoke(
-            f"原始任务：{question}\n\n编程输出：\n{prog_out[:4000]}\n\n请审查以上代码。"
+            self._build_prompt(question, self._get_stm_context(mem), "",
+                               {"编程输出": prog_out[:4000]})
         )
         self._post(mem, "code_debugger", debug_out)
         mem.advance_round()
 
-        # 写作
-        write_in = (
-            f"任务：{question}\n\n"
-            f"建模专家输出：\n{model_out}\n\n"
-            f"编程专家输出：\n{prog_out}\n\n"
-            f"代码审查：\n{debug_out}\n\n"
-            f"RAG参考：\n{rag_ctx}"
-        )
+        # 写作 — 注入 STM 上下文 + 建模 + 编程 + 代码审查
+        stm_ctx = self._get_stm_context(mem)
+        write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
+            "建模方案": model_out,
+            "编程方案": prog_out,
+            "代码审查": debug_out,
+        })
         write_out = self.writer.invoke(write_in)
         self._post(mem, "writing", write_out)
         mem.advance_round()
 
-        # 总控整合
-        synth_in = (
-            f"任务：{question}\n\n"
-            f"建模专家：\n{model_out}\n\n"
-            f"编程专家：\n{prog_out}\n\n"
-            f"写作专家：\n{write_out}"
-        )
+        # 总控整合 — 注入 STM 上下文 + 关键阶段输出
+        stm_ctx = self._get_stm_context(mem)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案": model_out,
+            "编程方案": prog_out,
+            "写作方案": write_out,
+        })
         synth_out = self.synthesizer.invoke(synth_in)
         self._post(mem, "synthesizer", synth_out)
 
@@ -244,26 +280,28 @@ class Orchestrator:
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         # --- 建模 + 评审循环 ---
-        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
+        model_in = self._build_prompt(question, "", rag_ctx,
+                                      {"数据预处理结果": data_out} if data_ctx else None)
+        model_out = self.modeler.invoke(model_in)
         model_review = ""
         for rnd in range(max_review_rounds):
             review = self.reviewer.review("建模智能体", model_out, question)
             self._post(mem, "reviewer(modeling)", review)
             if rnd > 0 and not self._review_needs_revision(review, "建模"):
                 break
-            refine_prompt = (
-                f"任务：{question}\n\n"
-                f"你的上一版输出：\n{model_out}\n\n"
-                f"评审反馈：\n{review}\n\n"
-                f"请根据评审意见修改完善你的建模方案。"
-            )
+            stm_ctx = self._get_stm_context(mem)
+            refine_prompt = self._build_prompt(question, stm_ctx, rag_ctx, {
+                "你的上一版输出": model_out,
+                "评审反馈": review,
+            })
             model_out = self.modeler.invoke(refine_prompt)
             model_review = review
         self._post(mem, "modeling", model_out)
         mem.advance_round()
 
         # --- 编程 + 评审循环 ---
-        prog_in = f"任务：{question}\n\n建模专家输出：\n{model_out}\n\nRAG参考：\n{rag_ctx}"
+        stm_ctx = self._get_stm_context(mem)
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
         prog_out = self.programmer.invoke(prog_in)
         prog_review = ""
         for rnd in range(max_review_rounds):
@@ -271,32 +309,31 @@ class Orchestrator:
             self._post(mem, "reviewer(programming)", review)
             if rnd > 0 and not self._review_needs_revision(review, "编程"):
                 break
-            refine_prompt = (
-                f"任务：{question}\n\n"
-                f"建模方案：\n{model_out}\n\n"
-                f"你的上一版输出：\n{prog_out}\n\n"
-                f"评审反馈：\n{review}\n\n"
-                f"请根据评审意见修改完善你的实现方案。"
-            )
+            stm_ctx = self._get_stm_context(mem)
+            refine_prompt = self._build_prompt(question, stm_ctx, rag_ctx, {
+                "建模方案": model_out,
+                "你的上一版输出": prog_out,
+                "评审反馈": review,
+            })
             prog_out = self.programmer.invoke(refine_prompt)
             prog_review = review
         self._post(mem, "programming", prog_out)
 
         # 代码审查
         debug_out = self.code_debugger.invoke(
-            f"原始任务：{question}\n\n编程输出（已评审修改）：\n{prog_out[:4000]}"
+            self._build_prompt(question, self._get_stm_context(mem), "",
+                               {"编程输出（已评审修改）": prog_out[:4000]})
         )
         self._post(mem, "code_debugger", debug_out)
         mem.advance_round()
 
         # --- 写作 + 评审循环 ---
-        write_in = (
-            f"任务：{question}\n\n"
-            f"建模专家输出：\n{model_out}\n\n"
-            f"编程专家输出：\n{prog_out}\n\n"
-            f"代码审查：\n{debug_out}\n\n"
-            f"RAG参考：\n{rag_ctx}"
-        )
+        stm_ctx = self._get_stm_context(mem)
+        write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
+            "建模方案": model_out,
+            "编程方案": prog_out,
+            "代码审查": debug_out,
+        })
         write_out = self.writer.invoke(write_in)
         write_review = ""
         for rnd in range(max_review_rounds):
@@ -304,26 +341,25 @@ class Orchestrator:
             self._post(mem, "reviewer(writing)", review)
             if rnd > 0 and not self._review_needs_revision(review, "写作"):
                 break
-            refine_prompt = (
-                f"任务：{question}\n\n"
-                f"建模方案：\n{model_out}\n\n"
-                f"编程方案：\n{prog_out}\n\n"
-                f"你的上一版输出：\n{write_out}\n\n"
-                f"评审反馈：\n{review}\n\n"
-                f"请根据评审意见修改完善你的论文写作方案。"
-            )
+            stm_ctx = self._get_stm_context(mem)
+            refine_prompt = self._build_prompt(question, stm_ctx, rag_ctx, {
+                "建模方案": model_out,
+                "编程方案": prog_out,
+                "你的上一版输出": write_out,
+                "评审反馈": review,
+            })
             write_out = self.writer.invoke(refine_prompt)
             write_review = review
         self._post(mem, "writing", write_out)
         mem.advance_round()
 
         # --- 总控整合 ---
-        synth_in = (
-            f"任务：{question}\n\n"
-            f"建模专家（已评审）：\n{model_out}\n\n"
-            f"编程专家（已评审）：\n{prog_out}\n\n"
-            f"写作专家（已评审）：\n{write_out}"
-        )
+        stm_ctx = self._get_stm_context(mem)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案（已评审）": model_out,
+            "编程方案（已评审）": prog_out,
+            "写作方案（已评审）": write_out,
+        })
         synth_out = self.synthesizer.invoke(synth_in)
         self._post(mem, "synthesizer", synth_out)
 
@@ -358,19 +394,23 @@ class Orchestrator:
             self._post(mem, "data_engineer", data_out)
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
-        # 建模先行（编程和写作都依赖建模结果）
-        model_out = self.modeler.invoke(f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}")
+        # 建模先行
+        model_in = self._build_prompt(question, "", rag_ctx,
+                                      {"数据预处理结果": data_out} if data_ctx else None)
+        model_out = self.modeler.invoke(model_in)
         self._post(mem, "modeling", model_out)
+
+        stm_ctx = self._get_stm_context(mem)
 
         # 编程和写作并行
         def run_programmer() -> str:
             return self.programmer.invoke(
-                f"任务：{question}\n\n建模专家输出：\n{model_out}\n\nRAG参考：\n{rag_ctx}"
+                self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
             )
 
         def run_writer() -> str:
             return self.writer.invoke(
-                f"任务：{question}\n\n建模专家输出：\n{model_out}\n\nRAG参考：\n{rag_ctx}"
+                self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
             )
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -382,21 +422,22 @@ class Orchestrator:
         self._post(mem, "programming", prog_out)
         self._post(mem, "writing", write_out)
 
-        # 代码审查（并行模式下额外对代码质量把关）
+        # 代码审查
         debug_out = self.code_debugger.invoke(
-            f"原始任务：{question}\n\n编程输出：\n{prog_out[:4000]}"
+            self._build_prompt(question, self._get_stm_context(mem), "",
+                               {"编程输出": prog_out[:4000]})
         )
         self._post(mem, "code_debugger", debug_out)
         mem.advance_round()
 
         # 总控整合
-        synth_in = (
-            f"任务：{question}\n\n"
-            f"建模专家：\n{model_out}\n\n"
-            f"编程专家：\n{prog_out}\n\n"
-            f"代码审查：\n{debug_out}\n\n"
-            f"写作专家：\n{write_out}"
-        )
+        stm_ctx = self._get_stm_context(mem)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案": model_out,
+            "编程方案": prog_out,
+            "代码审查": debug_out,
+            "写作方案": write_out,
+        })
         synth_out = self.synthesizer.invoke(synth_in)
         self._post(mem, "synthesizer", synth_out)
 
@@ -434,28 +475,35 @@ class Orchestrator:
             self._post(mem, "data_engineer", data_out)
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
-        model_out = self.modeler.stream(
-            f"任务：{question}\n\nRAG参考：\n{rag_ctx}{data_ctx}",
-            on_token=on_modeling_token,
-        )
+        # 建模
+        model_in = self._build_prompt(question, "", rag_ctx,
+                                      {"数据预处理结果": data_out} if data_ctx else None)
+        model_out = self.modeler.stream(model_in, on_token=on_modeling_token)
         self._post(mem, "modeling", model_out)
 
-        prog_out = self.programmer.stream(
-            f"任务：{question}\n\n建模专家输出：\n{model_out}\n\nRAG参考：\n{rag_ctx}",
-            on_token=on_programming_token,
-        )
+        # 编程 — 注入 STM 上下文
+        stm_ctx = self._get_stm_context(mem)
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
+        prog_out = self.programmer.stream(prog_in, on_token=on_programming_token)
         self._post(mem, "programming", prog_out)
 
-        write_out = self.writer.stream(
-            f"任务：{question}\n\n建模专家输出：\n{model_out}\n\n编程专家输出：\n{prog_out}\n\nRAG参考：\n{rag_ctx}",
-            on_token=on_writing_token,
-        )
+        # 写作 — 注入 STM 上下文
+        stm_ctx = self._get_stm_context(mem)
+        write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
+            "建模方案": model_out,
+            "编程方案": prog_out,
+        })
+        write_out = self.writer.stream(write_in, on_token=on_writing_token)
         self._post(mem, "writing", write_out)
 
-        synth_out = self.synthesizer.stream(
-            f"任务：{question}\n\n建模专家：\n{model_out}\n\n编程专家：\n{prog_out}\n\n写作专家：\n{write_out}",
-            on_token=on_synthesis_token,
-        )
+        # 总控整合 — 注入 STM 上下文
+        stm_ctx = self._get_stm_context(mem)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案": model_out,
+            "编程方案": prog_out,
+            "写作方案": write_out,
+        })
+        synth_out = self.synthesizer.stream(synth_in, on_token=on_synthesis_token)
         self._post(mem, "synthesizer", synth_out)
 
         self._maybe_archive(question, synth_out)

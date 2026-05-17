@@ -64,11 +64,12 @@ class RedisSharedMemory(SharedMemory):
     def __init__(
         self,
         max_tokens: int = 50000,
+        recent_window_size: int = 5,
         task_id: str | None = None,
         ttl: int = 3600,
         redis_client=None,
     ) -> None:
-        super().__init__(max_tokens=max_tokens)
+        super().__init__(max_tokens=max_tokens, recent_window_size=recent_window_size)
         self._task_id = task_id or uuid.uuid4().hex[:12]
         self._ttl = ttl
         self._r = redis_client or _redis_client()
@@ -89,6 +90,16 @@ class RedisSharedMemory(SharedMemory):
         self._save()
         return r
 
+    def set_compressed_prefix(self, content: str) -> None:
+        super().set_compressed_prefix(content)
+        self._save()
+
+    def compress_older(self, keep_recent: int | None = None) -> str | None:
+        result = super().compress_older(keep_recent)
+        if result is not None:
+            self._save()
+        return result
+
     def clear(self) -> None:
         super().clear()
         _redis, *_ = _get_redis()
@@ -98,10 +109,11 @@ class RedisSharedMemory(SharedMemory):
             pass
 
     def _serialize(self) -> dict:
-        return {
+        data = {
             "task_id": self._task_id,
             "round": self._round,
             "total_tokens": self._total_tokens,
+            "recent_window_size": self._recent_window_size,
             "messages": [
                 {
                     "role": m.role,
@@ -113,6 +125,15 @@ class RedisSharedMemory(SharedMemory):
                 for m in self._messages
             ],
         }
+        if self._compressed_prefix:
+            data["compressed_prefix"] = {
+                "role": self._compressed_prefix.role,
+                "content": self._compressed_prefix.content,
+                "round_idx": self._compressed_prefix.round_idx,
+                "timestamp": self._compressed_prefix.timestamp,
+                "token_count": self._compressed_prefix.token_count,
+            }
+        return data
 
     def _save(self) -> None:
         _redis, *_ = _get_redis()
@@ -134,6 +155,7 @@ class RedisSharedMemory(SharedMemory):
 
         self._round = data.get("round", 0)
         self._total_tokens = data.get("total_tokens", 0)
+        self._recent_window_size = data.get("recent_window_size", 5)
         self._messages = [
             AgentMessage(
                 role=m["role"],
@@ -144,6 +166,17 @@ class RedisSharedMemory(SharedMemory):
             )
             for m in data.get("messages", [])
         ]
+        cp = data.get("compressed_prefix")
+        if cp:
+            self._compressed_prefix = AgentMessage(
+                role=cp["role"],
+                content=cp["content"],
+                round_idx=cp.get("round_idx", -1),
+                timestamp=cp.get("timestamp", ""),
+                token_count=cp.get("token_count", 0),
+            )
+        else:
+            self._compressed_prefix = None
 
 
 # ─── 长期记忆 Redis Stack 实现 ────────────────────────────────────────
