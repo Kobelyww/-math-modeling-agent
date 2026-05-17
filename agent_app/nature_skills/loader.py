@@ -40,9 +40,6 @@ class SkillLoader:
     def load_viz_template(self, template_name: str) -> str | None:
         return self.load(template_name, "Viz_Templates")
 
-    def load_tool(self, tool_name: str) -> str | None:
-        return self.load(tool_name, "Tools")
-
     def summarize_rules(self, rule_names: list[str]) -> str:
         """加载多个规则文件并拼接为注入用文本块。"""
         parts = []
@@ -70,11 +67,6 @@ def get_model_reference() -> str:
 def get_viz_template(template_name: str) -> str | None:
     """获取 Nature 风格的绑图模板代码。"""
     return _loader.load_viz_template(template_name)
-
-
-def get_summary_template() -> str:
-    """获取论文摘要模板和写作技巧。"""
-    return _loader.load_rule("Summary") or ""
 
 
 def list_available_skills() -> dict[str, list[str]]:

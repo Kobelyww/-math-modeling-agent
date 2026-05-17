@@ -23,6 +23,11 @@ class ConstraintCheck:
     passed: bool = True
     issues: list[str] = field(default_factory=list)
 
+    def summary(self) -> str:
+        if self.passed:
+            return "所有约束检查通过"
+        return "问题:\n" + "\n".join(f"  - {i}" for i in self.issues)
+
 
 class PromptConstraintValidator:
     """验证优化后的 Prompt 不违反基本约束。"""

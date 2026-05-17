@@ -12,6 +12,7 @@ from enum import Enum
 
 from langchain_core.language_models import BaseChatModel
 
+from .constraints import ConstraintCheck
 
 class FitnessDimension(Enum):
     MATHEMATICAL_RIGOR = "数学严谨性"
@@ -30,17 +31,6 @@ class FitnessScore:
             "overall": self.overall,
             "dimensions": {d.value: s for d, s in self.dimensions.items()},
         }
-
-
-@dataclass
-class ConstraintCheck:
-    passed: bool = True
-    issues: list[str] = field(default_factory=list)
-
-    def summary(self) -> str:
-        if self.passed:
-            return "所有约束检查通过"
-        return "问题:\n" + "\n".join(f"  - {i}" for i in self.issues)
 
 
 EVAL_PROMPT = """你是一个数学建模评审专家。请评估以下 Agent 在完成建模任务时的输出质量。

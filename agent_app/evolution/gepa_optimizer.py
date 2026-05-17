@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 
 from langchain_core.language_models import BaseChatModel
 
-from .evaluator import ConstraintValidator, FitnessEvaluator, FitnessScore
+from .constraints import PromptConstraintValidator
+from .evaluator import FitnessEvaluator, FitnessScore
 
 FEEDBACK_PROMPT = """你是数学建模 Agent Prompt 调试专家。分析以下 Agent Prompt 在哪出了问题。
 
@@ -82,14 +83,14 @@ class GEPAOptimizer:
         self,
         llm: BaseChatModel,
         evaluator: FitnessEvaluator,
-        validator: ConstraintValidator | None = None,
+        validator: PromptConstraintValidator | None = None,
         max_generations: int = 3,
         candidates_per_gen: int = 2,
         improvement_threshold: float = 0.03,
     ) -> None:
         self.llm = llm
         self.evaluator = evaluator
-        self.validator = validator or ConstraintValidator()
+        self.validator = validator or PromptConstraintValidator()
         self.max_generations = max_generations
         self.candidates_per_gen = candidates_per_gen
         self.improvement_threshold = improvement_threshold
@@ -150,12 +151,8 @@ class GEPAOptimizer:
         return result.content if hasattr(result, "content") else str(result)
 
     def _mutate(self, prompt: str, feedback: str) -> str:
+        from ..base import normalize_llm_content
+
         mut_prompt = MUTATE_PROMPT.format(original_prompt=prompt, feedback=feedback)
         result = self.llm.invoke(mut_prompt)
-        content = result.content if hasattr(result, "content") else str(result)
-        if isinstance(content, list):
-            content = "".join(
-                str(item.get("text", item)) if isinstance(item, dict) else str(item)
-                for item in content
-            )
-        return content.strip()
+        return normalize_llm_content(result.content if hasattr(result, "content") else str(result)).strip()

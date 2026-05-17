@@ -4,12 +4,28 @@ import logging
 import re
 import time
 from abc import ABC
-from typing import Callable
+from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_llm_content(content: Any) -> str:
+    """规范化 LLM 响应内容为纯字符串（供所有模块复用）。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text", "")))
+            else:
+                parts.append(str(item))
+        return "".join(parts)
+    return str(content)
+
 
 _RETRYABLE_PATTERNS = [
     re.compile(r"rate.?limit", re.I),
@@ -61,20 +77,6 @@ class BaseAgent(ABC):
         self.max_retries = max_retries
         self.retry_delay = 1.0
 
-    @staticmethod
-    def _normalize_content(content) -> str:
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict):
-                    parts.append(str(item.get("text", "")))
-                else:
-                    parts.append(str(item))
-            return "".join(parts)
-        return str(content)
-
     def invoke(self, user_prompt: str) -> str:
         messages = [
             SystemMessage(content=self.system_prompt),
@@ -84,7 +86,7 @@ class BaseAgent(ABC):
         for attempt in range(self.max_retries):
             try:
                 response = self.llm.invoke(messages)
-                return self._normalize_content(response.content)
+                return normalize_llm_content(response.content)
             except Exception as exc:
                 last_error = exc
                 if not _is_retryable(exc):
@@ -113,7 +115,7 @@ class BaseAgent(ABC):
         for attempt in range(self.max_retries):
             try:
                 for chunk in self.llm.stream(messages):
-                    token = self._normalize_content(chunk.content)
+                    token = normalize_llm_content(chunk.content)
                     if not token:
                         continue
                     parts.append(token)

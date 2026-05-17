@@ -150,4 +150,93 @@ async function loadSkills() {
   }
 }
 
+function runCode() {
+  const code = extractCodeFromOutput(buffers['programming']);
+  if (!code) { setStatus('未找到可执行代码', 'var(--red)'); return; }
+  setStatus('沙箱执行中...');
+  fetch('/api/tool/python_exec', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: code }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('code-result');
+      el.classList.remove('hidden');
+      el.textContent = data.result || data.error || '执行完成（无输出）';
+      setStatus(data.error ? '执行出错' : '执行完成', data.error ? 'var(--red)' : 'var(--green)');
+    })
+    .catch(e => { setStatus('沙箱请求失败: ' + e.message, 'var(--red)'); });
+}
+
+function exportCode() {
+  const code = extractCodeFromOutput(buffers['programming']);
+  downloadBlob(code || buffers['programming'], 'model_solution.py', 'text/x-python');
+}
+
+function compileLatex() {
+  const latex = extractLatexFromOutput(buffers['writing']);
+  if (!latex) { setStatus('未找到 LaTeX 源码', 'var(--red)'); return; }
+  setStatus('LaTeX 编译中...');
+  fetch('/api/tool/latex_compile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tex_content: latex }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('latex-result');
+      el.classList.remove('hidden');
+      if (data.pdf_url) {
+        el.innerHTML = '<a href="' + data.pdf_url + '" target="_blank">📄 查看 PDF</a>';
+        setStatus('编译成功', 'var(--green)');
+      } else {
+        el.textContent = data.error || '编译失败';
+        setStatus('编译失败', 'var(--red)');
+      }
+    })
+    .catch(e => { setStatus('编译请求失败: ' + e.message, 'var(--red)'); });
+}
+
+function exportLatex() {
+  const latex = extractLatexFromOutput(buffers['writing']);
+  downloadBlob(latex || buffers['writing'], 'paper.tex', 'text/x-latex');
+}
+
+function downloadAll() {
+  const zipContent = [
+    { name: 'model_solution.py', content: extractCodeFromOutput(buffers['programming']) || buffers['programming'] },
+    { name: 'paper.tex', content: extractLatexFromOutput(buffers['writing']) || buffers['writing'] },
+    { name: 'synthesis.md', content: buffers['synthesis'] },
+    { name: 'modeling_output.md', content: buffers['modeling'] },
+  ].filter(f => f.content);
+
+  zipContent.forEach(f => downloadBlob(f.content, f.name));
+  setStatus('已导出 ' + zipContent.length + ' 个文件', 'var(--green)');
+}
+
+function extractCodeFromOutput(text) {
+  if (!text) return '';
+  const pyMatch = text.match(/```python\n?([\s\S]*?)```/);
+  if (pyMatch) return pyMatch[1].trim();
+  const defMatch = text.match(/(?:^|\n)(import\s[\s\S]*?(?:return|print)[\s\S]*?)(?:\n\n|$)/);
+  return defMatch ? defMatch[1].trim() : '';
+}
+
+function extractLatexFromOutput(text) {
+  if (!text) return '';
+  const match = text.match(/```latex\n?([\s\S]*?)```/) || text.match(/\\documentclass[\s\S]*?\\end{document}/);
+  return match ? (match[1] || match[0]).trim() : '';
+}
+
+function downloadBlob(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType || 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 loadSkills();

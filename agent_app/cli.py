@@ -21,6 +21,7 @@ from typing import Callable
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
 
+from .base import normalize_llm_content
 from .config import APP_ROOT, load_settings
 from .llm import create_llm
 from .memory import MemoryManager
@@ -48,8 +49,10 @@ ORCHESTRATOR_HELP = f"""
 命令：
   /mode <模式名>  - 切换工作流模式（默认 sequential）
   /solve <问题>   - 启动多智能体协作分析
+  /stream         - 流式输出模式（实时 token 级输出）
   /chat           - 切换到单智能体对话模式
-  /memory         - 查看记忆系统统计（STM/LTM/压缩次数）
+  /memory         - 查看记忆系统统计（STM/LTM/压缩）
+  /compress       - 强制触发上下文压缩
   /help           - 显示此帮助
   /exit           - 退出程序
 """.strip()
@@ -87,9 +90,6 @@ class CLI:
 
         self.orchestrator = Orchestrator(self.settings, rag=self.rag, memory_manager=self.memory_manager)
         self.mode: str = "sequential"
-
-    def build_rag_index(self) -> dict:
-        return self.rag.build_index()
 
     def _print_streaming(self, label: str, role: str):
         print(f"\n{'─'*50}")
@@ -187,12 +187,7 @@ class CLI:
             return ""
         last = messages[-1]
         content = getattr(last, "content", last)
-        if isinstance(content, list):
-            return "".join(
-                str(item.get("text", item)) if isinstance(item, dict) else str(item)
-                for item in content
-            )
-        return str(content)
+        return normalize_llm_content(content)
 
     def run(self) -> None:
         print(ORCHESTRATOR_HELP)
@@ -215,8 +210,15 @@ class CLI:
             if raw.lower() == "/memory":
                 stats = self.memory_manager.stats()
                 print(f"\n短期记忆：{stats['stm_messages']} 条消息，{stats['stm_tokens']} tokens")
-                print(f"压缩次数：{stats['compressions']}")
+                print(f"压缩前缀：{'有' if stats.get('stm_has_compressed_prefix') else '无'}，压缩次数：{stats['compressions']}")
                 print(f"长期记忆：{stats['ltm_total']} 条知识，{stats['ltm_by_type']}")
+                continue
+            if raw.lower() == "/compress":
+                result = self.memory_manager.force_compress()
+                if result:
+                    print(f"压缩完成：{result[:200]}...")
+                else:
+                    print("压缩器未启用或无需压缩（未配置 LLM 或消息不足）")
                 continue
             if raw.lower() == "/help":
                 print(ORCHESTRATOR_HELP)

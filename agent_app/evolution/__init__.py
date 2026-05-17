@@ -15,15 +15,14 @@
     python -m agent_app.evolution.evolve --eval-only
 """
 
+from .constraints import ConstraintCheck, PromptConstraintValidator
 from .evaluator import (
-    ConstraintCheck,
     ConstraintValidator,
     FitnessDimension,
     FitnessEvaluator,
     FitnessScore,
 )
 from .gepa_optimizer import EvolutionCandidate, EvolutionResult, GEPAOptimizer
-from .constraints import PromptConstraintValidator
 from .tracker import EvolutionTracker, GenerationMetrics
 
 __all__ = [

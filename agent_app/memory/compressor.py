@@ -159,14 +159,11 @@ class ContextCompressor:
 
     def _invoke_llm(self, prompt: str) -> str:
         """调用 LLM 并规范化输出。"""
+        from ..base import normalize_llm_content
+
         result = self.llm.invoke(prompt)
         content = result.content if hasattr(result, "content") else str(result)
-        if isinstance(content, list):
-            content = "".join(
-                str(item.get("text", item)) if isinstance(item, dict) else str(item)
-                for item in content
-            )
-        return content.strip()
+        return normalize_llm_content(content).strip()
 
     # ─── 属性 ─────────────────────────────────────────────────────────
 

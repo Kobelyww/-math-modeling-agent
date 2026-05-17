@@ -12,3 +12,6 @@ jinja2
 redis[hiredis]
 pytest
 PyMuPDF
+numpy
+pandas
+dashscope

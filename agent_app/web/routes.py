@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
+from asyncio import Lock
 from pathlib import Path
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
@@ -79,7 +80,8 @@ async def solve(data: dict):
 
 async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
     """后台运行协作任务，结果通过 WebSocket 推送。"""
-    ws = _active_tasks.get(task_id)
+    async with _active_tasks_lock:
+        ws = _active_tasks.get(task_id)
     if not ws:
         return
 
@@ -87,10 +89,11 @@ async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
         await ws.send_json({"type": "start", "task_id": task_id, "strategy": strategy})
 
         if strategy in ("review", "parallel"):
-            if strategy == "review":
-                result = _orch.solve_with_review(question, top_k=top_k)
-            else:
-                result = _orch.solve_parallel(question, top_k=top_k)
+            run_fn = _orch.solve_with_review if strategy == "review" else _orch.solve_parallel
+            result = await asyncio.wait_for(
+                asyncio.to_thread(run_fn, question, top_k=top_k),
+                timeout=SOLVE_TASK_TIMEOUT,
+            )
             for agent, content in [
                 ("modeling", result.modeling.content),
                 ("programming", result.programming.content),
@@ -99,13 +102,17 @@ async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
             ]:
                 await ws.send_json({"type": "phase", "agent": agent, "status": "completed", "result": content})
         else:
-            result = _orch.solve_stream(
-                question,
-                top_k=top_k,
-                on_modeling_token=lambda t: _sync_send_token(ws, "modeling", t, 0.0, 0.25),
-                on_programming_token=lambda t: _sync_send_token(ws, "programming", t, 0.25, 0.5),
-                on_writing_token=lambda t: _sync_send_token(ws, "writing", t, 0.5, 0.75),
-                on_synthesis_token=lambda t: _sync_send_token(ws, "synthesis", t, 0.75, 1.0),
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _orch.solve_stream,
+                    question,
+                    top_k=top_k,
+                    on_modeling_token=lambda t: _sync_send_token(ws, "modeling", t, 0.0, 0.25),
+                    on_programming_token=lambda t: _sync_send_token(ws, "programming", t, 0.25, 0.5),
+                    on_writing_token=lambda t: _sync_send_token(ws, "writing", t, 0.5, 0.75),
+                    on_synthesis_token=lambda t: _sync_send_token(ws, "synthesis", t, 0.75, 1.0),
+                ),
+                timeout=SOLVE_TASK_TIMEOUT,
             )
             for a in ["modeling", "programming", "writing", "synthesis"]:
                 await ws.send_json({"type": "phase", "agent": a, "status": "completed"})
@@ -119,11 +126,15 @@ async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
                 "synthesis": result.synthesis,
             },
         })
+    except asyncio.TimeoutError:
+        if ws:
+            await ws.send_json({"type": "error", "message": f"任务超时（{SOLVE_TASK_TIMEOUT}s），请简化问题或减少评审轮次"})
     except Exception as exc:
         if ws:
             await ws.send_json({"type": "error", "message": str(exc)})
     finally:
-        _active_tasks.pop(task_id, None)
+        async with _active_tasks_lock:
+            _active_tasks.pop(task_id, None)
 
 
 def _sync_send_token(ws, agent: str, token: str, progress_start: float, progress_end: float):
@@ -134,6 +145,8 @@ def _sync_send_token(ws, agent: str, token: str, progress_start: float, progress
 
 _token_queue: list = []
 _active_tasks: dict[str, WebSocket] = {}
+_active_tasks_lock = Lock()
+SOLVE_TASK_TIMEOUT = 600  # 10-minute global timeout per task
 
 
 async def _token_drainer():
@@ -156,14 +169,32 @@ async def _token_drainer():
 @router.websocket("/ws/solve/{task_id}")
 async def ws_solve(websocket: WebSocket, task_id: str):
     await websocket.accept()
-    _active_tasks[task_id] = websocket
+    async with _active_tasks_lock:
+        _active_tasks[task_id] = websocket
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        _active_tasks.pop(task_id, None)
+        async with _active_tasks_lock:
+            _active_tasks.pop(task_id, None)
+
+
+@router.get("/api/health")
+async def health():
+    return {"status": "ok", "rag_ready": _rag.is_ready, "active_tasks": len(_active_tasks)}
+
+
+@router.get("/api/status")
+async def status():
+    mem_stats = _orch.memory.stats() if _orch.memory else {}
+    return {
+        "rag_ready": _rag.is_ready,
+        "rag_chunks": len(_rag.chunks),
+        "active_tasks": len(_active_tasks),
+        "memory": mem_stats,
+    }
 
 
 @router.get("/api/rag/query")

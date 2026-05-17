@@ -27,6 +27,9 @@ class Settings:
     model: str
     temperature: float
     max_retries: int = 3
+    retry_delay: float = 1.0
+    tool_timeout: int = 30
+    sandbox_memory_mb: int = 512
     agent_configs: dict[str, AgentConfig] = field(default_factory=dict)
     embedding_api_key: str | None = None
 
@@ -49,6 +52,9 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
     raw_model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
     model = MODEL_ALIASES.get(raw_model, raw_model)
     max_retries = int(os.getenv("DEEPSEEK_MAX_RETRIES", "3"))
+    retry_delay = float(os.getenv("DEEPSEEK_RETRY_DELAY", "1.0"))
+    tool_timeout = int(os.getenv("TOOL_TIMEOUT", "30"))
+    sandbox_memory_mb = int(os.getenv("SANDBOX_MEMORY_MB", "512"))
 
     agent_configs: dict[str, AgentConfig] = {}
     for role in ["data_engineer", "modeler", "programmer", "code_debugger", "writer", "reviewer", "synthesizer"]:
@@ -64,6 +70,9 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         model=model,
         temperature=temperature,
         max_retries=max_retries,
+        retry_delay=retry_delay,
+        tool_timeout=tool_timeout,
+        sandbox_memory_mb=sandbox_memory_mb,
         agent_configs=agent_configs,
         embedding_api_key=embedding_api_key,
     )
