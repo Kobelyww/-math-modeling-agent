@@ -38,8 +38,8 @@ function setProgress(agent, pct) {
 }
 
 async function startSolve() {
+  if (!isQuestionReady()) return;
   const question = document.getElementById('question').value.trim();
-  if (!question) { setStatus('请输入问题', 'var(--red)'); return; }
 
   const strategy = document.getElementById('strategy').value;
   agents.forEach(a => {
@@ -239,42 +239,57 @@ function downloadBlob(content, filename, mimeType) {
   URL.revokeObjectURL(url);
 }
 
-async function onPDFSelected() {
+function onPDFSelected() {
   const fileInput = document.getElementById('pdf-file');
   const file = fileInput.files[0];
   if (!file) return;
 
-  console.log('[PDF Upload]', file.name, file.size, 'bytes');
-
-  document.getElementById('pdf-name').textContent = file.name;
+  const nameEl = document.getElementById('pdf-name');
   const statusEl = document.getElementById('upload-status');
+  const questionEl = document.getElementById('question');
+
+  nameEl.textContent = file.name;
   statusEl.textContent = '提取中...';
   statusEl.style.color = '';
 
   const formData = new FormData();
   formData.append('file', file);
 
-  try {
-    const resp = await fetch('/api/upload/pdf', { method: 'POST', body: formData });
-    const data = await resp.json();
-    console.log('[PDF Upload] response:', data);
-    if (data.error) {
-      statusEl.textContent = '✗ ' + data.error;
+  fetch('/api/upload/pdf', { method: 'POST', body: formData })
+    .then(function(resp) {
+      if (!resp.ok) {
+        return resp.json().then(function(d) { throw new Error(d.error || 'HTTP ' + resp.status); });
+      }
+      return resp.json();
+    })
+    .then(function(data) {
+      if (data.error) {
+        statusEl.textContent = '✗ ' + data.error;
+        statusEl.style.color = 'var(--red)';
+        return;
+      }
+      questionEl.value = data.text;
+      questionEl.style.border = '2px solid var(--green)';
+      setTimeout(function() { questionEl.style.border = ''; }, 2000);
+      statusEl.textContent =
+        '✓ 已提取 ' + data.pages + ' 页, ' + data.full_length + ' 字符' +
+        (data.truncated ? ' (已截取前8000字)' : '');
+      statusEl.style.color = 'var(--green)';
+      setStatus('题目已从PDF提取，点击下方按钮开始分析', 'var(--green)');
+    })
+    .catch(function(e) {
+      statusEl.textContent = '✗ ' + e.message;
       statusEl.style.color = 'var(--red)';
-      return;
-    }
-    document.getElementById('question').value = data.text;
-    statusEl.textContent =
-      '✓ 已提取 ' + data.pages + ' 页, ' + data.full_length + ' 字符' +
-      (data.truncated ? ' (已截取前8000字)' : '');
-    statusEl.style.color = 'var(--green)';
-  } catch (e) {
-    console.error('[PDF Upload]', e);
-    statusEl.textContent = '上传失败: ' + e.message;
-    statusEl.style.color = 'var(--red)';
-  }
-  // Reset file input so same file can be re-selected
+      setStatus('PDF上传失败，请确认服务器已重启且PyMuPDF已安装', 'var(--red)');
+    });
+  // Reset so same file re-select works
   fileInput.value = '';
+}
+
+function isQuestionReady() {
+  var q = document.getElementById('question').value.trim();
+  if (!q) { setStatus('请先输入问题或上传PDF提取题目', 'var(--red)'); return false; }
+  return true;
 }
 
 loadSkills();
