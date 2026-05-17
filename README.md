@@ -26,7 +26,9 @@ DataEngineer → Modeler → Programmer → CodeDebugger → Writer → (Reviewe
 - **18 个工具**：Python 安全沙箱（512MB 限制 + 危险函数拦截）、LaTeX 编译、文献检索（arXiv/Semantic Scholar/Crossref）
 - **Hermes 自进化**：7 步文本优化管线（SELECT→BUILD→BASELINE→CONSTRAIN→OPTIMIZE→VALIDATE→DEPLOY），自动优化 Agent Prompt
 - **三界面**：FastAPI Web（WebSocket 实时流式 + 代码导出/LaTeX 编译）+ Streamlit GUI + CLI
+- **容错机制**：所有 Agent 调用包裹 try/except，失败时返回降级文本 + 部分结果，不会丢失已完成工作
 - **安全工程**：AST 白名单计算器、错误分类重试（401/403 不重试）、LaTeX 公式分词保护
+- **测试覆盖**：49 个测试（记忆系统 + 压缩器 + 重试逻辑 + 自进化）
 
 ### 启动方式
 
@@ -46,6 +48,7 @@ python -m agent_app.evolution.evolve --generations 3 --tasks 5
 
 | 日期 | 更新 | 说明 |
 |------|------|------|
+| 05-17 | 工程质量全面升级 | 容错恢复（4 策略全包裹）、Web 死按钮修复、健康检查端点、49 测试、去重死代码清理、可配置化 |
 | 05-17 | 上下文压缩机制 | 两段式 STM + 多策略压缩器（层次增量合并）+ Orchestrator 全部策略注入压缩上下文 |
 | 05-16 | Hermes 自进化引擎 | 7 步管线（SELECT→DEPLOY），GEPA 优化器，多维适应度评估，Prompt 自动变异择优 |
 | 05-16 | 记忆系统完善 | solve_stream 接入记忆、mistake 自动归档、print→logging、.env.example、死代码清理 |
@@ -97,11 +100,12 @@ agent_app/
 ├── memory/               # 长短时记忆（两段式 STM + 多策略压缩 + Redis/SQLite）
 ├── evolution/            # Hermes 自进化（7 步管线 + GEPA + 适应度评估）
 ├── agents.py             # 7 个专业 Agent（含 CodeDebugger）
-├── orchestrator.py       # 编排器（4 种策略 + LTM 召回 + 自动归档）
+├── orchestrator.py       # 编排器（4 策略 + 容错恢复 + 压缩上下文注入 + 自动归档）
 ├── rag.py                # 混合 RAG（TF-IDF + Embedding 加权融合）
 ├── tools.py              # 18 个工具（安全沙箱 + Nature Skills）
-├── base.py               # Agent 基类（重试 + 错误分类）
+├── base.py               # Agent 基类（重试 + 错误分类 + normalize_llm_content）
 ├── cli.py / gui.py       # CLI + Streamlit 入口
+├── tests/                # 49 个测试（记忆 / 压缩器 / 重试 / 自进化）
 └── README.md
 
 docker-compose.yml        # Redis Stack 一键部署

@@ -5,15 +5,17 @@
 ## 功能概览
 
 - **7 个专业智能体**：数据 / 建模 / 编程 / 审码 / 写作 / 评审 / 总控，分工协作
-- **4 种协作策略**：串行流水线、评审反思迭代、快速并行、流式输出
+- **4 种协作策略**：串行流水线、评审反思迭代、快速并行、流式输出（全部含容错恢复）
 - **RAG 知识库**：TF-IDF + Embedding 混合检索，支持 PDF/MD/TXT，PDF 图像理解
-- **长短时记忆系统**：STM 两段式存储 + LTM SQLite/Redis 持久化 + 上下文压缩
-- **15 个工具**：Python 执行、LaTeX 编译、文献检索、数据分析、笔记管理
-- **双界面**：CLI 命令行 + Streamlit 图形界面 + Web (FastAPI)
+- **长短时记忆系统**：STM 两段式存储 + 3 策略上下文压缩 + LTM SQLite/Redis 持久化
+- **18 个工具**：Python 安全沙箱、LaTeX 编译、文献检索、数据分析、笔记管理
+- **三界面**：CLI 命令行 + Streamlit 图形界面 + Web (FastAPI)
 - **文献检索**：接入 arXiv、Semantic Scholar、Crossref 三大免费学术 API
 - **流式输出**：所有 Agent 支持 token 级实时流式生成
+- **容错恢复**：Agent 失败返回降级文本，保留部分结果不丢失
 - **自动重试**：LLM 调用失败自动指数退避重试（区分可重试/不可重试错误）
 - **智能体自进化**：Hermes 风格 7 步 prompt 优化管道 + GEPA 遗传进化
+- **49 个测试**：覆盖记忆系统、压缩器、重试逻辑、自进化
 
 ## 项目结构
 
@@ -320,7 +322,7 @@ ltm_context = mm.recall("交通流优化", top_k=3)
 ## 依赖
 
 ```
-langchain >= 0.3
+langchain
 langchain-core
 langchain-deepseek
 python-dotenv
@@ -328,10 +330,51 @@ scikit-learn
 pypdf
 jieba
 streamlit
-pandas          # 可选，read_csv_info 需要
+fastapi
+uvicorn
+jinja2
+redis[hiredis]  # 可选，Redis Stack 记忆后端需要
+pytest
+PyMuPDF
+numpy
+pandas
+dashscope       # 可选，百练 Embedding / Qwen-VL 需要
 ```
 
 ## 更新日志
+
+### 2026-05-17：工程质量全面升级
+
+**Orchestrator 容错恢复**
+- `_safe_invoke` / `_safe_stream` 包裹所有 Agent 调用，失败返回降级文本而非崩溃
+- `WorkflowResult` 新增 `errors` 字段追踪错误，`format_overview()` 展示错误摘要
+- 并行策略中 ThreadPoolExecutor 异常独立捕获，编程/写作不会互相影响
+
+**Web 界面修复**
+- 实现 5 个无效按钮：运行代码、导出 .py、编译 LaTeX PDF、导出 .tex、打包下载全部
+- 新增 `GET /api/health` 和 `GET /api/status` 端点，含记忆统计
+- `_active_tasks` 加 `asyncio.Lock` 解决并发竞态，任务 600s 超时保护
+
+**代码去重**
+- `normalize_llm_content()` 提取到 `base.py`，compressor / gepa / cli 统一复用
+- `ConstraintCheck` 合并到 `constraints.py`（含 `summary()` 方法），移除 `evaluator.py` 重复定义
+
+**死代码清理**
+- 移除 `nature_skills/loader.py` 中未使用的 `load_tool()`、`get_summary_template()`
+- 移除 `cli.py` 中未使用的 `build_rag_index()`
+
+**配置增强**
+- `Settings` 新增 `retry_delay`、`tool_timeout`、`sandbox_memory_mb`，支持 .env 覆盖
+- `requirements.txt` 补全 `dashscope`、`numpy`、`pandas`
+
+**测试**
+- 新增 `test_core.py`（26 个测试）：`normalize_llm_content`、重试分类、分段 STM、压缩策略触发
+- 全部 49 个测试通过
+
+**CLI 增强**
+- 新增 `/compress` 命令手动触发上下文压缩
+- `/memory` 显示压缩前缀状态
+- 帮助文本补充 `/stream` 命令
 
 ### 2026-05-17：上下文压缩机制
 
