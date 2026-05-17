@@ -8,7 +8,6 @@ from .loader import (
     get_writing_rules,
     get_model_reference,
     get_viz_template,
-    get_summary_template,
     list_available_skills,
 )
 
@@ -17,6 +16,5 @@ __all__ = [
     "get_writing_rules",
     "get_model_reference",
     "get_viz_template",
-    "get_summary_template",
     "list_available_skills",
 ]
