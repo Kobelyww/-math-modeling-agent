@@ -284,11 +284,21 @@ async def upload_pdf(file: UploadFile = File(...)):
 
             page_parts.append("\n".join(page_lines))
 
+        total_pages = doc.page_count
         doc.close()
 
         full_text = "\n\n".join(page_parts)
-        if not any(line for line in page_parts if "──" not in line):
-            return JSONResponse({"error": "PDF 无可提取内容（可能是扫描件图片）"}, status_code=400)
+        # 检查是否有实质性内容（排除每页的纯页头）
+        has_content = any(
+            p.split("\n", 1)[1].strip() if "\n" in p else False
+            for p in page_parts
+        )
+        if not has_content:
+            # 内容全空的 PDF，尝试用图片 OCR 兜底
+            return JSONResponse(
+                {"error": "PDF 无可提取文本，可能是扫描件。请确认 PDF 包含文字或等待 OCR 功能支持。"},
+                status_code=400,
+            )
 
         # 图片描述：异步用 VL 模型（如果有 API key）
         image_descriptions: list[str] = []
@@ -351,7 +361,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         return {
             "filename": file.filename,
-            "pages": doc.page_count if hasattr(doc, 'page_count') else len(page_parts),
+            "pages": total_pages,
             "text": extracted,
             "text_preview": extracted[:300] + ("..." if len(extracted) > 300 else ""),
             "truncated": len(combined) > 12000,
