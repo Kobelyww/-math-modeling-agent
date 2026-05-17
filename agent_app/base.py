@@ -27,6 +27,35 @@ def normalize_llm_content(content: Any) -> str:
     return str(content)
 
 
+def extract_token_usage(response: Any) -> dict[str, int]:
+    """从 LangChain LLM 响应中提取实际 token 消耗。
+
+    兼容 DeepSeek（response_metadata.token_usage）和 OpenAI 格式（usage_metadata）。
+    返回 {"prompt_tokens": int, "completion_tokens": int}。
+    """
+    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    if not response:
+        return usage
+
+    # LangChain >= 0.3: usage_metadata
+    meta = getattr(response, "usage_metadata", None) or {}
+    if isinstance(meta, dict):
+        usage["prompt_tokens"] = int(meta.get("input_tokens", 0))
+        usage["completion_tokens"] = int(meta.get("output_tokens", 0))
+
+    # DeepSeek via LangChain: response_metadata.token_usage
+    resp_meta = getattr(response, "response_metadata", None) or {}
+    if isinstance(resp_meta, dict):
+        token_usage = resp_meta.get("token_usage", {})
+        if isinstance(token_usage, dict):
+            if not usage["prompt_tokens"]:
+                usage["prompt_tokens"] = int(token_usage.get("prompt_tokens", 0))
+            if not usage["completion_tokens"]:
+                usage["completion_tokens"] = int(token_usage.get("completion_tokens", 0))
+
+    return usage
+
+
 _RETRYABLE_PATTERNS = [
     re.compile(r"rate.?limit", re.I),
     re.compile(r"too many requests", re.I),
@@ -76,6 +105,12 @@ class BaseAgent(ABC):
         self.llm = llm
         self.max_retries = max_retries
         self.retry_delay = 1.0
+        self._last_usage: dict[str, int] = {}
+
+    @property
+    def last_usage(self) -> dict[str, int]:
+        """最近一次 LLM 调用的 token 消耗。"""
+        return self._last_usage
 
     def invoke(self, user_prompt: str) -> str:
         messages = [
@@ -86,6 +121,7 @@ class BaseAgent(ABC):
         for attempt in range(self.max_retries):
             try:
                 response = self.llm.invoke(messages)
+                self._last_usage = extract_token_usage(response)
                 return normalize_llm_content(response.content)
             except Exception as exc:
                 last_error = exc
@@ -112,15 +148,18 @@ class BaseAgent(ABC):
         ]
         parts: list[str] = []
         last_error: Exception | None = None
+        last_response = None
         for attempt in range(self.max_retries):
             try:
                 for chunk in self.llm.stream(messages):
+                    last_response = chunk
                     token = normalize_llm_content(chunk.content)
                     if not token:
                         continue
                     parts.append(token)
                     if on_token:
                         on_token(token)
+                self._last_usage = extract_token_usage(last_response)
                 return "".join(parts)
             except Exception as exc:
                 last_error = exc

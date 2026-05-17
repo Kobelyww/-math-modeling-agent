@@ -121,6 +121,9 @@ class RedisSharedMemory(SharedMemory):
                     "round_idx": m.round_idx,
                     "timestamp": m.timestamp,
                     "token_count": m.token_count,
+                    "prompt_tokens": m.prompt_tokens,
+                    "completion_tokens": m.completion_tokens,
+                    "triggered_by": m.triggered_by,
                 }
                 for m in self._messages
             ],
@@ -163,6 +166,9 @@ class RedisSharedMemory(SharedMemory):
                 round_idx=m.get("round_idx", 0),
                 timestamp=m.get("timestamp", ""),
                 token_count=m.get("token_count", 0),
+                prompt_tokens=m.get("prompt_tokens", 0),
+                completion_tokens=m.get("completion_tokens", 0),
+                triggered_by=m.get("triggered_by", ""),
             )
             for m in data.get("messages", [])
         ]

@@ -17,7 +17,7 @@ MODEL_ALIASES = {
 class AgentConfig:
     role: str
     temperature: float = 0.3
-    max_tokens: int = 4096
+    max_tokens: int = 0  # 0 表示不限制，使用模型默认值
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class Settings:
     retry_delay: float = 1.0
     tool_timeout: int = 30
     sandbox_memory_mb: int = 512
+    max_tokens: int = 0
     agent_configs: dict[str, AgentConfig] = field(default_factory=dict)
     embedding_api_key: str | None = None
 
@@ -55,12 +56,18 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
     retry_delay = float(os.getenv("DEEPSEEK_RETRY_DELAY", "1.0"))
     tool_timeout = int(os.getenv("TOOL_TIMEOUT", "30"))
     sandbox_memory_mb = int(os.getenv("SANDBOX_MEMORY_MB", "512"))
+    max_tokens = int(os.getenv("DEEPSEEK_MAX_TOKENS", "0"))
 
     agent_configs: dict[str, AgentConfig] = {}
     for role in ["data_engineer", "modeler", "programmer", "code_debugger", "writer", "reviewer", "synthesizer"]:
-        key = f"DEEPSEEK_{role.upper()}_TEMPERATURE"
-        if key in os.environ:
-            agent_configs[role] = AgentConfig(role=role, temperature=float(os.getenv(key, "0.3")))
+        temp_key = f"DEEPSEEK_{role.upper()}_TEMPERATURE"
+        tokens_key = f"DEEPSEEK_{role.upper()}_MAX_TOKENS"
+        if temp_key in os.environ or tokens_key in os.environ:
+            agent_configs[role] = AgentConfig(
+                role=role,
+                temperature=float(os.getenv(temp_key, "0.3")),
+                max_tokens=int(os.getenv(tokens_key, "0")),
+            )
 
     embedding_api_key = os.getenv("EMBEDDING_API_KEY", api_key)
 
@@ -73,6 +80,7 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         retry_delay=retry_delay,
         tool_timeout=tool_timeout,
         sandbox_memory_mb=sandbox_memory_mb,
+        max_tokens=max_tokens,
         agent_configs=agent_configs,
         embedding_api_key=embedding_api_key,
     )

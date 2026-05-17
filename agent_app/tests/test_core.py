@@ -1,8 +1,18 @@
-"""Tests for context compressor, STM segmented storage, and retry logic."""
+"""Tests for context compressor, STM segmented storage, retry logic, conditions, and token extraction."""
 
 import pytest
 
-from agent_app.base import normalize_llm_content, _is_retryable
+from agent_app.base import normalize_llm_content, _is_retryable, extract_token_usage
+from agent_app.conditions import (
+    StopMessage,
+    MaxRoundCondition,
+    TokenBudgetCondition,
+    TimeoutCondition,
+    QualityThresholdCondition,
+    ExternalCondition,
+    CompoundCondition,
+    check_conditions,
+)
 from agent_app.memory.short_term import SharedMemory, AgentMessage
 from agent_app.memory.compressor import CompressStrategy, ContextCompressor
 
@@ -178,3 +188,122 @@ class TestContextCompressor:
             compressor.compress("new messages", existing_summary="old summary")
         except AttributeError:
             pass  # Expected: no LLM configured
+
+
+class TestTerminationConditions:
+    def test_max_round_condition(self):
+        cond = MaxRoundCondition(max_rounds=3)
+        assert cond([], 0, 0.0) is None
+        assert cond([], 1, 0.0) is None
+        assert cond([], 2, 0.0) is None
+        result = cond([], 3, 0.0)
+        assert result is not None
+        assert "最大轮次" in result.content
+
+    def test_token_budget_condition(self):
+        cond = TokenBudgetCondition(max_total_tokens=1000)
+        cond.add_usage(500, 200)  # 700 total
+        assert cond([], 0, 0.0) is None
+        cond.add_usage(200, 200)  # 1100 total
+        result = cond([], 0, 0.0)
+        assert result is not None
+        assert "Token 预算耗尽" in result.content
+
+    def test_token_budget_accumulated(self):
+        cond = TokenBudgetCondition(max_total_tokens=500)
+        cond.add_usage(100, 50)
+        assert cond.accumulated == 150
+        cond.add_usage(200, 100)
+        assert cond.accumulated == 450
+
+    def test_timeout_condition(self):
+        cond = TimeoutCondition(timeout_seconds=10.0)
+        cond.start()
+        assert cond([], 0, cond.elapsed) is None
+        assert cond.elapsed < 10.0
+
+    def test_timeout_reset(self):
+        cond = TimeoutCondition(timeout_seconds=0.001)
+        cond.start()
+        import time
+        time.sleep(0.01)
+        result = cond([], 0, cond.elapsed)
+        assert result is not None
+
+    def test_quality_threshold(self):
+        cond = QualityThresholdCondition(threshold=0.85)
+        cond.update(0.5)
+        assert cond([], 0, 0.0) is None
+        cond.update(0.9)
+        result = cond([], 0, 0.0)
+        assert result is not None
+        assert "质量达标" in result.content
+
+    def test_external_condition(self):
+        cond = ExternalCondition()
+        assert cond([], 0, 0.0) is None
+        cond.set()
+        result = cond([], 0, 0.0)
+        assert result is not None
+        assert "外部中断" in result.content
+        cond.reset()
+        assert cond([], 0, 0.0) is None
+
+    def test_compound_condition_or(self):
+        cond = CompoundCondition(
+            MaxRoundCondition(5),
+            TokenBudgetCondition(100),
+        )
+        cond.conditions[1].add_usage(50, 60)  # 110 > 100
+        result = cond([], 0, 0.0)
+        assert result is not None
+        assert "Token 预算" in result.content
+
+    def test_check_conditions_helper(self):
+        conditions = [MaxRoundCondition(1), TokenBudgetCondition(100)]
+        assert check_conditions(conditions, [], 0, 0.0) is None
+        assert check_conditions(conditions, [], 1, 0.0) is not None
+
+
+class TestAgentMessageTokens:
+    def test_total_tokens_actual(self):
+        msg = AgentMessage(role="test", content="hello", prompt_tokens=100, completion_tokens=50)
+        assert msg.total_tokens == 150
+
+    def test_total_tokens_fallback_estimate(self):
+        msg = AgentMessage(role="test", content="hello world", prompt_tokens=0, completion_tokens=0)
+        assert msg.total_tokens == max(len("hello world") // 2, 1)
+
+    def test_triggered_by_in_format(self):
+        msg = AgentMessage(role="modeling", content="model output", triggered_by="data_engineer")
+        formatted = msg.format_for_context()
+        assert "← data_engineer" in formatted
+
+
+class TestTokenExtraction:
+    def test_empty_response(self):
+        assert extract_token_usage(None) == {"prompt_tokens": 0, "completion_tokens": 0}
+
+    def test_usage_metadata(self):
+        class FakeResponse:
+            usage_metadata = {"input_tokens": 100, "output_tokens": 50}
+            response_metadata = {}
+        usage = extract_token_usage(FakeResponse())
+        assert usage["prompt_tokens"] == 100
+        assert usage["completion_tokens"] == 50
+
+    def test_response_metadata_fallback(self):
+        class FakeResponse:
+            usage_metadata = {}
+            response_metadata = {"token_usage": {"prompt_tokens": 200, "completion_tokens": 80}}
+        usage = extract_token_usage(FakeResponse())
+        assert usage["prompt_tokens"] == 200
+        assert usage["completion_tokens"] == 80
+
+    def test_missing_all(self):
+        class FakeResponse:
+            usage_metadata = None
+            response_metadata = {}
+        usage = extract_token_usage(FakeResponse())
+        assert usage["prompt_tokens"] == 0
+        assert usage["completion_tokens"] == 0

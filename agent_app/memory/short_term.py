@@ -20,9 +20,20 @@ class AgentMessage:
     round_idx: int = 0
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     token_count: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    triggered_by: str = ""  # 上游 Agent role，用于因果追溯
+
+    @property
+    def total_tokens(self) -> int:
+        """实际 LLM 消耗的 token 数（prompt + completion），回退到估算。"""
+        if self.prompt_tokens or self.completion_tokens:
+            return self.prompt_tokens + self.completion_tokens
+        return self.estimated_tokens
 
     def format_for_context(self) -> str:
-        return f"[{self.role}] (round {self.round_idx}):\n{self.content}"
+        triggered = f" ← {self.triggered_by}" if self.triggered_by else ""
+        return f"[{self.role}] (round {self.round_idx}{triggered}):\n{self.content}"
 
     @property
     def estimated_tokens(self) -> int:
@@ -74,10 +85,13 @@ class SharedMemory:
 
     # ─── 读写 ─────────────────────────────────────────────────────────
 
-    def post(self, role: str, content: str) -> AgentMessage:
+    def post(self, role: str, content: str, triggered_by: str = "",
+             prompt_tokens: int = 0, completion_tokens: int = 0) -> AgentMessage:
         msg = AgentMessage(
             role=role, content=content, round_idx=self._round,
-            token_count=len(content) // 2
+            token_count=len(content) // 2,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            triggered_by=triggered_by,
         )
         self._messages.append(msg)
         self._total_tokens += msg.estimated_tokens
@@ -163,13 +177,14 @@ class SharedMemory:
         return "\n\n---\n\n".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
 
     def summary(self) -> str:
-        """生成短期记忆摘要。"""
+        """生成短期记忆摘要（含实际 LLM token 消耗）。"""
         roles = set(m.role for m in self._messages)
+        actual_total = sum(m.total_tokens for m in self._messages)
         has_compressed = "有" if self._compressed_prefix else "无"
         return (
             f"短期记忆：{len(self._messages)} 条消息（最近{self._recent_window_size}条保留），"
-            f"{self._round} 轮，{self._total_tokens} tokens，角色：{roles}，"
-            f"压缩前缀：{has_compressed}"
+            f"{self._round} 轮，估算{self._total_tokens} tokens（实际LLM消耗{actual_total}），"
+            f"角色：{roles}，压缩前缀：{has_compressed}"
         )
 
     def clear(self) -> None:
