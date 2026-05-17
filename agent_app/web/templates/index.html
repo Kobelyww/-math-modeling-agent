@@ -29,6 +29,12 @@
       <div class="card">
         <h3>输入问题</h3>
         <textarea id="question" rows="4" placeholder="例如：建立新能源车充电站布局优化模型"></textarea>
+        <div class="upload-row">
+          <input type="file" id="pdf-file" accept=".pdf" onchange="onPDFSelected()" style="display:none">
+          <button class="btn-sm" onclick="document.getElementById('pdf-file').click()">📄 上传PDF</button>
+          <span id="pdf-name" class="upload-hint"></span>
+        </div>
+        <div id="upload-status" class="status-text" style="font-size: 0.8rem;"></div>
         <button id="btn-solve" onclick="startSolve()">▶ 开始协作分析</button>
         <div id="status" class="status-text"></div>
       </div>

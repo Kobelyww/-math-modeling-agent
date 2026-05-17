@@ -239,4 +239,36 @@ function downloadBlob(content, filename, mimeType) {
   URL.revokeObjectURL(url);
 }
 
+async function onPDFSelected() {
+  const fileInput = document.getElementById('pdf-file');
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  document.getElementById('pdf-name').textContent = file.name;
+  const statusEl = document.getElementById('upload-status');
+  statusEl.textContent = '提取中...';
+  statusEl.style.color = '';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/upload/pdf', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.error) {
+      statusEl.textContent = '✗ ' + data.error;
+      statusEl.style.color = 'var(--red)';
+      return;
+    }
+    document.getElementById('question').value = data.text;
+    statusEl.textContent =
+      '✓ 已提取 ' + data.pages + ' 页, ' + data.full_length + ' 字符' +
+      (data.truncated ? ' (已截取前8000字)' : '');
+    statusEl.style.color = 'var(--green)';
+  } catch (e) {
+    statusEl.textContent = '上传失败: ' + e.message;
+    statusEl.style.color = 'var(--red)';
+  }
+}
+
 loadSkills();

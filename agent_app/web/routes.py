@@ -9,8 +9,10 @@ import uuid
 from asyncio import Lock
 from pathlib import Path
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+import tempfile
+
+from fastapi import APIRouter, File, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
@@ -195,6 +197,60 @@ async def status():
         "active_tasks": len(_active_tasks),
         "memory": mem_stats,
     }
+
+
+@router.post("/api/upload/pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    """上传 PDF 文件，提取文本作为题目内容。
+
+    使用 PyMuPDF (fitz) 提取文本，返回前 8000 字符。
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        return JSONResponse({"error": "仅支持 PDF 文件"}, status_code=400)
+
+    try:
+        content = await file.read()
+        if len(content) > 20 * 1024 * 1024:  # 20MB 限制
+            return JSONResponse({"error": "文件过大（最大 20MB）"}, status_code=400)
+
+        # 写入临时文件供 PyMuPDF 读取
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        import fitz  # PyMuPDF
+        doc = fitz.open(tmp_path)
+        text_parts = []
+        for page in doc:
+            text = page.get_text()
+            if text.strip():
+                text_parts.append(text.strip())
+        doc.close()
+
+        # 清理临时文件
+        Path(tmp_path).unlink(missing_ok=True)
+
+        full_text = "\n\n".join(text_parts)
+        if not full_text.strip():
+            return JSONResponse({"error": "PDF 无可提取文本（可能是扫描件图片）"}, status_code=400)
+
+        # 限制提取长度
+        extracted = full_text[:8000]
+        page_count = len(text_parts)
+
+        return {
+            "filename": file.filename,
+            "pages": page_count,
+            "text": extracted,
+            "text_preview": extracted[:300] + ("..." if len(extracted) > 300 else ""),
+            "truncated": len(full_text) > 8000,
+            "full_length": len(full_text),
+        }
+    except ImportError:
+        return JSONResponse({"error": "PyMuPDF 未安装，无法解析 PDF"}, status_code=500)
+    except Exception as exc:
+        logger.exception("PDF 上传处理失败")
+        return JSONResponse({"error": f"PDF 解析失败: {exc}"}, status_code=500)
 
 
 @router.get("/api/rag/query")
