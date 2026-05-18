@@ -92,8 +92,11 @@ class MemoryManager:
         compressed = self.compressor.compress(old_text, existing_summary=existing_summary)
         self.stm.set_compressed_prefix(compressed)
 
-    def get_context(self, roles: list[str] | None = None, max_tokens: int = 8000) -> str:
-        return self.stm.format_context(roles=roles, max_tokens=max_tokens)
+    def get_context(self, roles: list[str] | None = None, max_tokens: int = 8000,
+                    compressed_only: bool = False) -> str:
+        """compressed_only=True 时只返回压缩前缀，避免与显式阶段输出重复。"""
+        return self.stm.format_context(roles=roles, max_tokens=max_tokens,
+                                       compressed_only=compressed_only)
 
     def force_compress(self) -> str | None:
         if not self.compressor:

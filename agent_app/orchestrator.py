@@ -266,11 +266,18 @@ class Orchestrator:
             self._post(stm, role_label, fallback, triggered_by=triggered_by)
             return fallback
 
-    def _get_stm_context(self, stm: SharedMemory, max_tokens: int = 3000) -> str:
+    def _get_stm_context(self, stm: SharedMemory, max_tokens: int = 3000,
+                         compressed_only: bool = False) -> str:
+        """获取 STM 上下文。
+
+        compressed_only=True：只返回压缩前缀（历史脉络），
+        不包括 recent_window——用于已有显式阶段输出的后续 Agent 提示词，
+        避免同一份建模/编程输出在 STM 和 extra_contexts 中重复拼接。
+        """
         if self.memory:
-            ctx = self.memory.get_context(max_tokens=max_tokens)
+            ctx = self.memory.get_context(max_tokens=max_tokens, compressed_only=compressed_only)
         else:
-            ctx = stm.format_context(max_tokens=max_tokens)
+            ctx = stm.format_context(max_tokens=max_tokens, compressed_only=compressed_only)
         return ctx
 
     def _maybe_archive(self, question: str, result_summary: str) -> None:
@@ -299,10 +306,16 @@ class Orchestrator:
 
     def _build_prompt(self, question: str, stm_ctx: str, rag_ctx: str,
                       extra_contexts: dict[str, str] | None = None) -> str:
+        """构建 Agent prompt。
+
+        stm_ctx 已由调用方决定是否包含 recent_window：
+        - 有 extra_contexts 时：调用方传 compressed_only=True，STM 只含压缩前缀
+        - 无 extra_contexts 时：调用方传 compressed_only=False，STM 含完整上下文
+        """
         parts = [f"任务：{question}"]
 
         if stm_ctx:
-            parts.append(f"协作历史（压缩）：\n{stm_ctx}")
+            parts.append(f"历史脉络（压缩摘要）：\n{stm_ctx}")
 
         if rag_ctx and rag_ctx != "暂无检索上下文。":
             parts.append(f"参考资料：\n{rag_ctx}")
@@ -362,20 +375,20 @@ class Orchestrator:
                                       token_budget=token_budget)
         mem.advance_round()
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
         prog_out = self._safe_invoke(self.programmer, prog_in, "programming", mem, errors,
                                      triggered_by="modeling", token_budget=token_budget)
 
         debug_out = self._safe_invoke(
             self.code_debugger,
-            self._build_prompt(question, self._get_stm_context(mem), "",
+            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
                                {"编程输出": prog_out[:4000]}),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
             "建模方案": model_out, "编程方案": prog_out, "代码审查": debug_out,
         })
@@ -383,7 +396,7 @@ class Orchestrator:
                                       triggered_by="code_debugger", token_budget=token_budget)
         mem.advance_round()
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案": model_out, "编程方案": prog_out, "写作方案": write_out,
         })
@@ -461,7 +474,7 @@ class Orchestrator:
             self._post(mem, "reviewer(modeling)", review, triggered_by="modeling")
             if rnd > 0 and not self._review_needs_revision(review, "建模"):
                 break
-            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "你的上一版输出": model_out, "评审反馈": review,
             })
             model_out = self._safe_invoke(self.modeler, refine_prompt, "modeling", mem, errors,
@@ -470,7 +483,7 @@ class Orchestrator:
         mem.advance_round()
 
         # --- 编程 + 评审循环 ---
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
         prog_out = self._safe_invoke(self.programmer, prog_in, "programming", mem, errors,
                                      triggered_by="modeling", token_budget=token_budget)
@@ -485,7 +498,7 @@ class Orchestrator:
             self._post(mem, "reviewer(programming)", review, triggered_by="programming")
             if rnd > 0 and not self._review_needs_revision(review, "编程"):
                 break
-            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "建模方案": model_out, "你的上一版输出": prog_out, "评审反馈": review,
             })
             prog_out = self._safe_invoke(self.programmer, refine_prompt, "programming", mem, errors,
@@ -494,14 +507,14 @@ class Orchestrator:
 
         debug_out = self._safe_invoke(
             self.code_debugger,
-            self._build_prompt(question, self._get_stm_context(mem), "",
+            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
                                {"编程输出（已评审修改）": prog_out[:4000]}),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
 
         # --- 写作 + 评审循环 ---
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
             "建模方案": model_out, "编程方案": prog_out, "代码审查": debug_out,
         })
@@ -518,7 +531,7 @@ class Orchestrator:
             self._post(mem, "reviewer(writing)", review, triggered_by="writing")
             if rnd > 0 and not self._review_needs_revision(review, "写作"):
                 break
-            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "建模方案": model_out, "编程方案": prog_out,
                 "你的上一版输出": write_out, "评审反馈": review,
             })
@@ -528,7 +541,7 @@ class Orchestrator:
         mem.advance_round()
 
         # --- 总控整合 ---
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案（已评审）": model_out,
             "编程方案（已评审）": prog_out,
@@ -596,7 +609,7 @@ class Orchestrator:
         model_out = self._safe_invoke(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget)
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
 
         def run_programmer() -> str:
             return self.programmer.invoke(
@@ -627,13 +640,13 @@ class Orchestrator:
 
         debug_out = self._safe_invoke(
             self.code_debugger,
-            self._build_prompt(question, self._get_stm_context(mem), "",
+            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
                                {"编程输出": prog_out[:4000]}),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案": model_out, "编程方案": prog_out,
             "代码审查": debug_out, "写作方案": write_out,
@@ -690,13 +703,13 @@ class Orchestrator:
         model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget, on_token=on_modeling_token)
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
         prog_out = self._safe_stream(self.programmer, prog_in, "programming", mem, errors,
                                      triggered_by="modeling", token_budget=token_budget,
                                      on_token=on_programming_token)
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
             "建模方案": model_out, "编程方案": prog_out,
         })
@@ -704,7 +717,7 @@ class Orchestrator:
                                       triggered_by="programming", token_budget=token_budget,
                                       on_token=on_writing_token)
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案": model_out, "编程方案": prog_out, "写作方案": write_out,
         })
@@ -781,7 +794,7 @@ class Orchestrator:
             self._post(mem, "reviewer(modeling)", review, triggered_by="modeling")
             if rnd > 0 and not self._review_needs_revision(review, "建模"):
                 break
-            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "你的上一版输出": model_out, "评审反馈": review,
             })
             model_out = self._safe_stream(self.modeler, refine_prompt, "modeling", mem, errors,
@@ -791,7 +804,7 @@ class Orchestrator:
         mem.advance_round()
 
         # 编程 + 评审循环
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
         prog_out = self._safe_stream(self.programmer, prog_in, "programming", mem, errors,
                                      triggered_by="modeling", token_budget=token_budget,
@@ -805,7 +818,7 @@ class Orchestrator:
             self._post(mem, "reviewer(programming)", review, triggered_by="programming")
             if rnd > 0 and not self._review_needs_revision(review, "编程"):
                 break
-            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "建模方案": model_out, "你的上一版输出": prog_out, "评审反馈": review,
             })
             prog_out = self._safe_stream(self.programmer, refine_prompt, "programming", mem, errors,
@@ -815,14 +828,14 @@ class Orchestrator:
 
         debug_out = self._safe_invoke(
             self.code_debugger,
-            self._build_prompt(question, self._get_stm_context(mem), "",
+            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
                                {"编程输出（已评审修改）": prog_out[:4000]}),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
 
         # 写作 + 评审循环
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
             "建模方案": model_out, "编程方案": prog_out, "代码审查": debug_out,
         })
@@ -838,7 +851,7 @@ class Orchestrator:
             self._post(mem, "reviewer(writing)", review, triggered_by="writing")
             if rnd > 0 and not self._review_needs_revision(review, "写作"):
                 break
-            refine_prompt = self._build_prompt(question, self._get_stm_context(mem), rag_ctx, {
+            refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "建模方案": model_out, "编程方案": prog_out,
                 "你的上一版输出": write_out, "评审反馈": review,
             })
@@ -849,7 +862,7 @@ class Orchestrator:
         mem.advance_round()
 
         # 总控整合
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案（已评审）": model_out,
             "编程方案（已评审）": prog_out,
@@ -902,7 +915,7 @@ class Orchestrator:
                                       {"数据预处理结果": data_out} if data_ctx else None)
         model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget, on_token=on_modeling_token)
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
 
         def run_programmer_stream():
             return self.programmer.stream(
@@ -935,13 +948,13 @@ class Orchestrator:
 
         debug_out = self._safe_invoke(
             self.code_debugger,
-            self._build_prompt(question, self._get_stm_context(mem), "",
+            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
                                {"编程输出": prog_out[:4000]}),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
 
-        stm_ctx = self._get_stm_context(mem)
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案": model_out, "编程方案": prog_out,
             "代码审查": debug_out, "写作方案": write_out,

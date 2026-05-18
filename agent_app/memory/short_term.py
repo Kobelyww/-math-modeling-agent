@@ -145,21 +145,25 @@ class SharedMemory:
 
     # ─── 格式化 ───────────────────────────────────────────────────────
 
-    def format_context(self, roles: list[str] | None = None, max_tokens: int = 8000) -> str:
-        """格式化消息历史为注入用文本，compressed_prefix 优先，然后是最近消息。
+    def format_context(self, roles: list[str] | None = None, max_tokens: int = 8000,
+                       compressed_only: bool = False) -> str:
+        """格式化消息历史为注入用文本。
 
-        从最新消息开始累积直到接近 token 上限。
+        compressed_only=True：只返回压缩前缀（不包含最近消息）。
+        用于 Orchestrator 已有显式阶段输出时避免重复拼接。
         """
         parts: list[str] = []
 
-        # 压缩前缀始终在最前面（如果存在）
         if self._compressed_prefix:
             parts.append(self._compressed_prefix.format_for_context())
+            if compressed_only:
+                return parts[0]
             budget_used = self._compressed_prefix.estimated_tokens
         else:
+            if compressed_only:
+                return ""
             budget_used = 0
 
-        # 选取最近消息
         msgs = self._messages
         if roles:
             msgs = [m for m in msgs if m.role in roles]
