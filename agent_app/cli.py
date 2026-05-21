@@ -81,17 +81,19 @@ SINGLE_AGENT_PROMPT = """你是一个基于 DeepSeek 的智能助手，专长数
 
 ORCHESTRATOR_HELP = f"""
 {'='*60}
-  数模多智能体协作系统  v2.0 (渐进式披露 + 探索能力)
+  数模多智能体协作系统  v2.1 (Plan-and-Execute 架构)
 {'='*60}
 
 工作流模式：
-  1. explore      - 先探索后求解（多源探索→规划→建模→编程→写作，推荐）
-  2. sequential   - 串行流水线（建模→编程→写作→总控，稳定可靠）
-  3. review       - 深度反思（每阶段经评审专家审核后修改，质量优先）
-  4. parallel     - 快速并行（建模先行，编程+写作并行执行，速度优先）
+  1. plan         - 规划先行（Plan→Execute→Synthesize，默认推荐）
+  2. explore      - 先探索后求解（多源探索→规划→建模→编程→写作）
+  3. sequential   - 串行流水线（建模→编程→写作→总控，稳定可靠）
+  4. review       - 深度反思（每阶段经评审专家审核后修改，质量优先）
+  5. parallel     - 快速并行（建模先行，编程+写作并行执行，速度优先）
 
 命令：
-  /mode <模式名>  - 切换工作流模式（默认 explore）
+  /mode <模式名>  - 切换工作流模式（默认 plan）
+  /plan <问题>    - 仅生成求解计划，不执行
   /solve <问题>   - 启动多智能体协作分析
   /stream         - 流式输出模式（实时 token 级输出）
   /chat           - 切换到单智能体对话模式
@@ -135,23 +137,80 @@ class CLI:
             print("[Memory] Redis 不可用，使用 SQLite 回退方案")
 
         self.orchestrator = Orchestrator(self.settings, rag=self.rag, memory_manager=self.memory_manager)
-        self.mode: str = "explore"  # 默认使用先探索后求解策略
+        self.mode: str = "plan"  # 默认使用 Plan-and-Execute 策略
+
+        # 设置默认流式回调 — 所有模式自动流式输出 + 思考内容
+        self._current_role: str = ""
+        self._thinking_active: bool = False
+        self._output_active: bool = False
+        self.orchestrator.on_agent_thinking = self._on_agent_thinking
+        self.orchestrator.on_agent_token = self._on_agent_token
+
+    def _on_agent_thinking(self, token: str, role_label: str) -> None:
+        """默认思考回调：首次思考时打印标签，灰显内容。"""
+        if role_label != self._current_role:
+            if self._output_active:
+                print()
+            print(f"\n{'─'*50}")
+            print(f"  [{role_label}] 生成中...")
+            print(f"{'─'*50}")
+            self._current_role = role_label
+            self._thinking_active = False
+            self._output_active = False
+        if not self._thinking_active:
+            print(f"\n>>> 思考过程：")
+            self._thinking_active = True
+        sys.stdout.write(f"\033[90m{token}\033[0m")
+        sys.stdout.flush()
+
+    def _on_agent_token(self, token: str, role_label: str) -> None:
+        """默认输出回调：思考结束后打印输出标签。"""
+        if role_label != self._current_role:
+            if self._output_active:
+                print()
+            print(f"\n{'─'*50}")
+            print(f"  [{role_label}] 生成中...")
+            print(f"{'─'*50}")
+            self._current_role = role_label
+            self._thinking_active = False
+            self._output_active = False
+        if not self._output_active:
+            if self._thinking_active:
+                print(f"\n\n>>> 输出：\n")
+            else:
+                print(f"\n>>> 输出：\n")
+            self._output_active = True
+        sys.stdout.write(token)
+        sys.stdout.flush()
 
     def _print_streaming(self, label: str, role: str):
+        """Return (on_token, on_thinking) callbacks for streaming display."""
         print(f"\n{'─'*50}")
         print(f"  [{label}] 正在生成...")
         print(f"{'─'*50}")
 
-        first_token = [True]
+        thinking_started = [False]
+        output_started = [False]
+
+        def on_thinking(token: str) -> None:
+            if not thinking_started[0]:
+                print(f"\n>>> {role} 思考过程：")
+                thinking_started[0] = True
+            # Dimmed gray for thinking content
+            sys.stdout.write(f"\033[90m{token}\033[0m")
+            sys.stdout.flush()
 
         def on_token(token: str) -> None:
-            if first_token[0]:
-                print(f"\n>>> {role} 输出：\n")
-                first_token[0] = False
+            if not output_started[0]:
+                if thinking_started[0]:
+                    print(f"\n\n>>> {role} 输出：\n")
+                else:
+                    print(f"\n>>> {role} 输出：\n")
+                output_started[0] = True
             sys.stdout.write(token)
             sys.stdout.flush()
 
-        return on_token
+        return on_token, on_thinking
 
     def solve(self, question: str) -> None:
         if not question.strip():
@@ -161,7 +220,9 @@ class CLI:
         print(f"\n工作流模式：{self.mode}")
         print(f"问题：{question}")
 
-        if self.mode == "explore":
+        if self.mode == "plan":
+            result = self.orchestrator.solve_with_plan(question)
+        elif self.mode == "explore":
             result = self.orchestrator.solve_explore(question)
         elif self.mode == "sequential":
             result = self.orchestrator.solve_sequential(question)
@@ -173,6 +234,8 @@ class CLI:
             print(f"未知模式: {self.mode}")
             return
 
+        # Persist all outputs to disk
+        self.orchestrator._save_outputs(result)
         self._print_result(result)
 
     def solve_stream(self, question: str) -> None:
@@ -180,13 +243,18 @@ class CLI:
             return
 
         print(f"\n工作流模式：streaming (sequential)")
+        m_tok, m_think = self._print_streaming("建模", "建模智能体")
+        p_tok, p_think = self._print_streaming("编程", "编程智能体")
+        w_tok, w_think = self._print_streaming("写作", "写作智能体")
+        s_tok, s_think = self._print_streaming("总控", "总控智能体")
         result = self.orchestrator.solve_stream(
             question,
-            on_modeling_token=self._print_streaming("建模", "建模智能体"),
-            on_programming_token=self._print_streaming("编程", "编程智能体"),
-            on_writing_token=self._print_streaming("写作", "写作智能体"),
-            on_synthesis_token=self._print_streaming("总控", "总控智能体"),
+            on_modeling_token=m_tok, on_modeling_thinking=m_think,
+            on_programming_token=p_tok, on_programming_thinking=p_think,
+            on_writing_token=w_tok, on_writing_thinking=w_think,
+            on_synthesis_token=s_tok, on_synthesis_thinking=s_think,
         )
+        self.orchestrator._save_outputs(result)
         self._print_result(result)
 
     @staticmethod
@@ -283,11 +351,41 @@ class CLI:
             if raw.lower().startswith("/mode"):
                 parts = raw.split(maxsplit=1)
                 new_mode = parts[1].strip().lower() if len(parts) > 1 else ""
-                if new_mode in ("explore", "sequential", "review", "parallel"):
+                if new_mode in ("plan", "explore", "sequential", "review", "parallel"):
                     self.mode = new_mode
                     print(f"已切换到 {new_mode} 模式。")
                 else:
-                    print(f"无效模式。可选: explore / sequential / review / parallel")
+                    print(f"无效模式。可选: plan / explore / sequential / review / parallel")
+                continue
+            if raw.lower().startswith("/plan"):
+                question = raw.split(maxsplit=1)[1].strip() if len(raw) > 5 else ""
+                if question:
+                    print(f"\n生成求解计划：{question}\n")
+                    import time as _time
+                    started = _time.monotonic()
+                    plan = self.orchestrator.plan_only(question)
+                    elapsed = _time.monotonic() - started
+                    print(plan)
+                    print(f"\n── 计划生成耗时 {elapsed:.1f}s ──")
+                    print("输入 /execute 基于此计划执行求解，或 /solve 重新求解")
+                    self._last_plan = plan  # save for /execute
+                else:
+                    print("请提供问题，例如：/plan 建立交通流优化模型")
+                continue
+            if raw.lower() == "/execute":
+                if hasattr(self, '_last_plan') and self._last_plan:
+                    question = self._last_plan.split("问题分析")[0]
+                    question = question.replace("#", "").strip()[:200]
+                    if not question:
+                        question = "执行已规划的任务"
+                    result = self.orchestrator.solve_with_plan(
+                        question, pre_generated_plan=self._last_plan,
+                    )
+                    self.orchestrator._save_outputs(result)
+                    self._print_result(result)
+                    del self._last_plan
+                else:
+                    print("没有可执行的计划。请先用 /plan <问题> 生成计划。")
                 continue
             if raw.lower().startswith("/solve"):
                 question = raw.split(maxsplit=1)[1].strip() if len(raw) > 6 else ""

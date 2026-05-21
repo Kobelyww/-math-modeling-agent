@@ -169,6 +169,30 @@ _TOOL_REGISTRY = {
 _MAX_RECURSION_DEPTH = 1
 
 
+def _make_subagent_llm(parent_llm: BaseChatModel) -> BaseChatModel:
+    """Create a fresh LLM instance for a subagent.
+
+    Uses 'deepseek-chat' (V3) for subagents even when the parent uses V4.
+    V3 doesn't have thinking mode, which avoids the reasoning_content
+    echoing requirement that breaks LangChain's create_agent multi-turn
+    tool calling. Subagents just need reliable tool execution — they
+    don't benefit from deep reasoning.
+    """
+    from langchain_deepseek import ChatDeepSeek
+
+    parent = parent_llm
+    api_key = getattr(parent, "api_key", None) or getattr(parent, "openai_api_key", None)
+    api_base = getattr(parent, "api_base", None) or getattr(parent, "openai_api_base", None) or ""
+
+    kwargs: dict = {
+        "model": "deepseek-chat",  # V3 — no thinking mode, reliable tool calling
+        "api_key": api_key,
+    }
+    if api_base:
+        kwargs["api_base"] = api_base
+    return ChatDeepSeek(**kwargs)
+
+
 def _run_subagent(
     agent_type: str,
     task: str,
@@ -208,11 +232,8 @@ def _run_subagent(
         if tool_obj:
             tools.append(tool_obj)
 
-    # Add any extra tools passed from the parent
     if extra_tools:
         tools.extend(extra_tools)
-
-    # Add extra tool name mappings
     if extra_tool_names:
         for name, tool_obj in extra_tool_names.items():
             _TOOL_REGISTRY[name] = tool_obj
@@ -232,18 +253,19 @@ def _run_subagent(
 ## 输出格式要求
 请用中文输出你的发现。直接给出结果，不要啰嗦。控制在你角色的字数限制内。"""
 
+    # Create a FRESH LLM instance — avoids reasoning_content leakage from parent
+    sub_llm = _make_subagent_llm(llm)
+
     try:
         if tools:
-            # Use LangChain agent with tools
             agent = create_agent(
-                model=llm,
+                model=sub_llm,
                 tools=tools,
                 system_prompt=system_prompt,
             )
             response = agent.invoke({
                 "messages": [HumanMessage(content=full_task)],
             })
-            # Extract content from agent response
             messages = response.get("messages", [])
             result = ""
             if messages:
@@ -251,9 +273,8 @@ def _run_subagent(
                 result = getattr(last, "content", str(last))
                 result = normalize_llm_content(result) if not isinstance(result, str) else result
         else:
-            # Direct LLM call — no tools
             from langchain_core.messages import SystemMessage as SysMsg
-            response = llm.invoke([
+            response = sub_llm.invoke([
                 SysMsg(content=system_prompt),
                 HumanMessage(content=task),
             ])

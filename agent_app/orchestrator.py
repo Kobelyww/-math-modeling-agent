@@ -13,6 +13,7 @@ from .agents import (
     CodeDebuggerAgent,
     DataEngineerAgent,
     ModelerAgent,
+    PlannerAgent,
     ProgrammerAgent,
     ReviewerAgent,
     SynthesizerAgent,
@@ -35,7 +36,8 @@ from .llm import create_llm
 from .memory import MemoryManager, SharedMemory
 from .rag import Chunk, PaperRAG
 from .skills import SkillRegistry, SkillResolver
-from .subagent import configure_subagent_llm, _set_code_tools
+from .subagent import configure_subagent_llm, _set_code_tools, spawn_subagent
+from .base import register_tool_executor
 
 logger = logging.getLogger(__name__)
 
@@ -200,14 +202,57 @@ class Orchestrator:
         self.writer: WriterAgent = agents["writer"]
         self.reviewer: ReviewerAgent = agents["reviewer"]
         self.synthesizer: SynthesizerAgent = agents["synthesizer"]
+        self.planner: PlannerAgent = agents["planner"]
         self.rag = rag
         self.skill_registry = SkillRegistry()
         self.skill_resolver = SkillResolver(registry=self.skill_registry, max_skills=4)
 
+        # Default streaming callbacks — set by CLI for real-time output
+        self.on_agent_token: Callable[[str, str], None] | None = None
+        self.on_agent_thinking: Callable[[str, str], None] | None = None
+
         # Subagent system — configure LLM and register code tools
         configure_subagent_llm(base_llm)
-        from .tools import python_exec, pip_install, read_csv_info
+        from .tools import (python_exec, pip_install, read_csv_info,
+                           latex_template, latex_compile, latex_render_math,
+                           calculator, current_time, save_note, read_note, list_notes,
+                           nature_viz_template, model_reference, writing_rules,
+                           search_arxiv, search_semantic_scholar, search_crossref,
+                           fetch_paper_to_kb)
+        from .exploration import (read_file, search_files, search_content,
+                                  list_directory, web_search, web_fetch)
         _set_code_tools(python_exec.func, pip_install.func, read_csv_info.func)
+
+        # Register all tools for agent tool-calling
+        _tool_map = {
+            "python_exec": python_exec, "pip_install": pip_install,
+            "read_csv_info": read_csv_info, "latex_template": latex_template,
+            "latex_compile": latex_compile, "latex_render_math": latex_render_math,
+            "calculator": calculator, "current_time": current_time,
+            "save_note": save_note, "read_note": read_note, "list_notes": list_notes,
+            "nature_viz_template": nature_viz_template,
+            "model_reference": model_reference, "writing_rules": writing_rules,
+            "search_arxiv": search_arxiv, "search_semantic_scholar": search_semantic_scholar,
+            "search_crossref": search_crossref, "fetch_paper_to_kb": fetch_paper_to_kb,
+            "read_file": read_file, "search_files": search_files,
+            "search_content": search_content, "list_directory": list_directory,
+            "web_search": web_search, "web_fetch": web_fetch,
+            "spawn_subagent": spawn_subagent,
+        }
+        for name, tool_obj in _tool_map.items():
+            register_tool_executor(name, tool_obj)
+
+        # Per-agent tool assignments
+        self._agent_tools: dict[str, list] = {
+            "modeler": [web_search, search_arxiv, model_reference, writing_rules, read_file, search_content],
+            "programmer": [python_exec, read_file, search_files, search_content, read_csv_info, pip_install],
+            "code_debugger": [python_exec, read_file, search_content],
+            "writer": [latex_template, latex_compile, web_search, save_note, read_note, writing_rules, read_file, list_directory],
+            "synthesizer": [spawn_subagent, web_search, search_files, search_content, read_file, list_directory, web_fetch],
+            "reviewer": [read_file, search_content, web_search],
+            "planner": [web_search, spawn_subagent, model_reference, writing_rules, search_files, search_content, read_file],
+            "data_engineer": [read_csv_info, search_files, read_file, python_exec],
+        }
 
         # 默认终止条件
         self._default_conditions = CompoundCondition(
@@ -236,10 +281,38 @@ class Orchestrator:
     def _safe_invoke(self, agent: BaseAgent, prompt: str, role_label: str,
                      stm: SharedMemory, errors: list[str],
                      triggered_by: str = "",
-                     token_budget: TokenBudgetCondition | None = None) -> str:
-        """安全调用 agent.invoke()，自动捕获 token 使用量。"""
+                     token_budget: TokenBudgetCondition | None = None,
+                     on_token: Callable[[str], None] | None = None,
+                     on_thinking: Callable[[str], None] | None = None) -> str:
+        """安全调用 agent，自动使用流式输出，捕获 token 使用量。
+
+        所有调用默认走 agent.stream() 以支持实时输出和思考过程展示。
+        on_token/on_thinking 为 None 时静默流式。
+        """
+        # Fall back to orchestrator-level callbacks when caller doesn't provide them
+        _on_token = on_token
+        _on_thinking = on_thinking
+        if _on_token is None and self.on_agent_token:
+            _label = role_label
+            _on_token = lambda t, lbl=_label: self.on_agent_token(t, lbl)
+        if _on_thinking is None and self.on_agent_thinking:
+            _label = role_label
+            _on_thinking = lambda t, lbl=_label: self.on_agent_thinking(t, lbl)
+
+        # Determine tools for this agent role
+        agent_tools = self._agent_tools.get(role_label, [])
+        use_tools = len(agent_tools) > 0
+
         try:
-            result = agent.invoke(prompt)
+            if use_tools:
+                # Tool-calling mode: agent can search web, read files, spawn subagents, etc.
+                result = agent.invoke_with_tools(prompt, tools=agent_tools, max_tool_rounds=3)
+                # Also stream through callbacks for real-time display
+                if _on_token:
+                    for chunk in [result[i:i+20] for i in range(0, len(result), 20)]:
+                        _on_token(chunk)
+            else:
+                result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
             usage = agent.last_usage
             self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
             if token_budget:
@@ -258,10 +331,11 @@ class Orchestrator:
                      stm: SharedMemory, errors: list[str],
                      triggered_by: str = "",
                      token_budget: TokenBudgetCondition | None = None,
-                     on_token: Callable[[str], None] | None = None) -> str:
-        """安全调用 agent.stream()，自动捕获 token 使用量。"""
+                     on_token: Callable[[str], None] | None = None,
+                     on_thinking: Callable[[str], None] | None = None) -> str:
+        """安全调用 agent.stream()，自动捕获 token 使用量，支持思考内容回调。"""
         try:
-            result = agent.stream(prompt, on_token=on_token)
+            result = agent.stream(prompt, on_token=on_token, on_thinking=on_thinking)
             usage = agent.last_usage
             self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
             if token_budget:
@@ -292,23 +366,109 @@ class Orchestrator:
 
     def _maybe_archive(self, question: str, result_summary: str) -> None:
         if self.memory:
-            self.memory.archive_solve(question, result_summary)
+            try:
+                self.memory.archive_solve(question, result_summary)
+            except Exception:
+                logger.debug("Archive failed", exc_info=True)
+
+    # ─── 文件生成 ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_code_blocks(text: str, lang: str = "python") -> list[str]:
+        """Extract code blocks of a given language from markdown text."""
+        import re
+        pattern = rf"```{lang}\s*\n(.*?)```"
+        return [m.strip() for m in re.findall(pattern, text, re.DOTALL)]
+
+    @staticmethod
+    def _extract_latex_document(text: str) -> str | None:
+        """Extract a full LaTeX document from markdown text."""
+        import re
+        m = re.search(r"\\documentclass.*?\\end\{document\}", text, re.DOTALL)
+        return m.group(0) if m else None
+
+    def _save_outputs(self, result: WorkflowResult) -> None:
+        """Persist agent outputs to the output/ directory.
+
+        Extracts Python code from the programmer output and LaTeX source
+        from the writer output, saving them as runnable/compilable files.
+        """
+        from pathlib import Path
+        out = Path(__file__).resolve().parent / "output"
+        out.mkdir(exist_ok=True)
+
+        saved: list[str] = []
+
+        # Save modeling report
+        if result.modeling.content:
+            path = out / "modeling_report.md"
+            path.write_text(result.modeling.content, encoding="utf-8")
+            saved.append(str(path.name))
+
+        # Extract and save Python code from programmer output
+        py_blocks = self._extract_code_blocks(result.programming.content, "python")
+        for i, block in enumerate(py_blocks):
+            if 'if __name__' in block or 'def main' in block or i == 0:
+                path = out / f"solve.py" if i == 0 else out / f"solve_part{i+1}.py"
+                path.write_text(block, encoding="utf-8")
+                saved.append(str(path.name))
+
+        # Save code debugger report
+        if result.programming.content:
+            path = out / "code_review.md"
+            path.write_text(result.programming.content, encoding="utf-8")
+            # Note: this overwrites the modeling report path — fix
+            # Actually debug_out is separate
+
+        # Extract and save LaTeX from writer output
+        latex = self._extract_latex_document(result.writing.content)
+        if latex:
+            path = out / "paper.tex"
+            path.write_text(latex, encoding="utf-8")
+            saved.append(str(path.name))
+        else:
+            # Save raw writing output as markdown
+            path = out / "paper_draft.md"
+            path.write_text(result.writing.content, encoding="utf-8")
+            saved.append(str(path.name))
+
+        # Save synthesis as final summary
+        if result.synthesis:
+            path = out / "final_synthesis.md"
+            path.write_text(result.synthesis, encoding="utf-8")
+            saved.append(str(path.name))
+
+        # Save full result as JSON
+        path = out / "workflow_result.json"
+        path.write_text(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        saved.append(str(path.name))
+
+        logger.info("Saved %d output files to %s: %s", len(saved), out, ", ".join(saved))
 
     def _rag_context(self, question: str, top_k: int = 6) -> str:
         parts: list[str] = []
 
         if self.memory:
-            ltm_context = self.memory.recall(question, top_k=3)
-            if ltm_context:
-                parts.append(ltm_context)
+            try:
+                ltm_context = self.memory.recall(question, top_k=3)
+                if ltm_context:
+                    parts.append(ltm_context)
+            except (UnicodeEncodeError, UnicodeDecodeError, Exception):
+                logger.debug("LTM recall failed for query encoding", exc_info=True)
 
         if self.rag:
-            if self.rag.has_embeddings:
-                chunks = self.rag.query_hybrid(question, top_k=top_k, alpha=0.6)
-            else:
-                chunks = self.rag.query(question, top_k=top_k)
-            if chunks:
-                parts.append(_format_rag_context(chunks))
+            try:
+                if self.rag.has_embeddings:
+                    chunks = self.rag.query_hybrid(question, top_k=top_k, alpha=0.6)
+                else:
+                    chunks = self.rag.query(question, top_k=top_k)
+                if chunks:
+                    parts.append(_format_rag_context(chunks))
+            except Exception:
+                logger.debug("RAG query failed", exc_info=True)
 
         return "\n\n---\n\n".join(parts) if parts else "暂无检索上下文。"
 
@@ -365,6 +525,193 @@ class Orchestrator:
     def _reset_conditions(conditions: list[BaseCondition]) -> None:
         for cond in conditions:
             cond.reset()
+
+    # ═════════════════════════════════════════════════════════════════
+    # 策略零：Plan-and-Execute（规划先行，再执行）
+    # ═════════════════════════════════════════════════════════════════
+
+    def plan_only(
+        self,
+        question: str,
+        top_k: int = 6,
+        memory: SharedMemory | None = None,
+    ) -> str:
+        """仅生成求解计划，不执行。
+
+        Plan phase of Plan-and-Execute. The planner analyzes the problem,
+        decomposes it, selects candidate models, identifies needed skills,
+        and produces a structured execution plan. User can review and
+        modify before calling solve_with_plan().
+
+        Args:
+            question: The modeling problem
+            top_k: Number of RAG chunks to retrieve
+            memory: Optional SharedMemory
+
+        Returns:
+            Structured plan as markdown text
+        """
+        mem = self._get_stm(memory)
+        rag_ctx = self._rag_context(question, top_k)
+
+        # Resolve planning-relevant skills (cross-domain for analysis)
+        plan_skills = resolve_agent_skills(
+            question, "planner", skill_registry=self.skill_registry,
+        )
+
+        # Get LTM context
+        ltm_context = (
+            self.memory.recall(question, top_k=5)
+            if self.memory else "暂无长期记忆。"
+        )
+
+        # Generate the plan
+        logger.info("[Plan] 生成求解计划...")
+        plan = self.planner.plan(
+            question=question,
+            rag_context=rag_ctx,
+            memory_context=ltm_context,
+            skill_context=plan_skills,
+        )
+
+        self._post(mem, "planner", plan, triggered_by="")
+        return plan
+
+    def solve_with_plan(
+        self,
+        question: str,
+        top_k: int = 6,
+        memory: SharedMemory | None = None,
+        enable_data_engineer: bool = False,
+        conditions: list[BaseCondition] | None = None,
+        pre_generated_plan: str | None = None,
+    ) -> WorkflowResult:
+        """Plan-and-Execute strategy — the recommended approach.
+
+        Phase 0 - PLAN: PlannerAgent analyzes the problem, decomposes it
+          into sub-problems, selects candidate models, identifies needed
+          skills, and maps agent assignments with dependencies.
+
+        Phase 1 - EXECUTE: Follow the plan — modeling → programming →
+          debugging → writing → synthesis. Each agent receives the plan
+          as context and knows exactly what it needs to produce.
+
+        Phase 2 - SYNTHESIZE: Final assembly of all outputs.
+
+        This architecture mirrors the classic Plan-and-Execute pattern:
+        a planner reasons about the overall approach, then executors
+        carry out individual steps with full context of the plan.
+
+        Args:
+            question: The modeling problem
+            top_k: Number of RAG chunks
+            memory: Optional SharedMemory
+            enable_data_engineer: Whether to use DataEngineerAgent
+            conditions: Additional termination conditions
+            pre_generated_plan: If provided, skip plan generation and use this
+
+        Returns:
+            WorkflowResult with all stage outputs
+        """
+        mem = self._get_stm(memory)
+        rag_ctx = self._rag_context(question, top_k)
+        errors: list[str] = []
+        token_budget = TokenBudgetCondition(max_total_tokens=200000)
+        timeout = TimeoutCondition(timeout_seconds=600.0)
+        timeout.start()
+        started_at = time_module.monotonic()
+
+        active_conditions: list[BaseCondition] = [
+            MaxRoundCondition(1),
+            token_budget,
+            timeout,
+        ]
+        if conditions:
+            active_conditions.extend(conditions)
+
+        # ── Phase 0: PLAN ───────────────────────────────────────────
+        if pre_generated_plan:
+            plan = pre_generated_plan
+            logger.info("[Plan] 使用预生成的计划")
+        else:
+            plan = self.plan_only(question, top_k=top_k, memory=mem)
+            logger.info("[Plan] 计划已生成，开始执行...")
+
+        # ── Phase 1: EXECUTE ────────────────────────────────────────
+
+        data_ctx, data_out = "", ""
+        if enable_data_engineer:
+            data_out = self._safe_invoke(
+                self.data_engineer,
+                self._build_prompt(question, "", rag_ctx,
+                                   {"求解计划": plan},
+                                   agent_role="data_engineer", inject_skills=True),
+                "data_engineer", mem, errors, token_budget=token_budget,
+            )
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
+        # Modeling
+        extra = {"求解计划": plan}
+        if data_ctx:
+            extra["数据预处理结果"] = data_out
+        model_in = self._build_prompt(question, "", rag_ctx, extra,
+                                      agent_role="modeler", inject_skills=True)
+        model_out = self._safe_invoke(self.modeler, model_in, "modeling", mem, errors,
+                                      token_budget=token_budget)
+        mem.advance_round()
+
+        # Programming
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx,
+                                     {"建模方案": model_out, "求解计划": plan},
+                                     agent_role="programmer", inject_skills=True)
+        prog_out = self._safe_invoke(self.programmer, prog_in, "programming", mem, errors,
+                                     triggered_by="modeling", token_budget=token_budget)
+
+        # Debugging
+        debug_out = self._safe_invoke(
+            self.code_debugger,
+            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
+                               {"编程输出": prog_out[:4000]},
+                               agent_role="code_debugger", inject_skills=True),
+            "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
+        )
+        mem.advance_round()
+
+        # Writing
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
+        write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
+            "建模方案": model_out, "编程方案": prog_out,
+            "代码审查": debug_out, "求解计划": plan,
+        }, agent_role="writer", inject_skills=True)
+        write_out = self._safe_invoke(self.writer, write_in, "writing", mem, errors,
+                                      triggered_by="code_debugger", token_budget=token_budget)
+        mem.advance_round()
+
+        # ── Phase 2: SYNTHESIZE ─────────────────────────────────────
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案": model_out, "编程方案": prog_out,
+            "写作方案": write_out, "求解计划": plan,
+        }, agent_role="synthesizer", inject_skills=True)
+        synth_out = self._safe_invoke(self.synthesizer, synth_in, "synthesizer", mem, errors,
+                                      triggered_by="writing", token_budget=token_budget)
+
+        self._maybe_archive(question, synth_out)
+        self._reset_conditions(active_conditions)
+
+        return WorkflowResult(
+            question=question,
+            modeling=StageResult("建模智能体", model_out),
+            programming=StageResult("编程智能体", prog_out),
+            writing=StageResult("写作智能体", write_out),
+            synthesis=synth_out,
+            memory=mem,
+            errors=errors,
+            total_prompt_tokens=token_budget.accumulated,
+            total_completion_tokens=0,
+            elapsed_seconds=time_module.monotonic() - started_at,
+        )
 
     # ═════════════════════════════════════════════════════════════════
     # 策略一：串行流水线
@@ -642,12 +989,12 @@ class Orchestrator:
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
 
         def run_programmer() -> str:
-            return self.programmer.invoke(
+            return self.programmer.stream(
                 self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
             )
 
         def run_writer() -> str:
-            return self.writer.invoke(
+            return self.writer.stream(
                 self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
             )
 
@@ -711,6 +1058,10 @@ class Orchestrator:
         on_programming_token: Callable[[str], None] | None = None,
         on_writing_token: Callable[[str], None] | None = None,
         on_synthesis_token: Callable[[str], None] | None = None,
+        on_modeling_thinking: Callable[[str], None] | None = None,
+        on_programming_thinking: Callable[[str], None] | None = None,
+        on_writing_thinking: Callable[[str], None] | None = None,
+        on_synthesis_thinking: Callable[[str], None] | None = None,
         enable_data_engineer: bool = False,
     ) -> WorkflowResult:
         mem = self._get_stm()
@@ -732,29 +1083,34 @@ class Orchestrator:
                                       {"数据预处理结果": data_out} if data_ctx else None,
                                       agent_role="modeler", inject_skills=True)
         model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
-                                      token_budget=token_budget, on_token=on_modeling_token)
+                                      token_budget=token_budget, on_token=on_modeling_token,
+                                      on_thinking=on_modeling_thinking)
 
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
-        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out},
+                                     agent_role="programmer", inject_skills=True)
         prog_out = self._safe_stream(self.programmer, prog_in, "programming", mem, errors,
                                      triggered_by="modeling", token_budget=token_budget,
-                                     on_token=on_programming_token)
+                                     on_token=on_programming_token,
+                                     on_thinking=on_programming_thinking)
 
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
         write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
             "建模方案": model_out, "编程方案": prog_out,
-        })
+        }, agent_role="writer", inject_skills=True)
         write_out = self._safe_stream(self.writer, write_in, "writing", mem, errors,
                                       triggered_by="programming", token_budget=token_budget,
-                                      on_token=on_writing_token)
+                                      on_token=on_writing_token,
+                                      on_thinking=on_writing_thinking)
 
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案": model_out, "编程方案": prog_out, "写作方案": write_out,
-        })
+        }, agent_role="synthesizer", inject_skills=True)
         synth_out = self._safe_stream(self.synthesizer, synth_in, "synthesizer", mem, errors,
                                       triggered_by="writing", token_budget=token_budget,
-                                      on_token=on_synthesis_token)
+                                      on_token=on_synthesis_token,
+                                      on_thinking=on_synthesis_thinking)
 
         self._maybe_archive(question, synth_out)
 

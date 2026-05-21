@@ -24,7 +24,13 @@ def _get_redis():
         import redis as _redis
         from redis import Redis
         from redis.commands.search.field import NumericField, TagField, TextField
-        from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+
+        # redis-py ≥7.4 uses snake_case; older versions use camelCase
+        try:
+            from redis.commands.search.index_definition import IndexDefinition, IndexType
+        except ImportError:
+            from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+
         from redis.commands.search.query import Query
         from redis.commands.search import reducers as _reducers
 
@@ -34,20 +40,15 @@ def _get_redis():
 
 def _redis_client():
     """获取 Redis 客户端。"""
-    import sys
+    import os
 
     _redis, Redis, *_ = _get_redis()
 
-    mod = sys.modules.get("env_utils")
-    if mod is None:
-        from ... import env_utils as _eu
-        mod = _eu
-
     return Redis(
-        host=getattr(mod, "REDIS_HOST", "localhost"),
-        port=getattr(mod, "REDIS_PORT", 6379),
-        password=getattr(mod, "REDIS_PASSWORD", "redis-secure"),
-        db=getattr(mod, "REDIS_DB", 0),
+        host=os.getenv("REDIS_HOST", "localhost"),
+        port=int(os.getenv("REDIS_PORT", "6379")),
+        password=os.getenv("REDIS_PASSWORD", "redis-secure"),
+        db=int(os.getenv("REDIS_DB", "0")),
         decode_responses=True,
     )
 
@@ -217,7 +218,8 @@ class RedisLongTermMemory:
     def _next_id(self) -> int:
         return self._r.incr(self.COUNTER_KEY)
 
-    def add(self, type: EntryType, title: str, content: str, tags: list[str] | None = None) -> int:
+    def add(self, type: EntryType, title: str, content: str, tags: list[str] | None = None,
+            importance: float = 0.5, scope: str = "/") -> int:
         entry_id = self._next_id()
         key = f"{self.KEY_PREFIX}{entry_id}"
         doc = {
@@ -226,6 +228,8 @@ class RedisLongTermMemory:
             "title": title,
             "content": content,
             "tags": tags or [],
+            "importance": importance,
+            "scope": scope,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "access_count": 0,
         }
@@ -233,23 +237,34 @@ class RedisLongTermMemory:
         return entry_id
 
     @staticmethod
+    def _sanitize(text: str) -> str:
+        """Remove lone surrogates and other characters unsafe for Redis/UTF-8."""
+        return text.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+
+    @staticmethod
     def _build_query(query: str, entry_type: EntryType | None = None) -> str:
         """将用户查询转为 RediSearch 查询字符串。"""
         import re
 
-        tokens = re.split(r'[，,。；;！!？?\s]+', query.strip())
+        safe = RedisLongTermMemory._sanitize(query)
+        tokens = re.split(r'[，,。；;！!？?\s]+', safe.strip())
         tokens = [t for t in tokens if len(t) >= 2]
 
         if not tokens:
-            tokens = [query.strip()]
+            tokens = [safe.strip()[:50]]
 
         parts = []
         for i, t in enumerate(tokens):
             t = t.replace('"', '').replace("'", "")
-            if i >= len(tokens) - 2 and len(t) > 1:
+            if len(t) < 2:
+                continue
+            if i >= len(tokens) - 2:
                 parts.append(f'"{t}" | "{t}"*')
             else:
                 parts.append(f'"{t}"')
+
+        if not parts:
+            return "*"
 
         search = " | ".join(parts)
         if entry_type:
@@ -265,7 +280,7 @@ class RedisLongTermMemory:
             results = self._r.ft(self.INDEX_NAME).search(
                 Query(qs).paging(0, top_k).sort_by("access_count", asc=False)
             )
-        except _redis.ResponseError:
+        except (_redis.ResponseError, UnicodeEncodeError, UnicodeDecodeError):
             return []
 
         entries = []

@@ -164,6 +164,68 @@ SYNTHESIZER_PROMPT = f"""你是总控研究助理，负责将建模、编程、�
 <<SKILL_CONTEXT>>"""
 
 
+PLANNER_PROMPT = f"""你是数学建模规划专家。你的职责是在任何求解工作开始之前，制定清晰、可执行的求解计划。
+
+{_SKILL_GUIDANCE}
+
+## 你的核心职责
+
+你不是求解者——你是规划者。你的输出将指导后续所有 Agent 的工作。你的计划质量直接决定最终论文的质量。
+
+## 工作方式
+
+收到数学建模问题后，你必须：
+
+1. **问题分解**：将复杂问题拆解为独立的子问题
+2. **模型预判**：根据问题特征，初步判断适合的数学模型类型
+3. **资源评估**：判断需要哪些领域知识（技能）、需要搜索哪些资料
+4. **步骤规划**：设计求解的顺序和并行机会
+5. **风险预判**：识别可能的难点和备选方案
+
+## 输出格式（严格遵守）
+
+请按以下结构输出你的求解计划：
+
+### 1. 问题分析
+- 问题类型：[优化/预测/评价/动力系统/图论/混合]
+- 核心难点：
+- 关键假设（初步）：
+
+### 2. 子问题分解
+| # | 子问题 | 类型 | 依赖 |
+|---|--------|------|------|
+| 1 | ... | 建模/编程/写作 | - |
+| 2 | ... | 建模/编程/写作 | 1 |
+
+### 3. 模型选型建议
+- 子问题1：推荐模型 → [模型名]，理由：
+- 子问题2：推荐模型 → [模型名]，理由：
+
+### 4. 所需领域知识
+列出需要加载的技能名称（从 Available Skills 中选择）：
+- skill_name: 用于解决什么问题
+
+### 5. 执行步骤
+| 步骤 | 负责 Agent | 输入 | 预期产出 | 可并行？ |
+|------|-----------|------|---------|----------|
+| 1 | modeler | 问题描述 | 建模方案 | - |
+| 2 | programmer | 建模方案 | Python代码 | - |
+
+### 6. 风险与备选方案
+- 风险1：... → 备选方案：...
+
+### 7. 预期交付物
+列出最终应该产出的所有文件。
+
+## 注意事项
+- 如果你不确定某个模型选择，列出 2-3 个候选并说明各自优劣
+- 优先考虑可并行执行的步骤
+- 标记哪些步骤需要用户确认后再继续
+- 计划要具体、可执行，不要泛泛而谈
+
+<<SKILL_CONTEXT>>"""
+
+
 # ─── Agent Classes ──────────────────────────────────────────────────────
 
 class DataEngineerAgent(BaseAgent):
@@ -209,6 +271,47 @@ class SynthesizerAgent(BaseAgent):
     system_prompt = SYNTHESIZER_PROMPT
 
 
+class PlannerAgent(BaseAgent):
+    role = "规划智能体"
+    system_prompt = PLANNER_PROMPT
+
+    def plan(
+        self,
+        question: str,
+        rag_context: str = "",
+        memory_context: str = "",
+        skill_context: str = "",
+    ) -> str:
+        """Generate a structured execution plan for a modeling problem.
+
+        Args:
+            question: The modeling problem to plan for
+            rag_context: RAG search results (paper knowledge base)
+            memory_context: Long-term memory recall results
+            skill_context: Pre-resolved skill content for planning
+
+        Returns:
+            Structured plan as markdown text
+        """
+        parts = [f"请为以下数学建模问题制定求解计划：\n\n## 问题\n{question}"]
+
+        if rag_context and rag_context != "暂无检索上下文。":
+            parts.append(f"\n## 论文知识库检索结果\n{rag_context}")
+
+        if memory_context and "暂无" not in memory_context:
+            parts.append(f"\n## 历史求解经验\n{memory_context}")
+
+        if skill_context:
+            parts.append(f"\n## 可用领域知识\n{skill_context}")
+
+        parts.append(
+            "\n\n请按照 Planner 的完整输出格式制定计划。"
+            "确保计划具体、可执行，明确每个步骤的输入、产出和依赖关系。"
+        )
+
+        return self.invoke("\n".join(parts))
+
+
 # ─── Factory ────────────────────────────────────────────────────────────
 
 def create_agents(
@@ -225,6 +328,7 @@ def create_agents(
         "writer": WriterAgent(llm, max_retries=max_retries),
         "reviewer": ReviewerAgent(reviewer_llm or llm, max_retries=max_retries),
         "synthesizer": SynthesizerAgent(llm, max_retries=max_retries),
+        "planner": PlannerAgent(llm, max_retries=max_retries),
     }
 
 
@@ -304,6 +408,7 @@ def resolve_agent_skills(
         "writer": "writing",
         "synthesizer": None,  # synthesizer gets cross-domain skills
         "reviewer": None,     # reviewer gets all
+        "planner": None,      # planner gets all domains for analysis
     }
 
     domain = domain_map.get(agent_role)
