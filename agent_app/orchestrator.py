@@ -18,6 +18,7 @@ from .agents import (
     SynthesizerAgent,
     WriterAgent,
     create_agents,
+    resolve_agent_skills,
 )
 from .base import BaseAgent
 from .conditions import (
@@ -33,6 +34,8 @@ from .config import Settings
 from .llm import create_llm
 from .memory import MemoryManager, SharedMemory
 from .rag import Chunk, PaperRAG
+from .skills import SkillRegistry, SkillResolver
+from .subagent import configure_subagent_llm, _set_code_tools
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +201,13 @@ class Orchestrator:
         self.reviewer: ReviewerAgent = agents["reviewer"]
         self.synthesizer: SynthesizerAgent = agents["synthesizer"]
         self.rag = rag
+        self.skill_registry = SkillRegistry()
+        self.skill_resolver = SkillResolver(registry=self.skill_registry, max_skills=4)
+
+        # Subagent system — configure LLM and register code tools
+        configure_subagent_llm(base_llm)
+        from .tools import python_exec, pip_install, read_csv_info
+        _set_code_tools(python_exec.func, pip_install.func, read_csv_info.func)
 
         # 默认终止条件
         self._default_conditions = CompoundCondition(
@@ -305,17 +315,30 @@ class Orchestrator:
     # ─── 提示词构建 ───────────────────────────────────────────────────
 
     def _build_prompt(self, question: str, stm_ctx: str, rag_ctx: str,
-                      extra_contexts: dict[str, str] | None = None) -> str:
-        """构建 Agent prompt。
+                      extra_contexts: dict[str, str] | None = None,
+                      agent_role: str | None = None,
+                      inject_skills: bool = False) -> str:
+        """构建 Agent prompt，支持渐进式技能注入。
 
         stm_ctx 已由调用方决定是否包含 recent_window：
         - 有 extra_contexts 时：调用方传 compressed_only=True，STM 只含压缩前缀
         - 无 extra_contexts 时：调用方传 compressed_only=False，STM 含完整上下文
+
+        inject_skills=True 时，将根据任务和 agent_role 注入相关领域知识，
+        实现类似 Claude Code Skills 的渐进式披露效果。
         """
         parts = [f"任务：{question}"]
 
         if stm_ctx:
             parts.append(f"历史脉络（压缩摘要）：\n{stm_ctx}")
+
+        # 渐进式披露：注入任务相关技能
+        if inject_skills and agent_role:
+            skill_content = resolve_agent_skills(
+                question, agent_role, skill_registry=self.skill_registry,
+            )
+            if skill_content:
+                parts.append(f"## 领域专业知识（按需加载）\n\n{skill_content}")
 
         if rag_ctx and rag_ctx != "暂无检索上下文。":
             parts.append(f"参考资料：\n{rag_ctx}")
@@ -370,20 +393,23 @@ class Orchestrator:
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         model_in = self._build_prompt(question, "", rag_ctx,
-                                      {"数据预处理结果": data_out} if data_ctx else None)
+                                      {"数据预处理结果": data_out} if data_ctx else None,
+                                      agent_role="modeler", inject_skills=True)
         model_out = self._safe_invoke(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget)
         mem.advance_round()
 
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
-        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out},
+                                     agent_role="programmer", inject_skills=True)
         prog_out = self._safe_invoke(self.programmer, prog_in, "programming", mem, errors,
                                      triggered_by="modeling", token_budget=token_budget)
 
         debug_out = self._safe_invoke(
             self.code_debugger,
             self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
-                               {"编程输出": prog_out[:4000]}),
+                               {"编程输出": prog_out[:4000]},
+                               agent_role="code_debugger", inject_skills=True),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
@@ -391,7 +417,7 @@ class Orchestrator:
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
         write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
             "建模方案": model_out, "编程方案": prog_out, "代码审查": debug_out,
-        })
+        }, agent_role="writer", inject_skills=True)
         write_out = self._safe_invoke(self.writer, write_in, "writing", mem, errors,
                                       triggered_by="code_debugger", token_budget=token_budget)
         mem.advance_round()
@@ -399,7 +425,7 @@ class Orchestrator:
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
         synth_in = self._build_prompt(question, stm_ctx, "", {
             "建模方案": model_out, "编程方案": prog_out, "写作方案": write_out,
-        })
+        }, agent_role="synthesizer", inject_skills=True)
         synth_out = self._safe_invoke(self.synthesizer, synth_in, "synthesizer", mem, errors,
                                       triggered_by="writing", token_budget=token_budget)
 
@@ -459,7 +485,8 @@ class Orchestrator:
 
         # --- 建模 + 评审循环（每轮检查终止条件） ---
         model_in = self._build_prompt(question, "", rag_ctx,
-                                      {"数据预处理结果": data_out} if data_ctx else None)
+                                      {"数据预处理结果": data_out} if data_ctx else None,
+                                      agent_role="modeler", inject_skills=True)
         model_out = self._safe_invoke(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget)
         model_review = ""
@@ -476,7 +503,7 @@ class Orchestrator:
                 break
             refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "你的上一版输出": model_out, "评审反馈": review,
-            })
+            }, agent_role="modeler", inject_skills=True)
             model_out = self._safe_invoke(self.modeler, refine_prompt, "modeling", mem, errors,
                                           triggered_by="reviewer(modeling)", token_budget=token_budget)
             model_review = review
@@ -484,7 +511,8 @@ class Orchestrator:
 
         # --- 编程 + 评审循环 ---
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
-        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out})
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx, {"建模方案": model_out},
+                                     agent_role="programmer", inject_skills=True)
         prog_out = self._safe_invoke(self.programmer, prog_in, "programming", mem, errors,
                                      triggered_by="modeling", token_budget=token_budget)
         prog_review = ""
@@ -500,7 +528,7 @@ class Orchestrator:
                 break
             refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "建模方案": model_out, "你的上一版输出": prog_out, "评审反馈": review,
-            })
+            }, agent_role="programmer", inject_skills=True)
             prog_out = self._safe_invoke(self.programmer, refine_prompt, "programming", mem, errors,
                                          triggered_by="reviewer(programming)", token_budget=token_budget)
             prog_review = review
@@ -508,7 +536,8 @@ class Orchestrator:
         debug_out = self._safe_invoke(
             self.code_debugger,
             self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
-                               {"编程输出（已评审修改）": prog_out[:4000]}),
+                               {"编程输出（已评审修改）": prog_out[:4000]},
+                               agent_role="code_debugger", inject_skills=True),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
@@ -517,7 +546,7 @@ class Orchestrator:
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
         write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
             "建模方案": model_out, "编程方案": prog_out, "代码审查": debug_out,
-        })
+        }, agent_role="writer", inject_skills=True)
         write_out = self._safe_invoke(self.writer, write_in, "writing", mem, errors,
                                       triggered_by="code_debugger", token_budget=token_budget)
         write_review = ""
@@ -534,7 +563,7 @@ class Orchestrator:
             refine_prompt = self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), rag_ctx, {
                 "建模方案": model_out, "编程方案": prog_out,
                 "你的上一版输出": write_out, "评审反馈": review,
-            })
+            }, agent_role="writer", inject_skills=True)
             write_out = self._safe_invoke(self.writer, refine_prompt, "writing", mem, errors,
                                           triggered_by="reviewer(writing)", token_budget=token_budget)
             write_review = review
@@ -546,7 +575,7 @@ class Orchestrator:
             "建模方案（已评审）": model_out,
             "编程方案（已评审）": prog_out,
             "写作方案（已评审）": write_out,
-        })
+        }, agent_role="synthesizer", inject_skills=True)
         synth_out = self._safe_invoke(self.synthesizer, synth_in, "synthesizer", mem, errors,
                                       triggered_by="writing", token_budget=token_budget)
 
@@ -605,7 +634,8 @@ class Orchestrator:
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         model_in = self._build_prompt(question, "", rag_ctx,
-                                      {"数据预处理结果": data_out} if data_ctx else None)
+                                      {"数据预处理结果": data_out} if data_ctx else None,
+                                      agent_role="modeler", inject_skills=True)
         model_out = self._safe_invoke(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget)
 
@@ -699,7 +729,8 @@ class Orchestrator:
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         model_in = self._build_prompt(question, "", rag_ctx,
-                                      {"数据预处理结果": data_out} if data_ctx else None)
+                                      {"数据预处理结果": data_out} if data_ctx else None,
+                                      agent_role="modeler", inject_skills=True)
         model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget, on_token=on_modeling_token)
 
@@ -782,7 +813,8 @@ class Orchestrator:
 
         # 建模 + 评审循环
         model_in = self._build_prompt(question, "", rag_ctx,
-                                      {"数据预处理结果": data_out} if data_ctx else None)
+                                      {"数据预处理结果": data_out} if data_ctx else None,
+                                      agent_role="modeler", inject_skills=True)
         model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget, on_token=on_modeling_token)
         model_review = ""
@@ -912,7 +944,8 @@ class Orchestrator:
             data_ctx = f"\n\n数据预处理结果：\n{data_out}"
 
         model_in = self._build_prompt(question, "", rag_ctx,
-                                      {"数据预处理结果": data_out} if data_ctx else None)
+                                      {"数据预处理结果": data_out} if data_ctx else None,
+                                      agent_role="modeler", inject_skills=True)
         model_out = self._safe_stream(self.modeler, model_in, "modeling", mem, errors,
                                       token_budget=token_budget, on_token=on_modeling_token)
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
@@ -972,5 +1005,227 @@ class Orchestrator:
             writing=StageResult("写作智能体", write_out),
             synthesis=synth_out, memory=mem, errors=errors,
             total_prompt_tokens=token_budget.accumulated, total_completion_tokens=0,
+            elapsed_seconds=time_module.monotonic() - started_at,
+        )
+
+    # ═════════════════════════════════════════════════════════════════
+    # 策略五：先探索后求解 (Exploration-First) — 自动并行子智能体
+    # ═════════════════════════════════════════════════════════════════
+
+    def solve_explore(
+        self,
+        question: str,
+        top_k: int = 6,
+        memory: SharedMemory | None = None,
+        enable_data_engineer: bool = False,
+        conditions: list[BaseCondition] | None = None,
+    ) -> WorkflowResult:
+        """Exploration-first strategy — orchestrator 自主决策探索策略。
+
+        与之前的手动探索不同，此策略自动执行：
+        Phase 1 - Auto Explore: 编排器自动判断需要什么信息，并发派生
+          explore + research 子智能体去获取。无需人工指定探索步骤。
+        Phase 2 - Synthesize: 整合所有发现为结构化报告。
+        Phase 3 - Solve: 各阶段智能体基于富上下文自主选择最合适的模型/方法。
+
+        这模拟了 Claude Code 的自主探索模式：agent 看到问题 → 自己判断
+        需要查什么 → 并行搜索 → 合成结果 → 解决问题。
+        """
+        mem = self._get_stm(memory)
+        rag_ctx = self._rag_context(question, top_k)
+        errors: list[str] = []
+        token_budget = TokenBudgetCondition(max_total_tokens=200000)
+        timeout = TimeoutCondition(timeout_seconds=600.0)
+        timeout.start()
+        started_at = time_module.monotonic()
+
+        active_conditions: list[BaseCondition] = [
+            TokenBudgetCondition(max_total_tokens=200000),
+            timeout,
+        ]
+        if conditions:
+            active_conditions.extend(conditions)
+
+        # ── Phase 0: Meta-decision — 编排器分析问题，决定探索策略 ──
+        logger.info("[Explore] 分析问题，决定探索策略...")
+
+        analysis_prompt = f"""分析以下建模问题，决定需要什么信息才能解决它。
+只做分析，不求解。
+
+问题：{question}
+
+判断以下每项是否需要（回答"需要"或"不需要"）：
+1. 项目文件探索（已有代码/数据？）：
+2. 网络文献调研（最新方法/论文？）：
+3. 领域专业知识加载（特定模型理论？）：
+
+然后用一句话说明探索重点。"""
+
+        analysis = self._safe_invoke(
+            self.synthesizer, analysis_prompt, "meta_planner", mem, errors,
+            triggered_by="", token_budget=token_budget,
+        )
+        need_explore = "需要" in analysis.split("1.")[-1].split("2.")[0] if "1." in analysis else True
+        need_research = "需要" in analysis.split("2.")[-1].split("3.")[0] if "2." in analysis else True
+
+        # ── Phase 1: Autonomous parallel exploration ─────────────────
+        logger.info("[Explore] 开始自主并行探索...")
+
+        from .subagent import _run_subagent, SUBAGENT_TYPES
+
+        # 1a. Resolve skills (always needed)
+        exploration_skills = resolve_agent_skills(
+            question, "synthesizer", skill_registry=self.skill_registry,
+        )
+
+        # 1b. Prepare subagent tasks based on meta-analysis
+        subagent_tasks: list[tuple[str, str]] = []
+
+        if need_explore:
+            explore_task = f"""探索项目中与以下问题相关的代码、数据和文件：
+"{question}"
+
+请搜索：
+- 项目中是否有与问题主题相关的 .py 文件或数据文件
+- agent_app/ 和项目根目录中是否有可复用的建模代码或工具
+- output/ 目录中是否有之前的求解结果或生成文件
+- 项目中 .md 文档中的相关记录
+
+用 search_files, search_content, read_file 来探索。
+报告你找到了什么和没找到什么。控制在 3000 字符内。"""
+            subagent_tasks.append(("explore", explore_task))
+
+        if need_research:
+            research_task = f"""为以下数学建模问题搜索参考资料：
+"{question}"
+
+请执行以下搜索：
+1. 用 web_search 搜索该问题的标准建模方法和最新解法
+2. 用 search_arxiv 或 search_semantic_scholar 搜索相关学术论文
+3. 如果搜索到关键资料，用 web_fetch 查看详情
+
+报告关键发现：推荐的方法、参考实现、注意事项。控制在 5000 字符内。"""
+            subagent_tasks.append(("research", research_task))
+
+        # 1c. Run subagents in parallel (like Claude Code's Agent tool)
+        explore_report = ""
+        research_report = ""
+
+        if subagent_tasks:
+            llm = self.synthesizer.llm  # Use the same LLM instance
+            from .subagent import spawn_parallel
+            results = spawn_parallel(subagent_tasks, llm)
+
+            idx = 0
+            if need_explore:
+                explore_report = results[idx]
+                idx += 1
+            if need_research:
+                research_report = results[idx]
+
+        # Record LTM context
+        ltm_context = (
+            self.memory.recall(question, top_k=5)
+            if self.memory else "暂无长期记忆。"
+        )
+
+        # ── Phase 2: Synthesize exploration findings ─────────────────
+        logger.info("[Explore] 整合探索发现...")
+
+        synthesis_prompt = self._build_prompt(
+            question,
+            "", "",
+            {
+                "项目文件探索结果": explore_report or "（跳过）",
+                "网络文献调研结果": research_report or "（跳过）",
+                "RAG论文检索": rag_ctx,
+                "长期记忆": ltm_context,
+                "领域专业知识": exploration_skills,
+            },
+            agent_role="synthesizer", inject_skills=True,
+        )
+
+        synthesis_result = self._safe_invoke(
+            self.synthesizer,
+            synthesis_prompt + "\n\n请将以上所有探索发现整合为一份结构化的「探索报告」，包含：\n"
+            "## 探索报告\n"
+            "### 1. 问题核心与难点\n"
+            "### 2. 推荐模型与理由（基于找到的资料）\n"
+            "### 3. 项目中的可复用资源\n"
+            "### 4. 外部参考文献\n"
+            "### 5. 求解策略建议",
+            "explorer", mem, errors,
+            triggered_by="subagents", token_budget=token_budget,
+        )
+
+        # ── Phase 3: Autonomous solving ──────────────────────────────
+        logger.info("[Explore] 基于探索结果自主求解...")
+
+        data_ctx, data_out = "", ""
+        if enable_data_engineer:
+            data_out = self._safe_invoke(
+                self.data_engineer,
+                self._build_prompt(question, "", rag_ctx,
+                                   {"探索报告": synthesis_result} if not data_ctx else {"探索报告": synthesis_result, "数据预处理结果": data_out},
+                                   agent_role="data_engineer", inject_skills=True),
+                "data_engineer", mem, errors, token_budget=token_budget,
+            )
+            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+
+        extra = {"探索报告": synthesis_result}
+        if data_ctx:
+            extra["数据预处理结果"] = data_out
+        model_in = self._build_prompt(question, "", rag_ctx, extra,
+                                      agent_role="modeler", inject_skills=True)
+        model_out = self._safe_invoke(self.modeler, model_in, "modeling", mem, errors,
+                                      token_budget=token_budget)
+        mem.advance_round()
+
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
+        prog_in = self._build_prompt(question, stm_ctx, rag_ctx,
+                                     {"建模方案": model_out, "探索报告": synthesis_result},
+                                     agent_role="programmer", inject_skills=True)
+        prog_out = self._safe_invoke(self.programmer, prog_in, "programming", mem, errors,
+                                     triggered_by="modeling", token_budget=token_budget)
+
+        debug_out = self._safe_invoke(
+            self.code_debugger,
+            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
+                               {"编程输出": prog_out[:4000]},
+                               agent_role="code_debugger", inject_skills=True),
+            "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
+        )
+        mem.advance_round()
+
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
+        write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
+            "建模方案": model_out, "编程方案": prog_out,
+            "代码审查": debug_out, "探索报告": synthesis_result,
+        }, agent_role="writer", inject_skills=True)
+        write_out = self._safe_invoke(self.writer, write_in, "writing", mem, errors,
+                                      triggered_by="code_debugger", token_budget=token_budget)
+        mem.advance_round()
+
+        stm_ctx = self._get_stm_context(mem, compressed_only=True)
+        synth_in = self._build_prompt(question, stm_ctx, "", {
+            "建模方案": model_out, "编程方案": prog_out,
+            "写作方案": write_out, "探索报告": synthesis_result,
+        }, agent_role="synthesizer", inject_skills=True)
+        synth_out = self._safe_invoke(self.synthesizer, synth_in, "synthesizer", mem, errors,
+                                      triggered_by="writing", token_budget=token_budget)
+
+        self._maybe_archive(question, synth_out)
+        self._reset_conditions(active_conditions)
+
+        return WorkflowResult(
+            question=question,
+            modeling=StageResult("建模智能体", model_out),
+            programming=StageResult("编程智能体", prog_out),
+            writing=StageResult("写作智能体", write_out),
+            synthesis=synth_out,
+            memory=mem,
+            errors=errors,
+            total_prompt_tokens=token_budget.accumulated,
+            total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
         )

@@ -27,32 +27,78 @@ from .llm import create_llm
 from .memory import MemoryManager
 from .orchestrator import Orchestrator
 from .rag import PaperRAG
-from .tools import TOOLS
+from .tools import TOOLS_FULL
 
 SINGLE_AGENT_PROMPT = """你是一个基于 DeepSeek 的智能助手，专长数学建模与代码实现。
-工作方式：
-- 先理解用户目标，再决定是否调用工具
-- 需要计算、查看时间、保存笔记时，优先使用工具
-- 回答要清晰、实用、简洁
+
+## 核心行为准则：自主判断，主动行动
+
+你不是被动的问答机器。每个请求你都要自主判断最好的处理方式：
+
+### 第一步：分析（每次必做）
+收到任务后先在心里问自己：
+1. 我需要更多信息吗？→ 是就去探索，不要猜
+2. 任务可以拆分成独立子任务吗？→ 是就用 spawn_subagent 并行处理
+3. 需要写代码验证吗？→ 是就用 python_exec
+4. 有现成的领域知识可以加载吗？→ 参考技能系统
+
+### 第二步：探索（信息不足时必须做）
+默认假设你掌握的信息不完整。以下情况**必须**先探索再回答：
+- 需要知道项目中有哪些相关文件 → read_file / search_files / search_content / list_directory
+- 需要最新方法或论文 → web_search + spawn_subagent('research', ...)
+- 需要找到特定代码模式 → search_content
+- 需要了解代码库结构 → list_directory / search_files
+
+### 第三步：委托（能并行就并行）
+以下情况**主动使用 spawn_subagent**，不要自己逐个做：
+- 需要同时搜代码 + 查文献 → 并行 spawn explore + research
+- 文献调研量大 → spawn_subagent('research', ...)
+- 需要生成并测试代码 → spawn_subagent('code', ...)
+- 复杂逻辑需要独立分析 → spawn_subagent('general', ...)
+
+### 第四步：执行
+工具可执行的绝不猜测。原则：
+- 能用 search_content 找到的，不靠记忆
+- 能用 python_exec 验证的，不靠推理
+- 能并行完成的子任务，不串行
+- RAG/技能系统给了答案的，直接引用
+
+## 可用能力
+- **文件探索**: read_file, search_files, search_content, list_directory
+- **网络**: web_search, web_fetch
+- **代码执行**: python_exec, pip_install, read_csv_info
+- **子智能体**: spawn_subagent('explore'|'research'|'code'|'general', task)
+- **学术文献**: search_arxiv, search_semantic_scholar, search_crossref
+- **LaTeX**: latex_template, latex_compile, latex_render_math
+- **笔记**: save_note, read_note, list_notes
+- **可视化**: nature_viz_template, model_reference, writing_rules
+
+## 输出风格
+- 先给出结论或答案，再给出过程和依据
+- 引用找到的文件、URL 或搜索结果作为支撑
+- 不确定的地方明确标注，说明如何进一步验证
 """
 
 ORCHESTRATOR_HELP = f"""
 {'='*60}
-  数模多智能体协作系统
+  数模多智能体协作系统  v2.0 (渐进式披露 + 探索能力)
 {'='*60}
 
 工作流模式：
-  1. sequential  - 串行流水线（建模→编程→写作→总控，稳定可靠）
-  2. review      - 深度反思（每阶段经评审专家审核后修改，质量优先）
-  3. parallel    - 快速并行（建模先行，编程+写作并行执行，速度优先）
+  1. explore      - 先探索后求解（多源探索→规划→建模→编程→写作，推荐）
+  2. sequential   - 串行流水线（建模→编程→写作→总控，稳定可靠）
+  3. review       - 深度反思（每阶段经评审专家审核后修改，质量优先）
+  4. parallel     - 快速并行（建模先行，编程+写作并行执行，速度优先）
 
 命令：
-  /mode <模式名>  - 切换工作流模式（默认 sequential）
+  /mode <模式名>  - 切换工作流模式（默认 explore）
   /solve <问题>   - 启动多智能体协作分析
   /stream         - 流式输出模式（实时 token 级输出）
   /chat           - 切换到单智能体对话模式
   /memory         - 查看记忆系统统计（STM/LTM/压缩）
   /compress       - 强制触发上下文压缩
+  /skills         - 列出可用技能（渐进式披露）
+  /subagent       - 列出可用子智能体类型
   /help           - 显示此帮助
   /exit           - 退出程序
 """.strip()
@@ -89,7 +135,7 @@ class CLI:
             print("[Memory] Redis 不可用，使用 SQLite 回退方案")
 
         self.orchestrator = Orchestrator(self.settings, rag=self.rag, memory_manager=self.memory_manager)
-        self.mode: str = "sequential"
+        self.mode: str = "explore"  # 默认使用先探索后求解策略
 
     def _print_streaming(self, label: str, role: str):
         print(f"\n{'─'*50}")
@@ -115,7 +161,9 @@ class CLI:
         print(f"\n工作流模式：{self.mode}")
         print(f"问题：{question}")
 
-        if self.mode == "sequential":
+        if self.mode == "explore":
+            result = self.orchestrator.solve_explore(question)
+        elif self.mode == "sequential":
             result = self.orchestrator.solve_sequential(question)
         elif self.mode == "review":
             result = self.orchestrator.solve_with_review(question, max_review_rounds=1)
@@ -151,7 +199,7 @@ class CLI:
     def run_single_agent(self) -> None:
         print(SINGLE_AGENT_HELP)
         llm = create_llm(self.settings)
-        agent = create_agent(model=llm, tools=TOOLS, system_prompt=SINGLE_AGENT_PROMPT)
+        agent = create_agent(model=llm, tools=TOOLS_FULL, system_prompt=SINGLE_AGENT_PROMPT)
         history: list = []
 
         while True:
@@ -220,17 +268,26 @@ class CLI:
                 else:
                     print("压缩器未启用或无需压缩（未配置 LLM 或消息不足）")
                 continue
+            if raw.lower() == "/skills":
+                from .skills import SkillRegistry
+                registry = SkillRegistry()
+                print(registry.summarize_available())
+                continue
+            if raw.lower() == "/subagent":
+                from .subagent import list_subagent_types
+                print(list_subagent_types())
+                continue
             if raw.lower() == "/help":
                 print(ORCHESTRATOR_HELP)
                 continue
             if raw.lower().startswith("/mode"):
                 parts = raw.split(maxsplit=1)
                 new_mode = parts[1].strip().lower() if len(parts) > 1 else ""
-                if new_mode in ("sequential", "review", "parallel"):
+                if new_mode in ("explore", "sequential", "review", "parallel"):
                     self.mode = new_mode
                     print(f"已切换到 {new_mode} 模式。")
                 else:
-                    print(f"无效模式。可选: sequential / review / parallel")
+                    print(f"无效模式。可选: explore / sequential / review / parallel")
                 continue
             if raw.lower().startswith("/solve"):
                 question = raw.split(maxsplit=1)[1].strip() if len(raw) > 6 else ""

@@ -428,3 +428,9 @@ TOOLS = [
     model_reference,
     writing_rules,
 ]
+
+# Extended tool list including exploration and subagent tools
+from .exploration import EXPLORATION_TOOLS  # noqa: E402
+from .subagent import spawn_subagent  # noqa: E402
+
+TOOLS_FULL = TOOLS + EXPLORATION_TOOLS + [spawn_subagent]
