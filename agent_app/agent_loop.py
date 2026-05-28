@@ -18,6 +18,7 @@ VALID_AGENT_LOOP_ACTIONS = {
 }
 
 ACTION_TO_ROLE = {
+    "explore": "explore",
     "model": "modeling",
     "program": "programming",
     "debug": "code_debugger",
@@ -78,13 +79,14 @@ class AgentLoopState:
 
 def _extract_json_object(text: str) -> str:
     stripped = text.strip()
-    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    fenced = re.search(r"```\s*(?:json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
     if fenced:
         return fenced.group(1).strip()
     start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start >= 0 and end > start:
-        return stripped[start : end + 1]
+    if start >= 0:
+        decoder = json.JSONDecoder()
+        _, end = decoder.raw_decode(stripped, start)
+        return stripped[start:end]
     return stripped
 
 

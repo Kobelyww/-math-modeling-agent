@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from agent_app.agent_loop import (
+    ACTION_TO_ROLE,
     AgentLoopState,
     AgentLoopTrace,
+    VALID_AGENT_LOOP_ACTIONS,
     parse_coordinator_decision,
     fallback_next_decision,
 )
@@ -22,6 +24,13 @@ def test_parse_coordinator_decision_accepts_json_object():
     assert decision.target_agent == "modeler"
     assert "mathematical" in decision.reason
     assert "constraints" in decision.instruction
+
+
+def test_action_to_role_covers_routed_valid_actions():
+    routed_actions = VALID_AGENT_LOOP_ACTIONS - {"ask_user", "final"}
+
+    assert routed_actions <= ACTION_TO_ROLE.keys()
+    assert ACTION_TO_ROLE["explore"] == "explore"
 
 
 def test_parse_coordinator_decision_extracts_json_from_markdown():
@@ -55,6 +64,26 @@ def test_parse_coordinator_decision_accepts_uppercase_fence_with_trailing_braces
 
     assert decision.action == "review"
     assert decision.reason == "Check the result"
+
+
+def test_parse_coordinator_decision_accepts_bare_json_with_trailing_braces():
+    decision = parse_coordinator_decision(
+        '{"action": "review", "reason": "Check the result"} trailing {not json}'
+    )
+
+    assert decision.action == "review"
+    assert decision.reason == "Check the result"
+
+
+def test_parse_coordinator_decision_accepts_fence_with_space_before_label():
+    decision = parse_coordinator_decision(
+        "``` json\n"
+        '{"action": "synthesize", "reason": "Summarize deliverables"}'
+        "\n```"
+    )
+
+    assert decision.action == "synthesize"
+    assert decision.reason == "Summarize deliverables"
 
 
 def test_parse_coordinator_decision_rejects_unknown_action():
