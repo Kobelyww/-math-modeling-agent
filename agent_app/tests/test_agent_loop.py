@@ -15,7 +15,7 @@ from agent_app.agent_loop import (
 )
 from agent_app.conditions import TokenBudgetCondition
 from agent_app.memory import SharedMemory
-from agent_app.orchestrator import Orchestrator, WorkflowResult
+from agent_app.orchestrator import Orchestrator, StageResult, WorkflowResult
 
 
 class StubAgent:
@@ -228,3 +228,40 @@ def test_decide_agent_loop_next_records_fallback_error():
     assert budget.accumulated == 5
     assert state.errors
     assert "agent_loop_decision" in state.errors[0]
+
+
+def test_cli_default_mode_constant_is_agent_loop():
+    from agent_app.cli import DEFAULT_ORCHESTRATOR_MODE
+
+    assert DEFAULT_ORCHESTRATOR_MODE == "agent_loop"
+
+
+def test_cli_solve_dispatches_agent_loop(monkeypatch):
+    from agent_app.cli import CLI
+
+    cli = CLI.__new__(CLI)
+    cli.mode = "agent_loop"
+    called = {}
+
+    class FakeOrchestrator:
+        def solve_agent_loop(self, question):
+            called["question"] = question
+            return WorkflowResult(
+                question=question,
+                modeling=StageResult("model", "m"),
+                programming=StageResult("program", "p"),
+                writing=StageResult("write", "w"),
+                synthesis="s",
+            )
+
+    cli.orchestrator = FakeOrchestrator()
+    monkeypatch.setattr(
+        cli,
+        "_print_result",
+        lambda result: called.setdefault("printed", result.synthesis),
+    )
+
+    cli.solve("traffic task")
+
+    assert called["question"] == "traffic task"
+    assert called["printed"] == "s"

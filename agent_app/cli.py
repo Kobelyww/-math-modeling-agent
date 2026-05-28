@@ -85,14 +85,15 @@ ORCHESTRATOR_HELP = f"""
 {'='*60}
 
 工作流模式：
-  1. plan         - 规划先行（Plan→Execute→Synthesize，默认推荐）
-  2. explore      - 先探索后求解（多源探索→规划→建模→编程→写作）
-  3. sequential   - 串行流水线（建模→编程→写作→总控，稳定可靠）
-  4. review       - 深度反思（每阶段经评审专家审核后修改，质量优先）
-  5. parallel     - 快速并行（建模先行，编程+写作并行执行，速度优先）
+  1. agent_loop   - 对话驱动 Agent Loop（默认，动态选择下一步）
+  2. plan         - 规划先行（legacy）
+  3. explore      - 先探索后求解（legacy）
+  4. sequential   - 串行流水线（legacy）
+  5. review       - 深度反思（legacy）
+  6. parallel     - 快速并行（legacy）
 
 命令：
-  /mode <模式名>  - 切换工作流模式（默认 plan）
+  /mode <模式名>  - 切换工作流模式（默认 agent_loop）
   /plan <问题>    - 仅生成求解计划，不执行
   /solve <问题>   - 启动多智能体协作分析
   /stream         - 流式输出模式（实时 token 级输出）
@@ -104,6 +105,10 @@ ORCHESTRATOR_HELP = f"""
   /help           - 显示此帮助
   /exit           - 退出程序
 """.strip()
+
+DEFAULT_ORCHESTRATOR_MODE = "agent_loop"
+LEGACY_ORCHESTRATOR_MODES = ("plan", "explore", "sequential", "review", "parallel")
+ORCHESTRATOR_MODES = (DEFAULT_ORCHESTRATOR_MODE, *LEGACY_ORCHESTRATOR_MODES)
 
 SINGLE_AGENT_HELP = """
 单智能体模式。可直接聊天或使用工具：
@@ -137,7 +142,7 @@ class CLI:
             print("[Memory] Redis 不可用，使用 SQLite 回退方案")
 
         self.orchestrator = Orchestrator(self.settings, rag=self.rag, memory_manager=self.memory_manager)
-        self.mode: str = "plan"  # 默认使用 Plan-and-Execute 策略
+        self.mode: str = DEFAULT_ORCHESTRATOR_MODE
 
         # 设置默认流式回调 — 所有模式自动流式输出 + 思考内容
         self._current_role: str = ""
@@ -220,7 +225,9 @@ class CLI:
         print(f"\n工作流模式：{self.mode}")
         print(f"问题：{question}")
 
-        if self.mode == "plan":
+        if self.mode == "agent_loop":
+            result = self.orchestrator.solve_agent_loop(question)
+        elif self.mode == "plan":
             result = self.orchestrator.solve_with_plan(question)
         elif self.mode == "explore":
             result = self.orchestrator.solve_explore(question)
@@ -351,11 +358,11 @@ class CLI:
             if raw.lower().startswith("/mode"):
                 parts = raw.split(maxsplit=1)
                 new_mode = parts[1].strip().lower() if len(parts) > 1 else ""
-                if new_mode in ("plan", "explore", "sequential", "review", "parallel"):
+                if new_mode in ORCHESTRATOR_MODES:
                     self.mode = new_mode
                     print(f"已切换到 {new_mode} 模式。")
                 else:
-                    print(f"无效模式。可选: plan / explore / sequential / review / parallel")
+                    print(f"无效模式。可选: {' / '.join(ORCHESTRATOR_MODES)}")
                 continue
             if raw.lower().startswith("/plan"):
                 question = raw.split(maxsplit=1)[1].strip() if len(raw) > 5 else ""
