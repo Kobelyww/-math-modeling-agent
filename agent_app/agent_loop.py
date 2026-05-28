@@ -62,6 +62,8 @@ class AgentLoopState:
         return bool(self.outputs.get(role, "").strip())
 
     def trace_text(self, max_chars: int = 6000) -> str:
+        if max_chars <= 0:
+            return ""
         parts = []
         for item in self.trace:
             parts.append(
@@ -76,14 +78,20 @@ class AgentLoopState:
 
 def _extract_json_object(text: str) -> str:
     stripped = text.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, re.DOTALL)
+    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
     if fenced:
-        return fenced.group(1)
+        return fenced.group(1).strip()
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start >= 0 and end > start:
         return stripped[start : end + 1]
     return stripped
+
+
+def _clean_optional_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def parse_coordinator_decision(text: str) -> AgentLoopDecision:
@@ -101,9 +109,9 @@ def parse_coordinator_decision(text: str) -> AgentLoopDecision:
 
     return AgentLoopDecision(
         action=action,
-        reason=str(payload.get("reason", "")).strip(),
-        target_agent=str(payload.get("target_agent", "")).strip(),
-        instruction=str(payload.get("instruction", "")).strip(),
+        reason=_clean_optional_text(payload.get("reason")),
+        target_agent=_clean_optional_text(payload.get("target_agent")),
+        instruction=_clean_optional_text(payload.get("instruction")),
     )
 
 
