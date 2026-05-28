@@ -117,8 +117,39 @@ def _stream_to_placeholder(placeholder, label: str):
 # ---------------------------------------------------------------------------
 
 
+def _agent_loop_trace_rows(trace) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for item in trace or []:
+        preview = item.output[:220] + "..." if len(item.output) > 220 else item.output
+        rows.append({
+            "step": item.step,
+            "action": item.action,
+            "role": item.role,
+            "reason": item.reason,
+            "instruction": item.instruction,
+            "output_preview": preview,
+        })
+    return rows
+
+
+def _artifact_summary_lines(build_log: str) -> list[str]:
+    return [line.strip() for line in build_log.splitlines() if line.strip()]
+
+
 def _display_result(result: WorkflowResult):
     st.success("协作完成")
+
+    trace_rows = _agent_loop_trace_rows(result.agent_loop_trace)
+    if trace_rows:
+        with st.expander("Agent Loop 执行轨迹", expanded=True):
+            st.dataframe(trace_rows, use_container_width=True, hide_index=True)
+
+    artifact_lines = _artifact_summary_lines(result.build_log)
+    if artifact_lines:
+        with st.expander("文件生成与验证", expanded=True):
+            st.code("\n".join(artifact_lines))
+        st.caption(f"产出目录：`{APP_ROOT / 'output'}`")
+
     with st.expander("建模智能体输出", expanded=False):
         st.write(result.modeling.content)
     with st.expander("编程智能体输出", expanded=False):
@@ -187,7 +218,8 @@ def _sidebar():
 
 
 def _tab_collaboration(mode: str, review_rounds: int, top_k: int):
-    st.subheader("多智能体协作分析")
+    st.subheader("Agent Loop Console")
+    st.caption("默认由 DeepSeek 协调者动态选择探索、建模、编程、调试、写作、评审或总结。")
 
     question = st.text_area(
         "输入赛题或研究任务",
@@ -196,6 +228,8 @@ def _tab_collaboration(mode: str, review_rounds: int, top_k: int):
     )
 
     use_streaming = st.checkbox("流式输出（实时显示生成过程）", value=True)
+    if mode == "agent_loop":
+        st.info("当前为 Agent Loop：运行完成后展示动态轨迹和产物。legacy 流式输出仍保留在串行模式。")
 
     if st.button("开始协作分析", type="primary", use_container_width=True):
         if not question.strip():

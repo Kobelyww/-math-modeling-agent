@@ -10,102 +10,127 @@
 
 <div id="app">
   <header>
-    <h1>数模多智能体协作系统</h1>
-    <span class="badge">DeepSeek V4 · 7 Agents</span>
+    <div>
+      <h1>数模多智能体协作系统</h1>
+      <p>Agent Loop Console</p>
+    </div>
+    <span class="badge">DeepSeek · Dynamic Agent Loop</span>
   </header>
 
-  <div class="main-grid">
-    <!-- 侧边栏 -->
-    <aside>
-      <div class="card">
-        <h3>协作策略</h3>
+  <div class="console-shell">
+    <aside class="control-rail">
+      <div class="panel">
+        <div class="panel-label">Control</div>
+        <label for="strategy">协作策略</label>
         <select id="strategy">
+          <option value="agent_loop" selected>Agent Loop（动态对话驱动）</option>
           <option value="sequential">串行流水线</option>
           <option value="review">深度反思</option>
           <option value="parallel">快速并行</option>
         </select>
-      </div>
 
-      <div class="card">
-        <h3>输入问题</h3>
-        <textarea id="question" rows="4" placeholder="例如：建立新能源车充电站布局优化模型"></textarea>
+        <label for="question">任务输入</label>
+        <textarea id="question" rows="7" placeholder="例如：建立新能源车充电站布局优化模型，并给出可实现方案与论文写作框架"></textarea>
+
         <div class="upload-row">
-          <label for="pdf-file" class="btn-sm" style="cursor:pointer; padding: 6px 12px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); color: var(--text);">📄 上传PDF题目</label>
-          <input type="file" id="pdf-file" accept=".pdf" onchange="onPDFSelected()" style="position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;">
+          <label for="pdf-file" class="btn-secondary">上传 PDF 题目</label>
+          <input type="file" id="pdf-file" accept=".pdf" onchange="onPDFSelected()" class="sr-only">
           <span id="pdf-name" class="upload-hint"></span>
         </div>
-        <div id="upload-status" class="status-text" style="font-size: 0.8rem;"></div>
-        <button id="btn-solve" onclick="startSolve()">▶ 开始协作分析</button>
-        <div id="status" class="status-text"></div>
+        <div id="upload-status" class="status-text"></div>
+
+        <button id="btn-solve" onclick="startSolve()">开始协作分析</button>
+        <div id="status" class="status-text">等待任务输入</div>
       </div>
 
-      <div class="card">
-        <h3>RAG 知识库</h3>
+      <div class="panel">
+        <div class="panel-label">RAG</div>
         <div id="rag-status">{{ '已就绪' if rag_ready else '未构建' }}</div>
-        <input id="rag-query" placeholder="检索论文...">
-        <button onclick="searchRAG()">检索</button>
-        <button onclick="rebuildRAG()">重建索引</button>
+        <input id="rag-query" placeholder="检索论文或方法...">
+        <div class="button-row">
+          <button onclick="searchRAG()">检索</button>
+          <button class="btn-secondary" onclick="rebuildRAG()">重建索引</button>
+        </div>
         <div id="rag-results"></div>
       </div>
 
-      <div class="card">
-        <h3>Nature Skills</h3>
+      <div class="panel">
+        <div class="panel-label">Nature Skills</div>
         <div id="skills-list">加载中...</div>
       </div>
     </aside>
 
-    <!-- 建模 + 编程 + 写作 三栏 -->
-    <section class="agents-row">
-      <div class="agent-panel" id="panel-modeling">
-        <div class="agent-header">
-          <span class="agent-icon">📐</span> 建模智能体
-          <span class="spinner hidden" id="spin-modeling">⏳</span>
+    <main class="loop-workspace">
+      <section class="loop-overview">
+        <div>
+          <div class="panel-label">Loop Timeline</div>
+          <h2>动态执行轨迹</h2>
         </div>
-        <div class="agent-output" id="out-modeling"></div>
-        <div class="progress"><div class="progress-bar" id="bar-modeling"></div></div>
-      </div>
-      <div class="agent-panel" id="panel-programming">
-        <div class="agent-header">
-          <span class="agent-icon">💻</span> 编程智能体
-          <span class="spinner hidden" id="spin-programming">⏳</span>
-          <span class="btn-group">
-            <button class="btn-sm" onclick="runCode()" title="在沙箱中运行代码">▶ 运行</button>
-            <button class="btn-sm" onclick="exportCode()" title="下载 .py 文件">📥 导出.py</button>
-          </span>
-        </div>
-        <div class="agent-output code-output" id="out-programming"></div>
-        <div id="code-result" class="code-result hidden"></div>
-        <div class="progress"><div class="progress-bar" id="bar-programming"></div></div>
-      </div>
-      <div class="agent-panel" id="panel-writing">
-        <div class="agent-header">
-          <span class="agent-icon">📝</span> 写作智能体
-          <span class="spinner hidden" id="spin-writing">⏳</span>
-          <span class="btn-group">
-            <button class="btn-sm" onclick="compileLatex()" title="编译 LaTeX 为 PDF">📝 编译PDF</button>
-            <button class="btn-sm" onclick="exportLatex()" title="下载 .tex 文件">📥 导出.tex</button>
-          </span>
-        </div>
-        <div class="agent-output latex-output" id="out-writing"></div>
-        <div id="latex-result" class="code-result hidden"></div>
-        <div class="progress"><div class="progress-bar" id="bar-writing"></div></div>
-      </div>
-    </section>
+        <div id="run-state" class="run-state">Idle</div>
+      </section>
 
-    <!-- 总控整合 -->
-    <section class="synthesis-row">
-      <div class="agent-panel full-width" id="panel-synthesis">
-        <div class="agent-header">
-          <span class="agent-icon">🎯</span> 总控整合
-          <span class="spinner hidden" id="spin-synthesis">⏳</span>
-          <span class="btn-group">
-            <button class="btn-sm primary" onclick="downloadAll()">📦 打包下载全部</button>
-          </span>
-        </div>
-        <div class="agent-output" id="out-synthesis"></div>
-        <div class="progress"><div class="progress-bar" id="bar-synthesis"></div></div>
+      <div id="loop-timeline" class="loop-timeline">
+        <div class="timeline-empty">协调者会根据上下文动态选择探索、建模、编程、调试、写作、评审或总结。</div>
       </div>
-    </section>
+
+      <section class="agent-grid">
+        <div class="agent-panel" id="panel-modeling" data-role="modeling">
+          <div class="agent-header">
+            <span>建模智能体</span>
+            <span class="spinner hidden" id="spin-modeling"></span>
+          </div>
+          <div class="agent-output" id="out-modeling">等待协调者调用。</div>
+          <div class="progress"><div class="progress-bar" id="bar-modeling"></div></div>
+        </div>
+
+        <div class="agent-panel" id="panel-programming" data-role="programming">
+          <div class="agent-header">
+            <span>编程智能体</span>
+            <span class="spinner hidden" id="spin-programming"></span>
+            <span class="btn-group">
+              <button class="btn-sm" onclick="runCode()">运行</button>
+              <button class="btn-sm" onclick="exportCode()">导出.py</button>
+            </span>
+          </div>
+          <div class="agent-output code-output" id="out-programming">等待协调者调用。</div>
+          <div id="code-result" class="code-result hidden"></div>
+          <div class="progress"><div class="progress-bar" id="bar-programming"></div></div>
+        </div>
+
+        <div class="agent-panel" id="panel-writing" data-role="writing">
+          <div class="agent-header">
+            <span>写作智能体</span>
+            <span class="spinner hidden" id="spin-writing"></span>
+            <span class="btn-group">
+              <button class="btn-sm" onclick="compileLatex()">编译PDF</button>
+              <button class="btn-sm" onclick="exportLatex()">导出.tex</button>
+            </span>
+          </div>
+          <div class="agent-output latex-output" id="out-writing">等待协调者调用。</div>
+          <div id="latex-result" class="code-result hidden"></div>
+          <div class="progress"><div class="progress-bar" id="bar-writing"></div></div>
+        </div>
+
+        <div class="agent-panel wide" id="panel-synthesis" data-role="synthesis">
+          <div class="agent-header">
+            <span>总控整合</span>
+            <span class="spinner hidden" id="spin-synthesis"></span>
+          </div>
+          <div class="agent-output" id="out-synthesis">最终整合会在这里显示。</div>
+          <div class="progress"><div class="progress-bar" id="bar-synthesis"></div></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="artifact-rail" id="artifact-rail">
+      <div class="panel">
+        <div class="panel-label">Artifacts</div>
+        <button class="btn-secondary" id="btn-export-code" onclick="exportCode()" disabled>导出代码</button>
+        <button class="btn-secondary" id="btn-export-latex" onclick="exportLatex()" disabled>导出 LaTeX</button>
+        <button class="btn-secondary" id="btn-download-all" onclick="downloadAll()" disabled>打包下载</button>
+        <div class="artifact-note">完成后可导出代码、论文和整合报告。</div>
+      </div>
+    </aside>
   </div>
 </div>
 

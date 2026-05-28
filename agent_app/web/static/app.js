@@ -1,6 +1,12 @@
 let ws = null, taskId = null;
 
-const agents = ['modeling', 'programming', 'writing', 'synthesis'];
+const ROLE_META = {
+  modeling: { label: '建模智能体', progressStart: 0.05, progressEnd: 0.3 },
+  programming: { label: '编程智能体', progressStart: 0.3, progressEnd: 0.55 },
+  writing: { label: '写作智能体', progressStart: 0.55, progressEnd: 0.8 },
+  synthesis: { label: '总控整合', progressStart: 0.8, progressEnd: 1.0 },
+};
+const agents = Object.keys(ROLE_META);
 const buffers = {};
 agents.forEach(a => { buffers[a] = ''; });
 
@@ -19,22 +25,77 @@ function simpleMarkdown(text) {
 
 function setStatus(msg, color) {
   const el = document.getElementById('status');
+  if (!el) return;
   el.textContent = msg;
   el.style.color = color || '';
 }
 
 function showSpinner(agent) {
-  document.getElementById('spin-' + agent).classList.remove('hidden');
-  document.getElementById('out-' + agent).classList.add('cursor');
+  const spinner = document.getElementById('spin-' + agent);
+  const output = document.getElementById('out-' + agent);
+  if (spinner) spinner.classList.remove('hidden');
+  if (output) output.classList.add('cursor');
 }
 
 function hideSpinner(agent) {
-  document.getElementById('spin-' + agent).classList.add('hidden');
-  document.getElementById('out-' + agent).classList.remove('cursor');
+  const spinner = document.getElementById('spin-' + agent);
+  const output = document.getElementById('out-' + agent);
+  if (spinner) spinner.classList.add('hidden');
+  if (output) output.classList.remove('cursor');
 }
 
 function setProgress(agent, pct) {
-  document.getElementById('bar-' + agent).style.width = pct + '%';
+  const bar = document.getElementById('bar-' + agent);
+  if (bar) bar.style.width = pct + '%';
+}
+
+function resetOutputState() {
+  const timeline = document.getElementById('loop-timeline');
+  if (timeline) {
+    timeline.innerHTML =
+      '<div class="timeline-empty">协调者会根据上下文动态选择探索、建模、编程、调试、写作、评审或总结。</div>';
+  }
+  agents.forEach(a => {
+    buffers[a] = '';
+    const out = document.getElementById('out-' + a);
+    if (out) out.innerHTML = '等待协调者调用。';
+    setProgress(a, 0);
+    showSpinner(a);
+  });
+  updateArtifactState();
+}
+
+function appendTimelineEvent(agent, status) {
+  const timeline = document.getElementById('loop-timeline');
+  if (!timeline) return;
+  const empty = timeline.querySelector('.timeline-empty');
+  if (empty) empty.remove();
+  const item = document.createElement('div');
+  item.className = 'timeline-item' + (status === 'running' ? ' active' : '');
+  item.innerHTML =
+    '<div class="timeline-role">' + (ROLE_META[agent]?.label || agent) + '</div>' +
+    '<div class="timeline-status">' + status + '</div>';
+  timeline.appendChild(item);
+  timeline.scrollLeft = timeline.scrollWidth;
+}
+
+function setRunState(text, color) {
+  const el = document.getElementById('run-state');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = color || '';
+}
+
+function updateArtifactState() {
+  const hasCode = Boolean(extractCodeFromOutput(buffers.programming));
+  const hasLatex = Boolean(extractLatexFromOutput(buffers.writing));
+  const hasAny = agents.some(a => buffers[a] && buffers[a].trim());
+  const codeButton = document.getElementById('btn-export-code');
+  const latexButton = document.getElementById('btn-export-latex');
+  const allButton = document.getElementById('btn-download-all');
+  if (codeButton) codeButton.disabled = !hasCode;
+  if (latexButton) latexButton.disabled = !hasLatex;
+  if (allButton) allButton.disabled = !hasAny;
 }
 
 async function startSolve() {
@@ -42,12 +103,8 @@ async function startSolve() {
   const question = document.getElementById('question').value.trim();
 
   const strategy = document.getElementById('strategy').value;
-  agents.forEach(a => {
-    buffers[a] = '';
-    document.getElementById('out-' + a).innerHTML = '';
-    setProgress(a, 0);
-    showSpinner(a);
-  });
+  resetOutputState();
+  setRunState('Running');
   setStatus('启动中...');
 
   try {
@@ -76,31 +133,57 @@ function connectWS(tid) {
     const msg = JSON.parse(e.data);
     switch (msg.type) {
       case 'token':
+        appendTimelineEvent(msg.agent, 'running');
         buffers[msg.agent] += msg.content;
         const out = document.getElementById('out-' + msg.agent);
-        out.innerHTML = '<p>' + simpleMarkdown(buffers[msg.agent]) + '</p>';
-        out.scrollTop = out.scrollHeight;
+        if (out) {
+          out.innerHTML = '<p>' + simpleMarkdown(buffers[msg.agent]) + '</p>';
+          out.scrollTop = out.scrollHeight;
+        }
         const mid = (msg.progress_start + msg.progress_end) / 2 * 100;
         setProgress(msg.agent, Math.min(mid, 95));
+        updateArtifactState();
         break;
       case 'phase':
         if (msg.status === 'completed') {
           if (msg.result) {
             buffers[msg.agent] = msg.result;
-            document.getElementById('out-' + msg.agent).innerHTML =
-              '<p>' + simpleMarkdown(msg.result) + '</p>';
+            const phaseOut = document.getElementById('out-' + msg.agent);
+            if (phaseOut) phaseOut.innerHTML = '<p>' + simpleMarkdown(msg.result) + '</p>';
           }
+          appendTimelineEvent(msg.agent, 'completed');
           hideSpinner(msg.agent);
           setProgress(msg.agent, 100);
+          updateArtifactState();
         }
         break;
       case 'done':
+        if (msg.result) {
+          const resultMap = {
+            modeling: msg.result.modeling || '',
+            programming: msg.result.programming || '',
+            writing: msg.result.writing || '',
+            synthesis: msg.result.synthesis || '',
+          };
+          agents.forEach(a => {
+            if (resultMap[a]) {
+              buffers[a] = resultMap[a];
+              const doneOut = document.getElementById('out-' + a);
+              if (doneOut) doneOut.innerHTML = '<p>' + simpleMarkdown(resultMap[a]) + '</p>';
+            }
+          });
+        }
         setStatus('✓ 协作完成', 'var(--green)');
+        setRunState('Complete', 'var(--green)');
         agents.forEach(a => { hideSpinner(a); setProgress(a, 100); });
-        ws.close();
+        updateArtifactState();
+        const closing = ws;
+        ws = null;
+        if (closing) closing.close();
         break;
       case 'error':
         setStatus('✗ ' + msg.message, 'var(--red)');
+        setRunState('Error', 'var(--red)');
         break;
     }
   };

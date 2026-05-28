@@ -298,3 +298,63 @@ def test_gui_default_mode_is_agent_loop():
     from agent_app.gui import COLLABORATION_MODES
 
     assert COLLABORATION_MODES[0] == "agent_loop"
+
+
+def test_web_template_defaults_to_agent_loop_console():
+    from pathlib import Path
+
+    html = Path("agent_app/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert '<option value="agent_loop" selected>' in html
+    assert 'class="console-shell"' in html
+    assert 'id="loop-timeline"' in html
+    assert 'id="artifact-rail"' in html
+
+
+def test_web_assets_define_console_regions():
+    from pathlib import Path
+
+    css = Path("agent_app/web/static/style.css").read_text(encoding="utf-8")
+    js = Path("agent_app/web/static/app.js").read_text(encoding="utf-8")
+
+    assert ".console-shell" in css
+    assert ".control-rail" in css
+    assert ".loop-workspace" in css
+    assert ".artifact-rail" in css
+    assert "const ROLE_META" in js
+    assert "function appendTimelineEvent" in js
+    assert "function updateArtifactState" in js
+
+
+def test_streamlit_agent_loop_trace_rows_are_stable():
+    from agent_app.agent_loop import AgentLoopTrace
+    from agent_app.gui import _agent_loop_trace_rows
+
+    rows = _agent_loop_trace_rows([
+        AgentLoopTrace(
+            step=1,
+            action="model",
+            role="modeling",
+            reason="Need formulation",
+            instruction="Build variables",
+            output="Long output " * 40,
+        )
+    ])
+
+    assert rows == [{
+        "step": 1,
+        "action": "model",
+        "role": "modeling",
+        "reason": "Need formulation",
+        "instruction": "Build variables",
+        "output_preview": ("Long output " * 40)[:220] + "...",
+    }]
+
+
+def test_streamlit_artifact_summary_uses_build_log():
+    from agent_app.gui import _artifact_summary_lines
+
+    lines = _artifact_summary_lines("Written: solve.py\n✅ workflow_result.json")
+
+    assert lines == ["Written: solve.py", "✅ workflow_result.json"]
+    assert _artifact_summary_lines("") == []
