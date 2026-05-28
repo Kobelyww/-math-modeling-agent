@@ -372,11 +372,7 @@ class Orchestrator:
                      token_budget: TokenBudgetCondition | None = None,
                      on_token: Callable[[str], None] | None = None,
                      on_thinking: Callable[[str], None] | None = None) -> str:
-        """安全调用 agent，自动使用流式输出，捕获 token 使用量。
-
-        所有调用默认走 agent.stream() 以支持实时输出和思考过程展示。
-        on_token/on_thinking 为 None 时静默流式。
-        """
+        """安全调用 agent；有工具时走工具循环，否则流式输出。"""
         # Fall back to orchestrator-level callbacks when caller doesn't provide them
         _on_token = on_token
         _on_thinking = on_thinking
@@ -388,7 +384,19 @@ class Orchestrator:
             _on_thinking = lambda t, lbl=_label: self.on_agent_thinking(t, lbl)
 
         try:
-            result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
+            agent_tools = self._resolve_agent_tools(agent, role_label)
+            if agent_tools:
+                result = agent.invoke_with_tools(
+                    prompt,
+                    tools=agent_tools,
+                    max_tool_rounds=self._max_tool_rounds(agent, role_label),
+                )
+                if _on_token and result:
+                    chunk_size = 2048
+                    for start in range(0, len(result), chunk_size):
+                        _on_token(result[start:start + chunk_size])
+            else:
+                result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
             usage = agent.last_usage
             self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
             if token_budget:
