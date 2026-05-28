@@ -777,6 +777,7 @@ Loop trace:
         state: AgentLoopState,
         rag_ctx: str,
         max_steps: int,
+        token_budget: TokenBudgetCondition | None = None,
     ) -> AgentLoopDecision:
         prompt = self._build_agent_loop_decision_prompt(state, rag_ctx, max_steps)
         try:
@@ -784,7 +785,15 @@ Loop trace:
             return parse_coordinator_decision(raw)
         except Exception as exc:
             logger.warning("Agent loop coordinator decision failed; using fallback: %s", exc)
+            state.errors.append(f"[agent_loop_decision] {exc}")
             return fallback_next_decision(state)
+        finally:
+            usage = getattr(self.synthesizer, "last_usage", {})
+            if token_budget:
+                token_budget.add_usage(
+                    usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0),
+                )
 
     def solve_agent_loop(
         self,
@@ -881,7 +890,9 @@ Loop trace:
                 synth_out = synth_out or stop_reason
                 break
 
-            decision = self._decide_agent_loop_next(state, rag_ctx, max_steps)
+            decision = self._decide_agent_loop_next(
+                state, rag_ctx, max_steps, token_budget=token_budget,
+            )
             if decision.action not in ACTION_TO_ROLE and decision.action not in {"ask_user", "final"}:
                 decision = fallback_next_decision(state)
 

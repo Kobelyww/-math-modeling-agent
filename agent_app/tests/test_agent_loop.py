@@ -13,6 +13,7 @@ from agent_app.agent_loop import (
     parse_coordinator_decision,
     fallback_next_decision,
 )
+from agent_app.conditions import TokenBudgetCondition
 from agent_app.memory import SharedMemory
 from agent_app.orchestrator import Orchestrator, WorkflowResult
 
@@ -167,7 +168,7 @@ def test_solve_agent_loop_runs_stubbed_dynamic_steps(monkeypatch):
     monkeypatch.setattr(
         orch,
         "_decide_agent_loop_next",
-        lambda state, rag_ctx, max_steps: next(decisions),
+        lambda state, rag_ctx, max_steps, **kwargs: next(decisions),
         raising=False,
     )
     monkeypatch.setattr(orch, "_finalize_workflow", lambda result: result)
@@ -188,3 +189,42 @@ def test_solve_agent_loop_runs_stubbed_dynamic_steps(monkeypatch):
     assert result.writing.content == "writing output"
     assert result.synthesis == "synthesis output"
     assert len(result.agent_loop_trace) == 5
+
+
+def test_decide_agent_loop_next_counts_coordinator_usage():
+    class CoordinatorStub:
+        last_usage = {"prompt_tokens": 11, "completion_tokens": 7}
+
+        def invoke(self, prompt):
+            return '{"action": "model", "reason": "Need model"}'
+
+    orch = Orchestrator.__new__(Orchestrator)
+    orch.synthesizer = CoordinatorStub()
+    state = AgentLoopState(question="build a model")
+    budget = TokenBudgetCondition(max_total_tokens=100)
+
+    decision = orch._decide_agent_loop_next(state, "rag", 4, token_budget=budget)
+
+    assert decision.action == "model"
+    assert budget.accumulated == 18
+    assert state.errors == []
+
+
+def test_decide_agent_loop_next_records_fallback_error():
+    class BrokenCoordinatorStub:
+        last_usage = {"prompt_tokens": 5, "completion_tokens": 0}
+
+        def invoke(self, prompt):
+            return "not json"
+
+    orch = Orchestrator.__new__(Orchestrator)
+    orch.synthesizer = BrokenCoordinatorStub()
+    state = AgentLoopState(question="build a model")
+    budget = TokenBudgetCondition(max_total_tokens=100)
+
+    decision = orch._decide_agent_loop_next(state, "rag", 4, token_budget=budget)
+
+    assert decision.action == "model"
+    assert budget.accumulated == 5
+    assert state.errors
+    assert "agent_loop_decision" in state.errors[0]
