@@ -21,6 +21,14 @@ from .agents import (
     create_agents,
     resolve_agent_skills,
 )
+from .agent_loop import (
+    ACTION_TO_ROLE,
+    AgentLoopDecision,
+    AgentLoopState,
+    AgentLoopTrace,
+    fallback_next_decision,
+    parse_coordinator_decision,
+)
 from .base import BaseAgent
 from .conditions import (
     BaseCondition,
@@ -64,6 +72,8 @@ class WorkflowResult:
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     elapsed_seconds: float = 0.0
+    build_log: str = ""
+    agent_loop_trace: list[AgentLoopTrace] = field(default_factory=list)
 
     @property
     def has_errors(self) -> bool:
@@ -82,10 +92,17 @@ class WorkflowResult:
         )
 
     def to_dict(self) -> dict:
+        def _stage_to_dict(s):
+            if s is None:
+                return None
+            return {"role": s.role, "content": s.content,
+                    "review_feedback": s.review_feedback, "round_idx": s.round_idx}
+
         return {
-            "modeling": self.modeling,
-            "programming": self.programming,
-            "writing": self.writing,
+            "question": self.question,
+            "modeling": _stage_to_dict(self.modeling),
+            "programming": _stage_to_dict(self.programming),
+            "writing": _stage_to_dict(self.writing),
             "synthesis": self.synthesis,
             "errors": self.errors,
             "total_prompt_tokens": self.total_prompt_tokens,
@@ -93,6 +110,17 @@ class WorkflowResult:
             "total_tokens": self.total_tokens,
             "estimated_cost_usd": round(self.estimated_cost_usd, 6),
             "elapsed_seconds": round(self.elapsed_seconds, 1),
+            "agent_loop_trace": [
+                {
+                    "step": trace.step,
+                    "action": trace.action,
+                    "role": trace.role,
+                    "reason": trace.reason,
+                    "instruction": trace.instruction,
+                    "output": trace.output,
+                }
+                for trace in self.agent_loop_trace
+            ],
         }
 
     def format_overview(self) -> str:
@@ -122,6 +150,9 @@ class WorkflowResult:
             f"费用估算：${self.estimated_cost_usd:.4f}",
             f"耗时：{self.elapsed_seconds:.1f}s",
         ]
+        if self.build_log:
+            lines.append("")
+            lines.append(self.build_log)
         if self.errors:
             lines.append("")
             lines.append("【错误】")
@@ -182,6 +213,36 @@ def _format_rag_context(chunks: list[Chunk]) -> str:
     return "\n\n".join(lines)
 
 
+# STM 阶段标签 → 工具注册键（_agent_tools 使用 modeler/programmer 等）
+_ROLE_LABEL_ALIASES: dict[str, str] = {
+    "modeling": "modeler",
+    "programming": "programmer",
+    "writing": "writer",
+    "coordinator": "synthesizer",
+}
+
+_AGENT_TOOL_ROLE: dict[type, str] = {
+    DataEngineerAgent: "data_engineer",
+    ModelerAgent: "modeler",
+    ProgrammerAgent: "programmer",
+    CodeDebuggerAgent: "code_debugger",
+    WriterAgent: "writer",
+    ReviewerAgent: "reviewer",
+    SynthesizerAgent: "synthesizer",
+    PlannerAgent: "planner",
+}
+
+_MAX_TOOL_ROUNDS: dict[str, int] = {
+    "programmer": 6,
+    "writer": 6,
+    "code_debugger": 5,
+    "modeler": 4,
+    "data_engineer": 4,
+    "synthesizer": 4,
+    "planner": 4,
+}
+
+
 # ─── 编排器 ─────────────────────────────────────────────────────────
 
 class Orchestrator:
@@ -220,7 +281,8 @@ class Orchestrator:
                            search_arxiv, search_semantic_scholar, search_crossref,
                            fetch_paper_to_kb)
         from .exploration import (read_file, search_files, search_content,
-                                  list_directory, web_search, web_fetch)
+                                  list_directory, web_search, web_fetch,
+                                  write_file)
         _set_code_tools(python_exec.func, pip_install.func, read_csv_info.func)
 
         # Register all tools for agent tool-calling
@@ -237,21 +299,22 @@ class Orchestrator:
             "read_file": read_file, "search_files": search_files,
             "search_content": search_content, "list_directory": list_directory,
             "web_search": web_search, "web_fetch": web_fetch,
+            "write_file": write_file,
             "spawn_subagent": spawn_subagent,
         }
         for name, tool_obj in _tool_map.items():
             register_tool_executor(name, tool_obj)
 
-        # Per-agent tool assignments
+        # Per-agent tool assignments — every agent gets write_file + save_note + spawn_subagent
         self._agent_tools: dict[str, list] = {
-            "modeler": [web_search, search_arxiv, model_reference, writing_rules, read_file, search_content],
-            "programmer": [python_exec, read_file, search_files, search_content, read_csv_info, pip_install],
-            "code_debugger": [python_exec, read_file, search_content],
-            "writer": [latex_template, latex_compile, web_search, save_note, read_note, writing_rules, read_file, list_directory],
-            "synthesizer": [spawn_subagent, web_search, search_files, search_content, read_file, list_directory, web_fetch],
-            "reviewer": [read_file, search_content, web_search],
-            "planner": [web_search, spawn_subagent, model_reference, writing_rules, search_files, search_content, read_file],
-            "data_engineer": [read_csv_info, search_files, read_file, python_exec],
+            "modeler": [write_file, save_note, spawn_subagent, web_search, search_arxiv, model_reference, writing_rules, read_file, search_content],
+            "programmer": [write_file, save_note, python_exec, spawn_subagent, read_file, search_files, search_content, read_csv_info, pip_install],
+            "code_debugger": [write_file, save_note, python_exec, read_file, search_content, spawn_subagent],
+            "writer": [write_file, save_note, latex_template, latex_compile, spawn_subagent, web_search, read_note, writing_rules, read_file, list_directory],
+            "synthesizer": [write_file, save_note, spawn_subagent, web_search, search_files, search_content, read_file, list_directory, web_fetch],
+            "reviewer": [write_file, save_note, read_file, search_content, web_search],
+            "planner": [write_file, save_note, spawn_subagent, web_search, model_reference, writing_rules, search_files, search_content, read_file],
+            "data_engineer": [write_file, save_note, read_csv_info, search_files, read_file, python_exec],
         }
 
         # 默认终止条件
@@ -259,6 +322,30 @@ class Orchestrator:
             TokenBudgetCondition(max_total_tokens=200000),
             TimeoutCondition(timeout_seconds=600.0),
         )
+
+    def _resolve_agent_tools(self, agent: BaseAgent, role_label: str) -> list:
+        """将 STM 阶段标签或 Agent 实例解析为 _agent_tools 的注册键。"""
+        for agent_cls, key in _AGENT_TOOL_ROLE.items():
+            if isinstance(agent, agent_cls):
+                return self._agent_tools.get(key, [])
+        tool_key = _ROLE_LABEL_ALIASES.get(role_label, role_label)
+        return self._agent_tools.get(tool_key, [])
+
+    def _max_tool_rounds(self, agent: BaseAgent, role_label: str) -> int:
+        for agent_cls, key in _AGENT_TOOL_ROLE.items():
+            if isinstance(agent, agent_cls):
+                return _MAX_TOOL_ROUNDS.get(key, 4)
+        tool_key = _ROLE_LABEL_ALIASES.get(role_label, role_label)
+        return _MAX_TOOL_ROUNDS.get(tool_key, 4)
+
+    def _finalize_workflow(self, result: WorkflowResult) -> WorkflowResult:
+        """工作流结束后自动落盘、执行代码并编译 LaTeX。"""
+        try:
+            result.build_log = self._save_outputs(result)
+        except Exception as exc:
+            logger.warning("Failed to save workflow outputs: %s", exc)
+            result.errors.append(f"[输出保存] {exc}")
+        return result
 
     # ─── 记忆辅助 ─────────────────────────────────────────────────────
 
@@ -299,14 +386,16 @@ class Orchestrator:
             _label = role_label
             _on_thinking = lambda t, lbl=_label: self.on_agent_thinking(t, lbl)
 
-        # Determine tools for this agent role
-        agent_tools = self._agent_tools.get(role_label, [])
+        agent_tools = self._resolve_agent_tools(agent, role_label)
         use_tools = len(agent_tools) > 0
+        max_rounds = self._max_tool_rounds(agent, role_label)
 
         try:
             if use_tools:
                 # Tool-calling mode: agent can search web, read files, spawn subagents, etc.
-                result = agent.invoke_with_tools(prompt, tools=agent_tools, max_tool_rounds=3)
+                result = agent.invoke_with_tools(
+                    prompt, tools=agent_tools, max_tool_rounds=max_rounds,
+                )
                 # Also stream through callbacks for real-time display
                 if _on_token:
                     for chunk in [result[i:i+20] for i in range(0, len(result), 20)]:
@@ -333,9 +422,45 @@ class Orchestrator:
                      token_budget: TokenBudgetCondition | None = None,
                      on_token: Callable[[str], None] | None = None,
                      on_thinking: Callable[[str], None] | None = None) -> str:
-        """安全调用 agent.stream()，自动捕获 token 使用量，支持思考内容回调。"""
+        """安全调用 agent；有工具时走 ReAct 工具循环，否则流式输出。"""
+        _on_token = on_token
+        _on_thinking = on_thinking
+        if _on_token is None and self.on_agent_token:
+            _label = role_label
+            _on_token = lambda t, lbl=_label: self.on_agent_token(t, lbl)
+        if _on_thinking is None and self.on_agent_thinking:
+            _label = role_label
+            _on_thinking = lambda t, lbl=_label: self.on_agent_thinking(t, lbl)
+
+        agent_tools = self._resolve_agent_tools(agent, role_label)
+        if agent_tools:
+            try:
+                result = agent.invoke_with_tools(
+                    prompt,
+                    tools=agent_tools,
+                    max_tool_rounds=self._max_tool_rounds(agent, role_label),
+                )
+                if _on_token:
+                    for i in range(0, len(result), 20):
+                        _on_token(result[i : i + 20])
+                usage = agent.last_usage
+                self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
+                if token_budget:
+                    token_budget.add_usage(
+                        usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0),
+                    )
+                return result
+            except Exception as exc:
+                err_msg = f"[{role_label}] 执行失败: {exc}"
+                logger.warning(err_msg)
+                errors.append(err_msg)
+                fallback = f"[{role_label} 因错误未能完成: {exc}]"
+                self._post(stm, role_label, fallback, triggered_by=triggered_by)
+                return fallback
+
         try:
-            result = agent.stream(prompt, on_token=on_token, on_thinking=on_thinking)
+            result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
             usage = agent.last_usage
             self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
             if token_budget:
@@ -371,82 +496,106 @@ class Orchestrator:
             except Exception:
                 logger.debug("Archive failed", exc_info=True)
 
-    # ─── 文件生成 ─────────────────────────────────────────────────────
+    # ─── 文件生成与验证 ─────────────────────────────────────────────────
 
     @staticmethod
     def _extract_code_blocks(text: str, lang: str = "python") -> list[str]:
-        """Extract code blocks of a given language from markdown text."""
         import re
-        pattern = rf"```{lang}\s*\n(.*?)```"
-        return [m.strip() for m in re.findall(pattern, text, re.DOTALL)]
+        langs = [lang] if lang != "python" else ["python", "py"]
+        blocks: list[str] = []
+        for lg in langs:
+            pattern = rf"```{re.escape(lg)}\s*\n(.*?)```"
+            blocks.extend(m.strip() for m in re.findall(pattern, text, re.DOTALL))
+        return blocks
 
     @staticmethod
     def _extract_latex_document(text: str) -> str | None:
-        """Extract a full LaTeX document from markdown text."""
         import re
         m = re.search(r"\\documentclass.*?\\end\{document\}", text, re.DOTALL)
-        return m.group(0) if m else None
+        if m:
+            return m.group(0)
+        for block in re.findall(r"```(?:latex|tex)\s*\n(.*?)```", text, re.DOTALL):
+            if "\\documentclass" in block:
+                return block.strip()
+        return None
 
-    def _save_outputs(self, result: WorkflowResult) -> None:
-        """Persist agent outputs to the output/ directory.
-
-        Extracts Python code from the programmer output and LaTeX source
-        from the writer output, saving them as runnable/compilable files.
-        """
+    def _save_outputs(self, result: WorkflowResult) -> str:
+        """Persist outputs AND execute/compile them. Returns a build log."""
         from pathlib import Path
         out = Path(__file__).resolve().parent / "output"
         out.mkdir(exist_ok=True)
+        lines: list[str] = ["", "═" * 50, "  文件生成与验证", "═" * 50]
 
-        saved: list[str] = []
-
-        # Save modeling report
+        # ── 1. Modeling report ──────────────────────────────────────
         if result.modeling.content:
-            path = out / "modeling_report.md"
-            path.write_text(result.modeling.content, encoding="utf-8")
-            saved.append(str(path.name))
+            (out / "modeling_report.md").write_text(result.modeling.content, encoding="utf-8")
+            lines.append("✅ modeling_report.md")
 
-        # Extract and save Python code from programmer output
+        # ── 2. Python code → save + execute ────────────────────────
         py_blocks = self._extract_code_blocks(result.programming.content, "python")
-        for i, block in enumerate(py_blocks):
-            if 'if __name__' in block or 'def main' in block or i == 0:
-                path = out / f"solve.py" if i == 0 else out / f"solve_part{i+1}.py"
+        py_path = None
+        if py_blocks:
+            for i, block in enumerate(py_blocks):
+                fname = "solve.py" if i == 0 else f"solve_part{i+1}.py"
+                path = out / fname
                 path.write_text(block, encoding="utf-8")
-                saved.append(str(path.name))
-
-        # Save code debugger report
-        if result.programming.content:
-            path = out / "code_review.md"
-            path.write_text(result.programming.content, encoding="utf-8")
-            # Note: this overwrites the modeling report path — fix
-            # Actually debug_out is separate
-
-        # Extract and save LaTeX from writer output
-        latex = self._extract_latex_document(result.writing.content)
-        if latex:
-            path = out / "paper.tex"
-            path.write_text(latex, encoding="utf-8")
-            saved.append(str(path.name))
+                lines.append(f"✅ {fname} ({len(block)} chars)")
+                if i == 0:
+                    py_path = path
         else:
-            # Save raw writing output as markdown
-            path = out / "paper_draft.md"
-            path.write_text(result.writing.content, encoding="utf-8")
-            saved.append(str(path.name))
+            # No code block found — save full output as .py anyway
+            py_path = out / "solve_raw.py"
+            py_path.write_text(result.programming.content, encoding="utf-8")
+            lines.append(f"✅ solve_raw.py (full output, {len(result.programming.content)} chars)")
 
-        # Save synthesis as final summary
+        if py_path:
+            lines.append("── 执行 Python 代码 ──")
+            try:
+                from .tools import python_exec
+                exec_result = python_exec.invoke({"code": py_path.read_text(encoding="utf-8")})
+                lines.append(exec_result[:1500])
+            except Exception as exc:
+                lines.append(f"⚠ 执行失败: {exc}")
+
+        # ── 3. LaTeX → save + compile ──────────────────────────────
+        latex = self._extract_latex_document(result.writing.content)
+        tex_path = None
+        if latex:
+            tex_path = out / "paper.tex"
+            tex_path.write_text(latex, encoding="utf-8")
+            lines.append(f"✅ paper.tex ({len(latex)} chars)")
+        else:
+            # No LaTeX document found — save raw as .tex
+            tex_path = out / "paper_raw.tex"
+            tex_path.write_text(result.writing.content, encoding="utf-8")
+            lines.append(f"✅ paper_raw.tex (full output, {len(result.writing.content)} chars)")
+
+        if tex_path:
+            lines.append("── 编译 LaTeX ──")
+            try:
+                from .tools import latex_compile
+                compile_result = latex_compile.invoke({
+                    "content": tex_path.read_text(encoding="utf-8"),
+                    "filename": tex_path.stem,
+                })
+                lines.append(compile_result[:1000])
+            except Exception as exc:
+                lines.append(f"⚠ 编译失败: {exc}")
+
+        # ── 4. Synthesis ───────────────────────────────────────────
         if result.synthesis:
-            path = out / "final_synthesis.md"
-            path.write_text(result.synthesis, encoding="utf-8")
-            saved.append(str(path.name))
+            (out / "final_synthesis.md").write_text(result.synthesis, encoding="utf-8")
+            lines.append("✅ final_synthesis.md")
 
-        # Save full result as JSON
-        path = out / "workflow_result.json"
-        path.write_text(
-            json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        saved.append(str(path.name))
+        # ── 5. Full result JSON ────────────────────────────────────
+        (out / "workflow_result.json").write_text(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        lines.append("✅ workflow_result.json")
+        lines.append("═" * 50)
 
-        logger.info("Saved %d output files to %s: %s", len(saved), out, ", ".join(saved))
+        build_log = "\n".join(lines)
+        logger.info("Output files saved to %s", out)
+        return build_log
 
     def _rag_context(self, question: str, top_k: int = 6) -> str:
         parts: list[str] = []
@@ -577,6 +726,337 @@ class Orchestrator:
         self._post(mem, "planner", plan, triggered_by="")
         return plan
 
+    def _build_agent_loop_decision_prompt(
+        self,
+        state: AgentLoopState,
+        rag_ctx: str,
+        max_steps: int,
+    ) -> str:
+        """Build the coordinator prompt for the dynamic agent loop."""
+        outputs = []
+        for role, content in state.outputs.items():
+            if content.strip():
+                outputs.append(f"[{role}]\n{content[:2500]}")
+        outputs_text = "\n\n".join(outputs) if outputs else "No agent outputs yet."
+        trace_text = state.trace_text(max_chars=6000) or "No loop steps yet."
+        actions = ", ".join(sorted([*ACTION_TO_ROLE.keys(), "ask_user", "final"]))
+
+        return f"""You are the coordinator for a multi-agent mathematical modeling workflow.
+Choose exactly one next action.
+
+Original task:
+{state.question}
+
+Maximum loop steps: {max_steps}
+
+Available actions:
+{actions}
+
+Action meanings:
+- explore: record missing context or investigation notes without calling a specialist agent.
+- model: ask the modeling agent for mathematical formulation.
+- program: ask the programming agent for code or computational implementation.
+- debug: ask the code debugger to inspect or improve the programming output.
+- write: ask the writing agent for report/paper content.
+- review: ask the reviewer to critique an existing output.
+- synthesize: ask the synthesizer for final integration.
+- ask_user: stop and request clarification from the user.
+- final: stop because the current synthesis is sufficient.
+
+Return only a JSON object with these keys:
+{{
+  "action": "model|program|debug|write|review|synthesize|explore|ask_user|final",
+  "reason": "brief reason",
+  "target_agent": "modeler|programmer|code_debugger|writer|reviewer|synthesizer|explore",
+  "instruction": "specific instruction for the selected step"
+}}
+
+Retrieved context:
+{rag_ctx[:5000]}
+
+Current outputs:
+{outputs_text}
+
+Loop trace:
+{trace_text}
+"""
+
+    def _decide_agent_loop_next(
+        self,
+        state: AgentLoopState,
+        rag_ctx: str,
+        max_steps: int,
+    ) -> AgentLoopDecision:
+        prompt = self._build_agent_loop_decision_prompt(state, rag_ctx, max_steps)
+        try:
+            raw = self.synthesizer.invoke(prompt)
+            return parse_coordinator_decision(raw)
+        except Exception as exc:
+            logger.warning("Agent loop coordinator decision failed; using fallback: %s", exc)
+            return fallback_next_decision(state)
+
+    def solve_agent_loop(
+        self,
+        question: str,
+        top_k: int = 6,
+        memory: SharedMemory | None = None,
+        max_steps: int = 8,
+        conditions: list[BaseCondition] | None = None,
+    ) -> WorkflowResult:
+        """Conversation-driven dynamic agent loop coordinated by DeepSeek."""
+        mem = self._get_stm(memory)
+        rag_ctx = self._rag_context(question, top_k)
+        errors: list[str] = []
+        state = AgentLoopState(question=question, errors=errors)
+        token_budget = TokenBudgetCondition(max_total_tokens=200000)
+        timeout = TimeoutCondition(timeout_seconds=600.0)
+        timeout.start()
+        active_conditions: list[BaseCondition] = [token_budget, timeout]
+        if conditions:
+            active_conditions.extend(conditions)
+        started_at = time_module.monotonic()
+
+        model_out = ""
+        prog_out = ""
+        write_out = ""
+        synth_out = ""
+
+        def loop_contexts(decision: AgentLoopDecision) -> dict[str, str]:
+            contexts: dict[str, str] = {
+                "协调者指令": decision.instruction or decision.reason or "Continue the workflow.",
+            }
+            if state.trace:
+                contexts["动态循环轨迹"] = state.trace_text(max_chars=5000)
+            for role, label in [
+                ("explore", "探索记录"),
+                ("modeling", "建模方案"),
+                ("programming", "编程方案"),
+                ("code_debugger", "代码审查"),
+                ("reviewer", "评审意见"),
+                ("writing", "写作方案"),
+                ("synthesizer", "已有整合"),
+            ]:
+                if state.has(role):
+                    contexts[label] = state.latest(role)
+            return contexts
+
+        def build_step_prompt(decision: AgentLoopDecision, agent_role: str) -> str:
+            return self._build_prompt(
+                question,
+                self._get_stm_context(mem, compressed_only=True),
+                rag_ctx,
+                loop_contexts(decision),
+                agent_role=agent_role,
+                inject_skills=False,
+            )
+
+        def review_target(decision: AgentLoopDecision) -> tuple[str, str, str]:
+            aliases = {
+                "model": "modeling",
+                "modeler": "modeling",
+                "program": "programming",
+                "programmer": "programming",
+                "debug": "code_debugger",
+                "code_debugger": "code_debugger",
+                "write": "writing",
+                "writer": "writing",
+                "synthesize": "synthesizer",
+                "synthesizer": "synthesizer",
+            }
+            key = aliases.get(decision.target_agent.strip().lower(), "")
+            if not key or not state.has(key):
+                for candidate in ("writing", "programming", "modeling", "synthesizer", "code_debugger"):
+                    if state.has(candidate):
+                        key = candidate
+                        break
+            labels = {
+                "modeling": "建模智能体",
+                "programming": "编程智能体",
+                "code_debugger": "代码审查智能体",
+                "writing": "写作智能体",
+                "synthesizer": "总控智能体",
+            }
+            return key, labels.get(key, key or "未知输出"), state.latest(key)
+
+        for step in range(1, max_steps + 1):
+            stop_reason = self._check_conditions(
+                active_conditions,
+                mem,
+                step - 1,
+                timeout.elapsed,
+            )
+            if stop_reason:
+                errors.append(stop_reason)
+                synth_out = synth_out or stop_reason
+                break
+
+            decision = self._decide_agent_loop_next(state, rag_ctx, max_steps)
+            if decision.action not in ACTION_TO_ROLE and decision.action not in {"ask_user", "final"}:
+                decision = fallback_next_decision(state)
+
+            if decision.action == "final":
+                synth_out = (
+                    synth_out
+                    or state.latest("synthesizer")
+                    or decision.instruction
+                    or state.latest("writing")
+                    or state.latest("programming")
+                    or state.latest("modeling")
+                )
+                break
+
+            role = ACTION_TO_ROLE.get(decision.action, "synthesizer")
+            triggered_by = state.trace[-1].role if state.trace else ""
+            output = ""
+            should_stop = False
+
+            if decision.action == "explore":
+                output = decision.instruction or decision.reason or "Explore the problem context before specialist work."
+                self._post(mem, "explore", output, triggered_by=triggered_by)
+                state.record_output("explore", output)
+
+            elif decision.action == "model":
+                output = self._safe_invoke(
+                    self.modeler,
+                    build_step_prompt(decision, "modeler"),
+                    "modeling",
+                    mem,
+                    errors,
+                    triggered_by=triggered_by,
+                    token_budget=token_budget,
+                )
+                model_out = output
+                state.record_output("modeling", output)
+
+            elif decision.action == "program":
+                output = self._safe_invoke(
+                    self.programmer,
+                    build_step_prompt(decision, "programmer"),
+                    "programming",
+                    mem,
+                    errors,
+                    triggered_by=triggered_by,
+                    token_budget=token_budget,
+                )
+                prog_out = output
+                state.record_output("programming", output)
+
+            elif decision.action == "debug":
+                output = self._safe_invoke(
+                    self.code_debugger,
+                    build_step_prompt(decision, "code_debugger"),
+                    "code_debugger",
+                    mem,
+                    errors,
+                    triggered_by=triggered_by or "programming",
+                    token_budget=token_budget,
+                )
+                state.record_output("code_debugger", output)
+                base_program = state.latest("programming")
+                prog_out = (
+                    f"{base_program}\n\n## Code Review\n\n{output}"
+                    if base_program else output
+                )
+                state.record_output("programming", prog_out)
+
+            elif decision.action == "write":
+                output = self._safe_invoke(
+                    self.writer,
+                    build_step_prompt(decision, "writer"),
+                    "writing",
+                    mem,
+                    errors,
+                    triggered_by=triggered_by,
+                    token_budget=token_budget,
+                )
+                write_out = output
+                state.record_output("writing", output)
+
+            elif decision.action == "review":
+                target_key, target_label, target_output = review_target(decision)
+                try:
+                    output = self.reviewer.review(target_label, target_output, question)
+                    usage = getattr(self.reviewer, "last_usage", {})
+                    self._post(
+                        mem,
+                        "reviewer",
+                        output,
+                        triggered_by=target_key,
+                        usage=usage,
+                    )
+                    token_budget.add_usage(
+                        usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0),
+                    )
+                except Exception as exc:
+                    err_msg = f"[reviewer] 执行失败: {exc}"
+                    logger.warning(err_msg)
+                    errors.append(err_msg)
+                    output = f"[reviewer 因错误未能完成: {exc}]"
+                    self._post(mem, "reviewer", output, triggered_by=target_key)
+                state.record_output("reviewer", output)
+
+            elif decision.action == "synthesize":
+                output = self._safe_invoke(
+                    self.synthesizer,
+                    build_step_prompt(decision, "synthesizer"),
+                    "synthesizer",
+                    mem,
+                    errors,
+                    triggered_by=triggered_by,
+                    token_budget=token_budget,
+                )
+                synth_out = output
+                state.record_output("synthesizer", output)
+
+            elif decision.action == "ask_user":
+                output = decision.instruction or decision.reason or "Need user clarification before continuing."
+                self._post(mem, "synthesizer", output, triggered_by=triggered_by)
+                synth_out = output
+                state.record_output("synthesizer", output)
+                should_stop = True
+
+            state.trace.append(
+                AgentLoopTrace(
+                    step=step,
+                    action=decision.action,
+                    role=role,
+                    reason=decision.reason,
+                    instruction=decision.instruction,
+                    output=output,
+                )
+            )
+            mem.advance_round()
+
+            if should_stop:
+                break
+
+        synth_out = (
+            synth_out
+            or state.latest("synthesizer")
+            or state.latest("writing")
+            or state.latest("programming")
+            or state.latest("modeling")
+            or "Agent loop finished without producing a specialist output."
+        )
+
+        self._maybe_archive(question, synth_out)
+        result = WorkflowResult(
+            question=question,
+            modeling=StageResult("建模智能体", model_out),
+            programming=StageResult("编程智能体", prog_out),
+            writing=StageResult("写作智能体", write_out),
+            synthesis=synth_out,
+            memory=mem,
+            errors=errors,
+            total_prompt_tokens=token_budget.accumulated,
+            total_completion_tokens=0,
+            elapsed_seconds=time_module.monotonic() - started_at,
+            agent_loop_trace=state.trace,
+        )
+        self._reset_conditions(active_conditions)
+        return self._finalize_workflow(result)
+
     def solve_with_plan(
         self,
         question: str,
@@ -700,7 +1180,7 @@ class Orchestrator:
         self._maybe_archive(question, synth_out)
         self._reset_conditions(active_conditions)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -711,7 +1191,7 @@ class Orchestrator:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))
 
     # ═════════════════════════════════════════════════════════════════
     # 策略一：串行流水线
@@ -778,7 +1258,7 @@ class Orchestrator:
 
         self._maybe_archive(question, synth_out)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -789,7 +1269,7 @@ class Orchestrator:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))
 
     # ═════════════════════════════════════════════════════════════════
     # 策略二：带评审反思的深度协作（集成终止条件）
@@ -929,7 +1409,7 @@ class Orchestrator:
         self._maybe_archive(question, synth_out)
         self._reset_conditions(active_conditions)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out, model_review, mem.round_idx),
             programming=StageResult("编程智能体", prog_out, prog_review, mem.round_idx),
@@ -940,7 +1420,7 @@ class Orchestrator:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))
 
     # ---- 评审辅助 ----
 
@@ -1033,7 +1513,7 @@ class Orchestrator:
 
         self._maybe_archive(question, synth_out)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1044,7 +1524,7 @@ class Orchestrator:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))
 
     # ═════════════════════════════════════════════════════════════════
     # 策略四：流式串行
@@ -1114,7 +1594,7 @@ class Orchestrator:
 
         self._maybe_archive(question, synth_out)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1125,7 +1605,7 @@ class Orchestrator:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))
 
     # ═════════════════════════════════════════════════════════════════
     # 流式变体（review / parallel）
@@ -1263,7 +1743,7 @@ class Orchestrator:
         self._maybe_archive(question, synth_out)
         self._reset_conditions(active_conditions)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out, model_review, mem.round_idx),
             programming=StageResult("编程智能体", prog_out, prog_review, mem.round_idx),
@@ -1271,7 +1751,7 @@ class Orchestrator:
             synthesis=synth_out, memory=mem, errors=errors,
             total_prompt_tokens=token_budget.accumulated, total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))
 
     def solve_parallel_stream(
         self,
@@ -1354,7 +1834,7 @@ class Orchestrator:
 
         self._maybe_archive(question, synth_out)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1362,10 +1842,10 @@ class Orchestrator:
             synthesis=synth_out, memory=mem, errors=errors,
             total_prompt_tokens=token_budget.accumulated, total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))
 
     # ═════════════════════════════════════════════════════════════════
-    # 策略五：先探索后求解 (Exploration-First) — 自动并行子智能体
+    # 策略五：动态 Agentic 循环 — 协调者自主决策每一步
     # ═════════════════════════════════════════════════════════════════
 
     def solve_explore(
@@ -1376,204 +1856,136 @@ class Orchestrator:
         enable_data_engineer: bool = False,
         conditions: list[BaseCondition] | None = None,
     ) -> WorkflowResult:
-        """Exploration-first strategy — orchestrator 自主决策探索策略。
+        """先探索后求解：并行本地探索 + 文献调研 → 串行建模 → 编程 → 审码 → 写作 → 总控。
 
-        与之前的手动探索不同，此策略自动执行：
-        Phase 1 - Auto Explore: 编排器自动判断需要什么信息，并发派生
-          explore + research 子智能体去获取。无需人工指定探索步骤。
-        Phase 2 - Synthesize: 整合所有发现为结构化报告。
-        Phase 3 - Solve: 各阶段智能体基于富上下文自主选择最合适的模型/方法。
-
-        这模拟了 Claude Code 的自主探索模式：agent 看到问题 → 自己判断
-        需要查什么 → 并行搜索 → 合成结果 → 解决问题。
+        固定两阶段流水线，避免协调者反复选「探索」或误判「已完成」。
         """
+        del conditions  # reserved for future termination hooks
+
         mem = self._get_stm(memory)
         rag_ctx = self._rag_context(question, top_k)
         errors: list[str] = []
         token_budget = TokenBudgetCondition(max_total_tokens=200000)
-        timeout = TimeoutCondition(timeout_seconds=600.0)
-        timeout.start()
         started_at = time_module.monotonic()
 
-        active_conditions: list[BaseCondition] = [
-            TokenBudgetCondition(max_total_tokens=200000),
-            timeout,
-        ]
-        if conditions:
-            active_conditions.extend(conditions)
+        # ── Phase 1: 并行探索（仅一次）────────────────────────────────
+        logger.info("[Explore] 阶段 1/2：并行探索与调研")
+        from .subagent import spawn_parallel
 
-        # ── Phase 0: Meta-decision — 编排器分析问题，决定探索策略 ──
-        logger.info("[Explore] 分析问题，决定探索策略...")
-
-        analysis_prompt = f"""分析以下建模问题，决定需要什么信息才能解决它。
-只做分析，不求解。
-
-问题：{question}
-
-判断以下每项是否需要（回答"需要"或"不需要"）：
-1. 项目文件探索（已有代码/数据？）：
-2. 网络文献调研（最新方法/论文？）：
-3. 领域专业知识加载（特定模型理论？）：
-
-然后用一句话说明探索重点。"""
-
-        analysis = self._safe_invoke(
-            self.synthesizer, analysis_prompt, "meta_planner", mem, errors,
-            triggered_by="", token_budget=token_budget,
-        )
-        need_explore = "需要" in analysis.split("1.")[-1].split("2.")[0] if "1." in analysis else True
-        need_research = "需要" in analysis.split("2.")[-1].split("3.")[0] if "2." in analysis else True
-
-        # ── Phase 1: Autonomous parallel exploration ─────────────────
-        logger.info("[Explore] 开始自主并行探索...")
-
-        from .subagent import _run_subagent, SUBAGENT_TYPES
-
-        # 1a. Resolve skills (always needed)
-        exploration_skills = resolve_agent_skills(
-            question, "synthesizer", skill_registry=self.skill_registry,
-        )
-
-        # 1b. Prepare subagent tasks based on meta-analysis
-        subagent_tasks: list[tuple[str, str]] = []
-
-        if need_explore:
-            explore_task = f"""探索项目中与以下问题相关的代码、数据和文件：
-"{question}"
-
-请搜索：
-- 项目中是否有与问题主题相关的 .py 文件或数据文件
-- agent_app/ 和项目根目录中是否有可复用的建模代码或工具
-- output/ 目录中是否有之前的求解结果或生成文件
-- 项目中 .md 文档中的相关记录
-
-用 search_files, search_content, read_file 来探索。
-报告你找到了什么和没找到什么。控制在 3000 字符内。"""
-            subagent_tasks.append(("explore", explore_task))
-
-        if need_research:
-            research_task = f"""为以下数学建模问题搜索参考资料：
-"{question}"
-
-请执行以下搜索：
-1. 用 web_search 搜索该问题的标准建模方法和最新解法
-2. 用 search_arxiv 或 search_semantic_scholar 搜索相关学术论文
-3. 如果搜索到关键资料，用 web_fetch 查看详情
-
-报告关键发现：推荐的方法、参考实现、注意事项。控制在 5000 字符内。"""
-            subagent_tasks.append(("research", research_task))
-
-        # 1c. Run subagents in parallel (like Claude Code's Agent tool)
-        explore_report = ""
-        research_report = ""
-
-        if subagent_tasks:
-            llm = self.synthesizer.llm  # Use the same LLM instance
-            from .subagent import spawn_parallel
-            results = spawn_parallel(subagent_tasks, llm)
-
-            idx = 0
-            if need_explore:
-                explore_report = results[idx]
-                idx += 1
-            if need_research:
-                research_report = results[idx]
-
-        # Record LTM context
-        ltm_context = (
-            self.memory.recall(question, top_k=5)
-            if self.memory else "暂无长期记忆。"
-        )
-
-        # ── Phase 2: Synthesize exploration findings ─────────────────
-        logger.info("[Explore] 整合探索发现...")
-
-        synthesis_prompt = self._build_prompt(
-            question,
-            "", "",
-            {
-                "项目文件探索结果": explore_report or "（跳过）",
-                "网络文献调研结果": research_report or "（跳过）",
-                "RAG论文检索": rag_ctx,
-                "长期记忆": ltm_context,
-                "领域专业知识": exploration_skills,
-            },
-            agent_role="synthesizer", inject_skills=True,
-        )
-
-        synthesis_result = self._safe_invoke(
-            self.synthesizer,
-            synthesis_prompt + "\n\n请将以上所有探索发现整合为一份结构化的「探索报告」，包含：\n"
-            "## 探索报告\n"
-            "### 1. 问题核心与难点\n"
-            "### 2. 推荐模型与理由（基于找到的资料）\n"
-            "### 3. 项目中的可复用资源\n"
-            "### 4. 外部参考文献\n"
-            "### 5. 求解策略建议",
-            "explorer", mem, errors,
-            triggered_by="subagents", token_budget=token_budget,
-        )
-
-        # ── Phase 3: Autonomous solving ──────────────────────────────
-        logger.info("[Explore] 基于探索结果自主求解...")
-
-        data_ctx, data_out = "", ""
-        if enable_data_engineer:
-            data_out = self._safe_invoke(
-                self.data_engineer,
-                self._build_prompt(question, "", rag_ctx,
-                                   {"探索报告": synthesis_result} if not data_ctx else {"探索报告": synthesis_result, "数据预处理结果": data_out},
-                                   agent_role="data_engineer", inject_skills=True),
-                "data_engineer", mem, errors, token_budget=token_budget,
+        explore_bundle = ""
+        try:
+            explore_results = spawn_parallel(
+                [
+                    (
+                        "explore",
+                        f"在项目中搜索与「{question}」相关的代码、数据、文档与历史产出，"
+                        "列出具体路径和关键发现。",
+                    ),
+                    (
+                        "research",
+                        f"检索「{question}」的数学建模背景、常用模型、约束与参考文献。",
+                    ),
+                ],
+                self.synthesizer.llm,
             )
-            data_ctx = f"\n\n数据预处理结果：\n{data_out}"
+            explore_bundle = (
+                f"## 本地探索\n{explore_results[0]}\n\n"
+                f"## 文献与网络调研\n{explore_results[1]}"
+            )
+            logger.info("[Explore] 探索完成（%d 字符）", len(explore_bundle))
+        except Exception as exc:
+            err = f"[探索阶段] {exc}"
+            logger.warning(err)
+            errors.append(err)
+            explore_bundle = "（探索阶段失败，将直接基于题目与 RAG 求解）"
 
-        extra = {"探索报告": synthesis_result}
-        if data_ctx:
-            extra["数据预处理结果"] = data_out
-        model_in = self._build_prompt(question, "", rag_ctx, extra,
-                                      agent_role="modeler", inject_skills=True)
-        model_out = self._safe_invoke(self.modeler, model_in, "modeling", mem, errors,
-                                      token_budget=token_budget)
+        self._post(mem, "explore", explore_bundle[:8000], triggered_by="")
+        mem.advance_round()
+
+        explore_ctx = {"探索与调研摘要": explore_bundle}
+
+        # ── Phase 2: 串行求解（注入探索上下文）────────────────────────
+        logger.info("[Explore] 阶段 2/2：建模 → 编程 → 审码 → 写作 → 整合")
+
+        data_out = ""
+        if enable_data_engineer:
+            data_in = self._build_prompt(
+                question, "", rag_ctx, explore_ctx,
+                agent_role="data_engineer", inject_skills=True,
+            )
+            data_out = self._safe_invoke(
+                self.data_engineer, data_in, "data_engineer", mem, errors,
+                token_budget=token_budget,
+            )
+            explore_ctx = {**explore_ctx, "数据预处理结果": data_out}
+
+        model_in = self._build_prompt(
+            question, "", rag_ctx, explore_ctx,
+            agent_role="modeler", inject_skills=True,
+        )
+        model_out = self._safe_invoke(
+            self.modeler, model_in, "modeling", mem, errors, token_budget=token_budget,
+        )
         mem.advance_round()
 
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
-        prog_in = self._build_prompt(question, stm_ctx, rag_ctx,
-                                     {"建模方案": model_out, "探索报告": synthesis_result},
-                                     agent_role="programmer", inject_skills=True)
-        prog_out = self._safe_invoke(self.programmer, prog_in, "programming", mem, errors,
-                                     triggered_by="modeling", token_budget=token_budget)
+        prog_in = self._build_prompt(
+            question, stm_ctx, rag_ctx,
+            {**explore_ctx, "建模方案": model_out},
+            agent_role="programmer", inject_skills=True,
+        )
+        prog_out = self._safe_invoke(
+            self.programmer, prog_in, "programming", mem, errors,
+            triggered_by="modeling", token_budget=token_budget,
+        )
 
         debug_out = self._safe_invoke(
             self.code_debugger,
-            self._build_prompt(question, self._get_stm_context(mem, compressed_only=True), "",
-                               {"编程输出": prog_out[:4000]},
-                               agent_role="code_debugger", inject_skills=True),
+            self._build_prompt(
+                question, self._get_stm_context(mem, compressed_only=True), "",
+                {"编程输出": prog_out[:4000]},
+                agent_role="code_debugger", inject_skills=True,
+            ),
             "code_debugger", mem, errors, triggered_by="programming", token_budget=token_budget,
         )
         mem.advance_round()
 
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
-        write_in = self._build_prompt(question, stm_ctx, rag_ctx, {
-            "建模方案": model_out, "编程方案": prog_out,
-            "代码审查": debug_out, "探索报告": synthesis_result,
-        }, agent_role="writer", inject_skills=True)
-        write_out = self._safe_invoke(self.writer, write_in, "writing", mem, errors,
-                                      triggered_by="code_debugger", token_budget=token_budget)
+        write_in = self._build_prompt(
+            question, stm_ctx, rag_ctx,
+            {
+                **explore_ctx,
+                "建模方案": model_out,
+                "编程方案": prog_out,
+                "代码审查": debug_out,
+            },
+            agent_role="writer", inject_skills=True,
+        )
+        write_out = self._safe_invoke(
+            self.writer, write_in, "writing", mem, errors,
+            triggered_by="code_debugger", token_budget=token_budget,
+        )
         mem.advance_round()
 
         stm_ctx = self._get_stm_context(mem, compressed_only=True)
-        synth_in = self._build_prompt(question, stm_ctx, "", {
-            "建模方案": model_out, "编程方案": prog_out,
-            "写作方案": write_out, "探索报告": synthesis_result,
-        }, agent_role="synthesizer", inject_skills=True)
-        synth_out = self._safe_invoke(self.synthesizer, synth_in, "synthesizer", mem, errors,
-                                      triggered_by="writing", token_budget=token_budget)
+        synth_in = self._build_prompt(
+            question, stm_ctx, "",
+            {
+                "探索与调研": explore_bundle[:6000],
+                "建模方案": model_out,
+                "编程方案": prog_out,
+                "写作方案": write_out,
+            },
+            agent_role="synthesizer", inject_skills=True,
+        )
+        synth_out = self._safe_invoke(
+            self.synthesizer, synth_in, "synthesizer", mem, errors,
+            triggered_by="writing", token_budget=token_budget,
+        )
 
         self._maybe_archive(question, synth_out)
-        self._reset_conditions(active_conditions)
 
-        return WorkflowResult(
+        return self._finalize_workflow(WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1584,4 +1996,4 @@ class Orchestrator:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        )
+        ))

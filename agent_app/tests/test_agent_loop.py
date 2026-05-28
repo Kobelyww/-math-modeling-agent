@@ -6,12 +6,22 @@ import pytest
 
 from agent_app.agent_loop import (
     ACTION_TO_ROLE,
+    AgentLoopDecision,
     AgentLoopState,
     AgentLoopTrace,
     VALID_AGENT_LOOP_ACTIONS,
     parse_coordinator_decision,
     fallback_next_decision,
 )
+from agent_app.memory import SharedMemory
+from agent_app.orchestrator import Orchestrator, WorkflowResult
+
+
+class StubAgent:
+    def __init__(self, role: str, output: str):
+        self.role = role
+        self.output = output
+        self.last_usage = {"prompt_tokens": 1, "completion_tokens": 1}
 
 
 def test_parse_coordinator_decision_accepts_json_object():
@@ -127,3 +137,54 @@ def test_fallback_next_decision_progresses_through_missing_outputs():
 
     state.record_output("synthesizer", "final summary")
     assert fallback_next_decision(state).action == "final"
+
+
+def test_solve_agent_loop_runs_stubbed_dynamic_steps(monkeypatch):
+    orch = Orchestrator.__new__(Orchestrator)
+    orch.memory = None
+    orch.rag = None
+    orch.modeler = StubAgent("modeler", "model output")
+    orch.programmer = StubAgent("programmer", "program output")
+    orch.code_debugger = StubAgent("code_debugger", "debug output")
+    orch.writer = StubAgent("writer", "writing output")
+    orch.reviewer = StubAgent("reviewer", "review output")
+    orch.synthesizer = StubAgent("synthesizer", "synthesis output")
+    orch.data_engineer = StubAgent("data_engineer", "data output")
+    orch.planner = StubAgent("planner", "planner output")
+
+    decisions = iter([
+        AgentLoopDecision("model", "Need a model", "modeler", "model now"),
+        AgentLoopDecision("program", "Need code", "programmer", "code now"),
+        AgentLoopDecision("debug", "Check code", "code_debugger", "debug now"),
+        AgentLoopDecision("write", "Need paper", "writer", "write now"),
+        AgentLoopDecision("synthesize", "Wrap up", "synthesizer", "summarize now"),
+        AgentLoopDecision("final", "Done", "synthesizer", ""),
+    ])
+
+    monkeypatch.setattr(orch, "_rag_context", lambda question, top_k=6: "rag context")
+    monkeypatch.setattr(orch, "_get_stm", lambda memory=None: memory or SharedMemory())
+    monkeypatch.setattr(orch, "_get_stm_context", lambda mem, max_tokens=3000, compressed_only=False: "")
+    monkeypatch.setattr(
+        orch,
+        "_decide_agent_loop_next",
+        lambda state, rag_ctx, max_steps: next(decisions),
+        raising=False,
+    )
+    monkeypatch.setattr(orch, "_finalize_workflow", lambda result: result)
+    monkeypatch.setattr(orch, "_maybe_archive", lambda question, result_summary: None)
+
+    def fake_safe_invoke(agent, prompt, role_label, stm, errors, **kwargs):
+        output = agent.output
+        stm.post(role_label, output)
+        return output
+
+    monkeypatch.setattr(orch, "_safe_invoke", fake_safe_invoke)
+
+    result = orch.solve_agent_loop("build a traffic model", max_steps=8)
+
+    assert isinstance(result, WorkflowResult)
+    assert result.modeling.content == "model output"
+    assert result.programming.content == "program output\n\n## Code Review\n\ndebug output"
+    assert result.writing.content == "writing output"
+    assert result.synthesis == "synthesis output"
+    assert len(result.agent_loop_trace) == 5
