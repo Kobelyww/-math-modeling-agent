@@ -72,7 +72,6 @@ class WorkflowResult:
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     elapsed_seconds: float = 0.0
-    build_log: str = ""
     agent_loop_trace: list[AgentLoopTrace] = field(default_factory=list)
 
     @property
@@ -92,17 +91,10 @@ class WorkflowResult:
         )
 
     def to_dict(self) -> dict:
-        def _stage_to_dict(s):
-            if s is None:
-                return None
-            return {"role": s.role, "content": s.content,
-                    "review_feedback": s.review_feedback, "round_idx": s.round_idx}
-
         return {
-            "question": self.question,
-            "modeling": _stage_to_dict(self.modeling),
-            "programming": _stage_to_dict(self.programming),
-            "writing": _stage_to_dict(self.writing),
+            "modeling": self.modeling,
+            "programming": self.programming,
+            "writing": self.writing,
             "synthesis": self.synthesis,
             "errors": self.errors,
             "total_prompt_tokens": self.total_prompt_tokens,
@@ -150,9 +142,10 @@ class WorkflowResult:
             f"费用估算：${self.estimated_cost_usd:.4f}",
             f"耗时：{self.elapsed_seconds:.1f}s",
         ]
-        if self.build_log:
+        build_log = getattr(self, "build_log", "")
+        if build_log:
             lines.append("")
-            lines.append(self.build_log)
+            lines.append(build_log)
         if self.errors:
             lines.append("")
             lines.append("【错误】")
@@ -341,7 +334,7 @@ class Orchestrator:
     def _finalize_workflow(self, result: WorkflowResult) -> WorkflowResult:
         """工作流结束后自动落盘、执行代码并编译 LaTeX。"""
         try:
-            result.build_log = self._save_outputs(result)
+            setattr(result, "build_log", self._save_outputs(result))
         except Exception as exc:
             logger.warning("Failed to save workflow outputs: %s", exc)
             result.errors.append(f"[输出保存] {exc}")
@@ -386,22 +379,8 @@ class Orchestrator:
             _label = role_label
             _on_thinking = lambda t, lbl=_label: self.on_agent_thinking(t, lbl)
 
-        agent_tools = self._resolve_agent_tools(agent, role_label)
-        use_tools = len(agent_tools) > 0
-        max_rounds = self._max_tool_rounds(agent, role_label)
-
         try:
-            if use_tools:
-                # Tool-calling mode: agent can search web, read files, spawn subagents, etc.
-                result = agent.invoke_with_tools(
-                    prompt, tools=agent_tools, max_tool_rounds=max_rounds,
-                )
-                # Also stream through callbacks for real-time display
-                if _on_token:
-                    for chunk in [result[i:i+20] for i in range(0, len(result), 20)]:
-                        _on_token(chunk)
-            else:
-                result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
+            result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
             usage = agent.last_usage
             self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
             if token_budget:
@@ -431,33 +410,6 @@ class Orchestrator:
         if _on_thinking is None and self.on_agent_thinking:
             _label = role_label
             _on_thinking = lambda t, lbl=_label: self.on_agent_thinking(t, lbl)
-
-        agent_tools = self._resolve_agent_tools(agent, role_label)
-        if agent_tools:
-            try:
-                result = agent.invoke_with_tools(
-                    prompt,
-                    tools=agent_tools,
-                    max_tool_rounds=self._max_tool_rounds(agent, role_label),
-                )
-                if _on_token:
-                    for i in range(0, len(result), 20):
-                        _on_token(result[i : i + 20])
-                usage = agent.last_usage
-                self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
-                if token_budget:
-                    token_budget.add_usage(
-                        usage.get("prompt_tokens", 0),
-                        usage.get("completion_tokens", 0),
-                    )
-                return result
-            except Exception as exc:
-                err_msg = f"[{role_label}] 执行失败: {exc}"
-                logger.warning(err_msg)
-                errors.append(err_msg)
-                fallback = f"[{role_label} 因错误未能完成: {exc}]"
-                self._post(stm, role_label, fallback, triggered_by=triggered_by)
-                return fallback
 
         try:
             result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
@@ -588,8 +540,40 @@ class Orchestrator:
             lines.append("✅ final_synthesis.md")
 
         # ── 5. Full result JSON ────────────────────────────────────
+        def _stage_to_json(stage: StageResult) -> dict:
+            return {
+                "role": stage.role,
+                "content": stage.content,
+                "review_feedback": stage.review_feedback,
+                "round_idx": stage.round_idx,
+            }
+
+        jsonable_result = {
+            "question": result.question,
+            "modeling": _stage_to_json(result.modeling),
+            "programming": _stage_to_json(result.programming),
+            "writing": _stage_to_json(result.writing),
+            "synthesis": result.synthesis,
+            "errors": result.errors,
+            "total_prompt_tokens": result.total_prompt_tokens,
+            "total_completion_tokens": result.total_completion_tokens,
+            "total_tokens": result.total_tokens,
+            "estimated_cost_usd": round(result.estimated_cost_usd, 6),
+            "elapsed_seconds": round(result.elapsed_seconds, 1),
+            "agent_loop_trace": [
+                {
+                    "step": trace.step,
+                    "action": trace.action,
+                    "role": trace.role,
+                    "reason": trace.reason,
+                    "instruction": trace.instruction,
+                    "output": trace.output,
+                }
+                for trace in result.agent_loop_trace
+            ],
+        }
         (out / "workflow_result.json").write_text(
-            json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            json.dumps(jsonable_result, ensure_ascii=False, indent=2), encoding="utf-8")
         lines.append("✅ workflow_result.json")
         lines.append("═" * 50)
 
@@ -1180,7 +1164,7 @@ Loop trace:
         self._maybe_archive(question, synth_out)
         self._reset_conditions(active_conditions)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1191,7 +1175,7 @@ Loop trace:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
 
     # ═════════════════════════════════════════════════════════════════
     # 策略一：串行流水线
@@ -1258,7 +1242,7 @@ Loop trace:
 
         self._maybe_archive(question, synth_out)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1269,7 +1253,7 @@ Loop trace:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
 
     # ═════════════════════════════════════════════════════════════════
     # 策略二：带评审反思的深度协作（集成终止条件）
@@ -1409,7 +1393,7 @@ Loop trace:
         self._maybe_archive(question, synth_out)
         self._reset_conditions(active_conditions)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out, model_review, mem.round_idx),
             programming=StageResult("编程智能体", prog_out, prog_review, mem.round_idx),
@@ -1420,7 +1404,7 @@ Loop trace:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
 
     # ---- 评审辅助 ----
 
@@ -1513,7 +1497,7 @@ Loop trace:
 
         self._maybe_archive(question, synth_out)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1524,7 +1508,7 @@ Loop trace:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
 
     # ═════════════════════════════════════════════════════════════════
     # 策略四：流式串行
@@ -1594,7 +1578,7 @@ Loop trace:
 
         self._maybe_archive(question, synth_out)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1605,7 +1589,7 @@ Loop trace:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
 
     # ═════════════════════════════════════════════════════════════════
     # 流式变体（review / parallel）
@@ -1743,7 +1727,7 @@ Loop trace:
         self._maybe_archive(question, synth_out)
         self._reset_conditions(active_conditions)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out, model_review, mem.round_idx),
             programming=StageResult("编程智能体", prog_out, prog_review, mem.round_idx),
@@ -1751,7 +1735,7 @@ Loop trace:
             synthesis=synth_out, memory=mem, errors=errors,
             total_prompt_tokens=token_budget.accumulated, total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
 
     def solve_parallel_stream(
         self,
@@ -1834,7 +1818,7 @@ Loop trace:
 
         self._maybe_archive(question, synth_out)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1842,7 +1826,7 @@ Loop trace:
             synthesis=synth_out, memory=mem, errors=errors,
             total_prompt_tokens=token_budget.accumulated, total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
 
     # ═════════════════════════════════════════════════════════════════
     # 策略五：动态 Agentic 循环 — 协调者自主决策每一步
@@ -1985,7 +1969,7 @@ Loop trace:
 
         self._maybe_archive(question, synth_out)
 
-        return self._finalize_workflow(WorkflowResult(
+        return WorkflowResult(
             question=question,
             modeling=StageResult("建模智能体", model_out),
             programming=StageResult("编程智能体", prog_out),
@@ -1996,4 +1980,4 @@ Loop trace:
             total_prompt_tokens=token_budget.accumulated,
             total_completion_tokens=0,
             elapsed_seconds=time_module.monotonic() - started_at,
-        ))
+        )
