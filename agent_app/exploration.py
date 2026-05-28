@@ -429,6 +429,43 @@ def _extract_text_from_html(html_bytes: bytes) -> str:
 # Tool Registry
 # ============================================================================
 
+@tool
+def write_file(filepath: str, content: str) -> str:
+    """Write content to a file. Creates parent directories if needed.
+
+    Use this to save your output as actual files on disk. The filepath
+    should include the extension (.py, .tex, .md, .txt, etc).
+    Files are saved under agent_app/output/ (supports subdirs like figures/plot.png).
+
+    Args:
+        filepath: Filename or relative path (e.g., 'solve.py', 'figures/plot.png')
+        content: Full file content to write
+
+    Returns:
+        Confirmation with file path and size.
+
+    Example: write_file('solve.py', 'import numpy\\nprint("hello")')
+    Example: write_file('paper.tex', '\\\\documentclass{article}...')
+    """
+    from .config import APP_ROOT
+
+    out_dir = (APP_ROOT / "output").resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    rel = Path(filepath.strip().replace("\\", "/").lstrip("/"))
+    if not rel.name or ".." in rel.parts:
+        return f"Invalid filepath: {filepath}"
+
+    path = (out_dir / rel).resolve()
+    if not str(path).startswith(str(out_dir)):
+        return f"Invalid filepath: {filepath}"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content.strip() + "\n", encoding="utf-8")
+    display = path.relative_to(out_dir)
+    return f"Written: {display} ({path.stat().st_size} bytes) to output/"
+
+
 EXPLORATION_TOOLS = [
     read_file,
     search_files,
@@ -436,6 +473,7 @@ EXPLORATION_TOOLS = [
     list_directory,
     web_search,
     web_fetch,
+    write_file,
 ]
 
 _all_tool_names = [t.name for t in EXPLORATION_TOOLS]

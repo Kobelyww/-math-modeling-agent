@@ -408,12 +408,16 @@ def writing_rules() -> str:
 
 # ===================== tool list =====================
 
+from .exploration import EXPLORATION_TOOLS, write_file  # noqa: E402
+from .subagent import spawn_subagent  # noqa: E402
+
 TOOLS = [
     calculator,
     current_time,
     save_note,
     read_note,
     list_notes,
+    write_file,
     python_exec,
     read_csv_info,
     pip_install,
@@ -428,9 +432,5 @@ TOOLS = [
     model_reference,
     writing_rules,
 ]
-
-# Extended tool list including exploration and subagent tools
-from .exploration import EXPLORATION_TOOLS  # noqa: E402
-from .subagent import spawn_subagent  # noqa: E402
 
 TOOLS_FULL = TOOLS + EXPLORATION_TOOLS + [spawn_subagent]
