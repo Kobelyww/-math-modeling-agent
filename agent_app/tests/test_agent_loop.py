@@ -265,3 +265,36 @@ def test_cli_solve_dispatches_agent_loop(monkeypatch):
 
     assert called["question"] == "traffic task"
     assert called["printed"] == "s"
+
+
+def test_web_default_strategy_is_agent_loop():
+    from agent_app.web.routes import DEFAULT_SOLVE_STRATEGY
+
+    assert DEFAULT_SOLVE_STRATEGY == "agent_loop"
+
+
+def test_web_solver_selector_supports_agent_loop():
+    from agent_app.web.routes import _select_solver_for_strategy
+
+    class FakeOrchestrator:
+        def solve_agent_loop(self):
+            return "agent_loop"
+
+        def solve_stream(self):
+            return "stream"
+
+        def solve_with_review_stream(self):
+            return "review"
+
+        def solve_parallel_stream(self):
+            return "parallel"
+
+    solver = _select_solver_for_strategy(FakeOrchestrator(), "agent_loop")
+
+    assert solver.__name__ == "solve_agent_loop"
+
+
+def test_gui_default_mode_is_agent_loop():
+    from agent_app.gui import COLLABORATION_MODES
+
+    assert COLLABORATION_MODES[0] == "agent_loop"

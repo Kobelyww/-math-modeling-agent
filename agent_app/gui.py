@@ -36,6 +36,7 @@ from .tools import TOOLS
 KNOWLEDGE_DIR = APP_ROOT.parent / "knowledge_base"
 DATA_DIR = APP_ROOT / "data"
 INDEX_PATH = DATA_DIR / "rag_index.pkl"
+COLLABORATION_MODES = ["agent_loop", "sequential", "review", "parallel"]
 
 # ---------------------------------------------------------------------------
 # launch helpers
@@ -138,13 +139,14 @@ def _sidebar():
 
     mode = st.sidebar.selectbox(
         "协作策略",
-        options=["sequential", "review", "parallel"],
+        options=COLLABORATION_MODES,
         format_func=lambda m: {
+            "agent_loop": "Agent Loop（动态对话驱动）",
             "sequential": "串行流水线",
             "review": "深度反思",
             "parallel": "快速并行",
         }.get(m, m),
-        help="sequential=建模→编程→写作→总控 | review=每阶段评审后修改 | parallel=建模先行，编程+写作并行",
+        help="agent_loop=动态选择下一步 | sequential=建模→编程→写作→总控 | review=每阶段评审后修改 | parallel=建模先行，编程+写作并行",
     )
 
     review_rounds = 1
@@ -242,7 +244,9 @@ def _tab_collaboration(mode: str, review_rounds: int, top_k: int):
 
         # ---- non-streaming modes ----
         with st.spinner(f"智能体协作中（模式：{mode}）..."):
-            if mode == "sequential":
+            if mode == "agent_loop":
+                result = orch.solve_agent_loop(question, top_k=top_k)
+            elif mode == "sequential":
                 result = orch.solve_sequential(question, top_k=top_k)
             elif mode == "review":
                 result = orch.solve_with_review(question, top_k=top_k, max_review_rounds=review_rounds)

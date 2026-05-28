@@ -26,6 +26,7 @@ TEMPLATES_DIR = WEB_DIR / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 router = APIRouter()
+DEFAULT_SOLVE_STRATEGY = "agent_loop"
 
 _settings = load_settings()
 DATA_DIR = APP_ROOT / "data"
@@ -66,7 +67,7 @@ async def index(request: Request):
 async def solve(data: dict):
     """启动协作分析任务，返回 task_id 供 WebSocket 连接。"""
     question = data.get("question", "").strip()
-    strategy = data.get("strategy", "sequential")
+    strategy = data.get("strategy", DEFAULT_SOLVE_STRATEGY)
     top_k = data.get("top_k", 6)
 
     if not question:
@@ -76,6 +77,16 @@ async def solve(data: dict):
 
     asyncio.create_task(_run_solve(task_id, question, strategy, top_k))
     return {"task_id": task_id, "status": "started"}
+
+
+def _select_solver_for_strategy(orch: Orchestrator, strategy: str):
+    if strategy == "agent_loop":
+        return orch.solve_agent_loop
+    if strategy == "review":
+        return orch.solve_with_review_stream
+    if strategy == "parallel":
+        return orch.solve_parallel_stream
+    return orch.solve_stream
 
 
 async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
@@ -93,11 +104,12 @@ async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
 
     try:
         await ws.send_json({"type": "start", "task_id": task_id, "strategy": strategy})
+        solver = _select_solver_for_strategy(_orch, strategy)
 
         if strategy == "review":
             result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    _orch.solve_with_review_stream,
+                    solver,
                     question, top_k=top_k,
                     on_modeling_token=on_m, on_programming_token=on_p,
                     on_writing_token=on_w, on_synthesis_token=on_s,
@@ -107,17 +119,22 @@ async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
         elif strategy == "parallel":
             result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    _orch.solve_parallel_stream,
+                    solver,
                     question, top_k=top_k,
                     on_modeling_token=on_m, on_programming_token=on_p,
                     on_writing_token=on_w, on_synthesis_token=on_s,
                 ),
                 timeout=SOLVE_TASK_TIMEOUT,
             )
+        elif strategy == "agent_loop":
+            result = await asyncio.wait_for(
+                asyncio.to_thread(solver, question, top_k=top_k),
+                timeout=SOLVE_TASK_TIMEOUT,
+            )
         else:
             result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    _orch.solve_stream,
+                    solver,
                     question, top_k=top_k,
                     on_modeling_token=on_m, on_programming_token=on_p,
                     on_writing_token=on_w, on_synthesis_token=on_s,
