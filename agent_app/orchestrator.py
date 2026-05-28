@@ -417,18 +417,9 @@ class Orchestrator:
                      token_budget: TokenBudgetCondition | None = None,
                      on_token: Callable[[str], None] | None = None,
                      on_thinking: Callable[[str], None] | None = None) -> str:
-        """安全调用 agent；有工具时走 ReAct 工具循环，否则流式输出。"""
-        _on_token = on_token
-        _on_thinking = on_thinking
-        if _on_token is None and self.on_agent_token:
-            _label = role_label
-            _on_token = lambda t, lbl=_label: self.on_agent_token(t, lbl)
-        if _on_thinking is None and self.on_agent_thinking:
-            _label = role_label
-            _on_thinking = lambda t, lbl=_label: self.on_agent_thinking(t, lbl)
-
+        """安全调用 agent.stream()，自动捕获 token 使用量，支持思考内容回调。"""
         try:
-            result = agent.stream(prompt, on_token=_on_token, on_thinking=_on_thinking)
+            result = agent.stream(prompt, on_token=on_token, on_thinking=on_thinking)
             usage = agent.last_usage
             self._post(stm, role_label, result, triggered_by=triggered_by, usage=usage)
             if token_budget:

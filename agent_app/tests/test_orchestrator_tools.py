@@ -118,6 +118,35 @@ class TestFinalizeWorkflow:
         assert out.build_log == "✅ solve.py"
 
 
+class TestSafeStreamLegacyBehavior:
+    def test_safe_stream_does_not_inject_orchestrator_callbacks(self, orchestrator: Orchestrator):
+        class StubStreamAgent:
+            def __init__(self):
+                self.last_usage = {"prompt_tokens": 7, "completion_tokens": 3}
+                self.received_callbacks = None
+
+            def stream(self, prompt, on_token=None, on_thinking=None):
+                self.received_callbacks = (on_token, on_thinking)
+                return "stream output"
+
+        stub = StubStreamAgent()
+        orchestrator.on_agent_token = lambda token, role: (_ for _ in ()).throw(
+            AssertionError("unexpected orchestrator token callback")
+        )
+        orchestrator.on_agent_thinking = lambda token, role: (_ for _ in ()).throw(
+            AssertionError("unexpected orchestrator thinking callback")
+        )
+
+        stm = SharedMemory()
+        errors: list[str] = []
+
+        result = orchestrator._safe_stream(stub, "prompt", "modeling", stm, errors)
+
+        assert result == "stream output"
+        assert stub.received_callbacks == (None, None)
+        assert errors == []
+
+
 class TestWriteFileTool:
     def test_write_file_allows_subdir(self, tmp_path, monkeypatch):
         from agent_app.exploration import write_file
