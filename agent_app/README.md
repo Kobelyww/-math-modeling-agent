@@ -5,7 +5,7 @@
 ## 功能概览
 
 - **7 个专业智能体**：数据 / 建模 / 编程 / 审码 / 写作 / 评审 / 总控，分工协作 + 因果追溯
-- **4 种协作策略**：串行流水线、评审反思迭代（6 种可组合终止条件）、快速并行、流式输出
+- **默认 Agent Loop + legacy 策略**：协调者动态选择探索 / 建模 / 编程 / 调试 / 写作 / 评审 / 总结，也保留固定工作流
 - **RAG 知识库**：TF-IDF + Embedding 混合检索，支持 PDF/MD/TXT，PDF 图像理解
 - **长短时记忆系统**：STM 两段式 + 3 策略压缩 + LTM LLM 自动索引（scope/importance）+ 复合重排序召回
 - **18 个工具**：Python 安全沙箱、LaTeX 编译、文献检索、数据分析、笔记管理
@@ -102,7 +102,7 @@ python -m agent_app.cli
 | 命令 | 说明 |
 |------|------|
 | `/solve <问题>` | 启动多智能体协作分析 |
-| `/mode <模式>` | 切换策略：`sequential` / `review` / `parallel` |
+| `/mode <模式>` | 切换策略：`agent_loop` / `plan` / `explore` / `sequential` / `review` / `parallel` |
 | `/stream` | 流式输出模式 |
 | `/chat` | 切换到单智能体对话 |
 | `/help` | 显示帮助 |
@@ -119,6 +119,9 @@ rag = PaperRAG(knowledge_dir="knowledge_base", index_path="data/rag_index.pkl")
 rag.load_index()
 
 orch = Orchestrator(settings, rag=rag)
+
+# 默认 Agent Loop：动态决定下一步，而不是固定流水线
+result = orch.solve_agent_loop("建立交通流优化模型")
 
 # 串行模式
 result = orch.solve_sequential("建立交通流优化模型")
@@ -160,10 +163,12 @@ DEEPSEEK_WRITER_TEMPERATURE=0.5
 
 | 策略 | 命令 | 流程 | 适用场景 |
 |------|------|------|----------|
-| **串行流水线** | `sequential` | 建模→编程→写作→总控 | 标准场景，稳定可靠 |
+| **Agent Loop** | `agent_loop` | 协调者根据上下文动态选择探索、建模、编程、调试、写作、评审或总结 | 默认模式，适合开放式任务 |
+| **规划先行** | `plan` | Plan→Execute→Synthesize | 需要显式计划审阅 |
+| **先探索后求解** | `explore` | 多源探索→建模→编程→写作→总控 | 资料不足或需要调研 |
+| **串行流水线** | `sequential` | 建模→编程→写作→总控 | legacy 稳定路径 |
 | **深度反思** | `review` | 每阶段输出后评审专家审核修改 | 追求方案质量 |
 | **快速并行** | `parallel` | 建模先行，编程+写作并行 | 时间紧迫，追求速度 |
-| **流式输出** | streaming | 同串行，但实时 token 级输出 | 需要实时反馈 |
 
 ## 六大智能体
 
