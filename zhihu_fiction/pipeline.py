@@ -255,6 +255,16 @@ class Pipeline:
                 extra={"score": review["total_score"], "rounds": review_rounds},
             )
 
+            # Save story to output directory
+            story_path = self._save_story(
+                run_id=run_id,
+                topic=topic,
+                genre=result.genre,
+                story=wf_result.final_story,
+                synthesis=wf_result.synthesis,
+            )
+            result.published_url = str(story_path)
+
             # Skip publish if quality too low
             if review["total_score"] < self.quality_threshold:
                 result.stages["publish"] = StageRecord(
@@ -355,6 +365,25 @@ class Pipeline:
             if excerpt:
                 lines.append(f"   摘要: {excerpt}")
         return "\n".join(lines)
+
+    def _save_story(self, run_id: str, topic: str, genre: str, story: str, synthesis: str) -> Path:
+        """Save the generated story to output directory."""
+        safe_topic = "".join(c for c in topic if c.isalnum() or c in ("-", "_", " "))[:40]
+        safe_topic = safe_topic.strip().replace(" ", "_")
+        story_dir = APP_ROOT / "output" / f"{safe_topic}_{run_id}"
+        story_dir.mkdir(parents=True, exist_ok=True)
+
+        story_file = story_dir / "小说正文.md"
+        story_file.write_text(
+            f"# {topic}\n\n"
+            f"> 题材：{genre}\n\n"
+            f"{story}\n\n"
+            f"---\n\n"
+            f"# 发布方案\n\n"
+            f"{synthesis}",
+            encoding="utf-8",
+        )
+        return story_file
 
     def _append_run(self, result: RunResult) -> None:
         runs_file = RUN_DIR / "runs.jsonl"
