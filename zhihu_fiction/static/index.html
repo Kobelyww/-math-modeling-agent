@@ -77,43 +77,52 @@
     <!-- Progress -->
     <div x-show="running" class="bg-white rounded-lg shadow p-6 mb-4" x-transition>
       <div class="flex items-center justify-between mb-2">
-        <span class="text-sm text-gray-500" x-text="progress.message"></span>
+        <span class="text-sm text-gray-600 font-medium" x-text="progress.message"></span>
         <span class="text-sm font-mono text-gray-400" x-text="progress.progress + '%'"></span>
       </div>
-      <div class="w-full bg-gray-200 rounded-full h-2 mb-4">
+      <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
         <div class="bg-indigo-600 h-2 rounded-full progress-bar" :style="'width:'+progress.progress+'%'"></div>
       </div>
-      <div class="max-h-64 overflow-y-auto space-y-1.5" x-ref="logContainer" x-effect="if($refs.logContainer) $refs.logContainer.scrollTop=$refs.logContainer.scrollHeight">
+      <div class="text-xs text-gray-400 mb-2">智能体实时日志 — 点击展开查看完整内容</div>
+      <div class="h-96 overflow-y-auto space-y-2 bg-gray-900 rounded-lg p-3 font-mono text-xs" x-ref="logContainer"
+           x-effect="if($refs.logContainer) $refs.logContainer.scrollTop=$refs.logContainer.scrollHeight">
         <template x-for="log in stageLog" :key="log.id">
           <div>
             <!-- Stage update -->
-            <div x-show="log.type==='stage'" class="log-line text-gray-600 flex gap-2">
-              <span class="text-gray-400 w-20 shrink-0 text-xs" x-text="log.time"></span>
-              <span :class="'stage-'+log.status" class="text-xs" x-text="'['+log.stage+']'"></span>
-              <span class="text-xs" x-text="log.message"></span>
+            <div x-show="log.type==='stage'" class="flex gap-2 text-gray-300 py-0.5">
+              <span class="text-gray-500 w-16 shrink-0" x-text="log.time"></span>
+              <span :class="log.status==='running'?'text-yellow-400':log.status==='failed'?'text-red-400':'text-green-400'" x-text="'['+log.stage+']'"></span>
+              <span x-text="log.message"></span>
             </div>
             <!-- Tool call -->
-            <div x-show="log.type==='tool_call'" class="ml-20 bg-indigo-50 border-l-2 border-indigo-300 rounded-r px-2 py-1 mb-1">
-              <div class="flex items-center gap-1 text-xs">
-                <span class="text-indigo-600 font-medium">🔧</span>
-                <span class="text-indigo-600 font-medium" x-text="log.name"></span>
-                <span class="text-gray-400" x-text="JSON.stringify(log.args).slice(0,100)"></span>
+            <div x-show="log.type==='tool_call'" class="border-l-2 border-indigo-500 pl-2 my-1"
+                 @click="log._open=!log._open">
+              <div class="flex items-center gap-1 text-indigo-400 cursor-pointer">
+                <span>🔧</span><span x-text="log.name"></span>
+                <span class="text-gray-500" x-text="log._open?'收起':'展开参数...'"></span>
               </div>
+              <pre x-show="log._open" class="text-gray-400 mt-1 whitespace-pre-wrap break-all text-xs"
+                   x-text="JSON.stringify(log.args, null, 2)"></pre>
             </div>
             <!-- Tool result -->
-            <div x-show="log.type==='tool_result'" class="ml-20 bg-green-50 border-l-2 border-green-300 rounded-r px-2 py-1 mb-1">
-              <div class="flex items-start gap-1 text-xs">
-                <span class="text-green-600 font-medium shrink-0">✓</span>
-                <span class="text-green-700" x-text="log.name + ' 完成'"></span>
-                <span class="text-gray-500 truncate" x-text="log.content.slice(0, 80)"></span>
+            <div x-show="log.type==='tool_result'" class="border-l-2 border-green-500 pl-2 my-1"
+                 @click="log._open=!log._open">
+              <div class="flex items-center gap-1 text-green-400 cursor-pointer">
+                <span>✓</span><span x-text="log.name + ' 完成'"></span>
+                <span class="text-gray-500" x-text="log._open?'收起':'展开内容 ('+log.content.length+'字)...'"></span>
               </div>
+              <pre x-show="log._open" class="text-gray-300 mt-1 whitespace-pre-wrap break-all max-h-64 overflow-y-auto text-xs leading-relaxed"
+                   x-text="log.content"></pre>
             </div>
             <!-- AI text -->
-            <div x-show="log.type==='ai_text'" class="ml-20 bg-gray-50 border-l-2 border-gray-300 rounded-r px-2 py-1 mb-1">
-              <div class="flex items-start gap-1 text-xs">
-                <span class="text-gray-400 shrink-0">💬</span>
-                <span class="text-gray-600" x-text="log.content"></span>
+            <div x-show="log.type==='ai_text'" class="border-l-2 border-gray-600 pl-2 my-1"
+                 @click="log._open=!log._open">
+              <div class="flex items-center gap-1 text-gray-400 cursor-pointer">
+                <span>💬</span><span>AI 思考</span>
+                <span class="text-gray-600" x-text="log._open?'收起':'展开 ('+log.content.length+'字)...'"></span>
               </div>
+              <pre x-show="log._open" class="text-gray-300 mt-1 whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-xs leading-relaxed"
+                   x-text="log.content"></pre>
             </div>
           </div>
         </template>

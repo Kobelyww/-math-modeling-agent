@@ -159,12 +159,10 @@ def run_coordinator(
                             tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
                             stream_callback({"type": "tool_call", "name": tc_name, "args": tc_args})
                     elif content_str:
-                        preview = content_str[:200] + ("..." if len(content_str) > 200 else "")
-                        stream_callback({"type": "ai_text", "content": preview})
+                        stream_callback({"type": "ai_text", "content": content_str})
 
                 elif msg_type == "tool":
-                    preview = content_str[:200] + ("..." if len(content_str) > 200 else "")
-                    stream_callback({"type": "tool_result", "name": msg_name, "content": preview})
+                    stream_callback({"type": "tool_result", "name": msg_name, "content": content_str})
 
                 messages.append(msg)
 
