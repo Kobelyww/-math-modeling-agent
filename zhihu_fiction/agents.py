@@ -237,21 +237,16 @@ COORDINATOR_SYSTEM_PROMPT = """你是知乎爆款小说创作主编。你通过�
 - **polish_draft**: 润色优化文本质量
 - **synthesize**: 整合所有产出，生成发布方案（标题、标签、爆款评估）
 
-工作流程（你可以根据情况灵活调整）：
+工作流程：
 1. 首先调用 analyze_topic 分析选题，获取题材建议和切入点
 2. 基于选题分析，调用 plan_outline 设计故事结构
 3. 有了大纲后，调用 write_draft 创作正文
-4. 正文完成后，调用 polish_draft 润色提升
-5. 最后调用 synthesize 生成发布方案
+4. 初稿完成后，系统将引导你进行计划审查和质量审查
+5. 审查通过后，调用 polish_draft 润色提升
+6. 最后调用 synthesize 生成发布方案
 
-灵活性：
-- 如果大纲出来后发现选题方向不对，可以回头重新分析
-- 润色后发现有问题，可以再次润色
-- 最终必须交付：完整小说正文（润色后）+ 发布方案
-
-重要：每个工具返回完整报告，你负责整合它们的结果。不要凭空编造内容，所有创作决策基于工具的输出。
-
-在最终回复中，请用以下格式输出：
+最终必须交付：完整小说正文（润色后）+ 发布方案。
+用以下格式输出：
 【小说正文】
 （完整的润色后小说）
 【发布方案】
@@ -259,7 +254,7 @@ COORDINATOR_SYSTEM_PROMPT = """你是知乎爆款小说创作主编。你通过�
 
 
 # ============================================================
-# DeepAgent Middleware — 状态机 + 分阶段披露工具
+# DeepAgent Middleware — 状态机 + 双权限审查
 # ============================================================
 
 import logging
@@ -277,122 +272,189 @@ def _get_request_messages(request) -> list:
     return getattr(request, "messages", [])
 
 
-# 创作流水线阶段定义
-# requires: 进入该阶段前必须已完成的工具调用（在 _tool_history 中）
+# 审查提示词
+REVIEW_SPEC_PROMPT = """请对以上创作结果进行**计划审查 (Spec Review)**：
+对照原始大纲和创作要求，逐项检查：
+1. 是否覆盖了大纲中的所有情节要点？
+2. 人物设定是否与规划一致？
+3. 开篇钩子是否按要求实现？
+4. 字数是否达标（≥2000字）？
+5. 故事是否有完整的开头、发展、高潮、结局？
+审查通过时请在输出末尾加上：[SPEC_APPROVED]"""
+
+REVIEW_QUALITY_PROMPT = """请对以上创作结果进行**质量审查 (Quality Review)**：
+1. 开篇钩子力：前200字能否抓住读者？
+2. 对话和描写的张力是否足够？
+3. 节奏是否有拖沓或跳跃？
+4. 结尾余韵：读完后是否想评论/转发？
+5. 是否有值得截屏传播的金句？
+审查通过时请在输出末尾加上：[QUALITY_APPROVED]"""
+
+# 流水线阶段定义
+# permission_review_spec:     True=该阶段要求 spec 审查通过才能离开
+# permission_review_quality:  True=该阶段要求 quality 审查通过才能离开
+# approval_marker:           Coordinator 审批时在输出中标注的关键词
 STAGES = {
     "init": {
-        "label":    "🎯 选题分析",
-        "tools":    ["analyze_topic"],
+        "label": "🎯 选题分析",
+        "tools": ["analyze_topic"],
         "requires": [],
+        "permission_review_spec": False,
+        "permission_review_quality": False,
     },
     "topic_analyzed": {
-        "label":    "📋 大纲规划",
-        "tools":    ["analyze_topic", "plan_outline"],
+        "label": "📋 大纲规划",
+        "tools": ["analyze_topic", "plan_outline"],
         "requires": ["analyze_topic"],
+        "permission_review_spec": False,
+        "permission_review_quality": False,
     },
     "outline_planned": {
-        "label":    "✍️ 初稿创作",
-        "tools":    ["analyze_topic", "plan_outline", "write_draft"],
+        "label": "✍️ 初稿创作",
+        "tools": ["analyze_topic", "plan_outline", "write_draft"],
         "requires": ["analyze_topic", "plan_outline"],
+        "permission_review_spec": False,
+        "permission_review_quality": False,
     },
     "draft_written": {
-        "label":    "✨ 润色优化",
-        "tools":    ["write_draft", "polish_draft"],
+        "label": "🔍 计划审查",
+        "tools": [],
         "requires": ["analyze_topic", "plan_outline", "write_draft"],
+        "permission_review_spec": True,
+        "permission_review_quality": False,
+        "review_prompt": REVIEW_SPEC_PROMPT,
+        "approval_marker": "[SPEC_APPROVED]",
+    },
+    "draft_reviewed_spec": {
+        "label": "🔎 质量审查",
+        "tools": [],
+        "requires": ["analyze_topic", "plan_outline", "write_draft"],
+        "permission_review_spec": False,
+        "permission_review_quality": True,
+        "review_prompt": REVIEW_QUALITY_PROMPT,
+        "approval_marker": "[QUALITY_APPROVED]",
+    },
+    "draft_reviewed_quality": {
+        "label": "✨ 润色优化",
+        "tools": ["write_draft", "polish_draft"],
+        "requires": ["analyze_topic", "plan_outline", "write_draft"],
+        "permission_review_spec": False,
+        "permission_review_quality": False,
     },
     "polished": {
-        "label":    "📦 发布整合",
-        "tools":    ["polish_draft", "synthesize"],
+        "label": "📦 发布整合",
+        "tools": ["polish_draft", "synthesize"],
         "requires": ["analyze_topic", "plan_outline", "write_draft", "polish_draft"],
+        "permission_review_spec": False,
+        "permission_review_quality": False,
     },
     "done": {
-        "label":    "✅ 全部完成",
-        "tools":    [],
+        "label": "✅ 全部完成",
+        "tools": [],
         "requires": ["analyze_topic", "plan_outline", "write_draft", "polish_draft", "synthesize"],
+        "permission_review_spec": False,
+        "permission_review_quality": False,
     },
 }
 
 
 class StageGateMiddleware(AgentMiddleware):
-    """状态机中间件：跟踪创作阶段，按阶段披露可用工具。
+    """状态机 + 双权限审查中间件。
 
-    每个阶段定义：
-    - tools:    当前阶段可用的工具列表
-    - requires: 进入该阶段前必须已完成的工具（在 _tool_history 中）
-
-    工作流：init → topic_analyzed → outline_planned → draft_written → polished → done
+    审查流程：
+    1. write_draft 完成 → 进入 🔍 计划审查（无工具可用）
+    2. Coordinator 输出审查意见 + [SPEC_APPROVED] → 中间件捕获
+    3. 进入 🔎 质量审查
+    4. Coordinator 输出审查意见 + [QUALITY_APPROVED] → 中间件捕获
+    5. 两项都 allow → 进入 ✨ 润色优化
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._stage: str = "init"
         self._tool_history: list[str] = []
+        self._spec_approved: bool = False
+        self._quality_approved: bool = False
 
     @property
     def current_stage(self) -> str:
         return self._stage
 
-    @property
-    def tool_history(self) -> list[str]:
-        return list(self._tool_history)
-
     # ---- helpers ----
 
-    def _stage_info(self, key: str) -> dict:
+    def _stage_info(self) -> dict:
         return STAGES.get(self._stage, STAGES["init"])
 
-    def _missing_prereqs(self, target_stage: str) -> list[str]:
-        """返回进入 target_stage 还缺少的前置工具。"""
+    def _missing_requires(self, target_stage: str) -> list[str]:
+        return [r for r in STAGES.get(target_stage, {}).get("requires", []) if r not in self._tool_history]
+
+    def _check_permissions(self, target_stage: str) -> bool:
         info = STAGES.get(target_stage, {})
-        required = info.get("requires", [])
-        return [r for r in required if r not in self._tool_history]
+        if info.get("permission_review_spec") and not self._spec_approved:
+            return False
+        if info.get("permission_review_quality") and not self._quality_approved:
+            return False
+        return True
 
-    def _next_stages(self) -> list[str]:
-        """返回当前可进阶到的阶段列表（所有 requires 已满足的）。"""
-        candidates: list[str] = []
-        for name, info in STAGES.items():
-            if name == self._stage:
-                continue
-            if not self._missing_prereqs(name):
-                candidates.append(name)
-        return candidates
+    def _can_enter(self, target_stage: str) -> bool:
+        return not self._missing_requires(target_stage) and self._check_permissions(target_stage)
 
-    # ---- wrap_model_call: 注入当前阶段 + 可用工具 + 前置条件提示 ----
+    # ---- wrap_model_call ----
 
     def wrap_model_call(self, request, handler):
-        self._inject_stage_context(request)
-        return handler(request)
+        self._inject_context(request)
+        result = handler(request)
+        self._detect_approval(result)
+        self._try_advance()
+        return result
 
-    def _inject_stage_context(self, request) -> None:
-        info = self._stage_info(self._stage)
+    def _detect_approval(self, result) -> None:
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        if not messages:
+            return
+        last = messages[-1]
+        content = getattr(last, "content", "") if not isinstance(last, dict) else last.get("content", "")
+        if not isinstance(content, str):
+            return
+        info = self._stage_info()
+        marker = info.get("approval_marker", "")
+        if marker and marker in content:
+            if marker == "[SPEC_APPROVED]" and not self._spec_approved:
+                self._spec_approved = True
+                logger.info("✅ Spec 审查通过")
+            elif marker == "[QUALITY_APPROVED]" and not self._quality_approved:
+                self._quality_approved = True
+                logger.info("✅ Quality 审查通过")
+
+    def _inject_context(self, request) -> None:
+        info = self._stage_info()
         available = info.get("tools", [])
         label = info.get("label", self._stage)
-        requires = info.get("requires", [])
+        review_prompt = info.get("review_prompt", "")
+        marker = info.get("approval_marker", "")
 
-        # 检查当前阶段的前置条件是否满足
-        missing = self._missing_prereqs(self._stage)
-        prereq_note = ""
-        if requires:
-            met = [r for r in requires if r in self._tool_history]
-            unmet = [r for r in requires if r not in self._tool_history]
-            parts: list[str] = []
-            if met:
-                parts.append(f"已完成：{' → '.join(met)}")
-            if unmet:
-                parts.append(f"⚠️ 缺少：{' → '.join(unmet)}（请先完成前置步骤）")
-            prereq_note = " | ".join(parts)
+        # 权限状态
+        perm_parts: list[str] = []
+        if info.get("permission_review_spec"):
+            perm_parts.append(f"  permission_review_spec: {'✅ allow' if self._spec_approved else '⏳ pending（需输出 {marker}）'}")
+        if info.get("permission_review_quality"):
+            perm_parts.append(f"  permission_review_quality: {'✅ allow' if self._quality_approved else '⏳ pending（需输出 {marker}）'}")
 
-        # 下一阶段提示
-        next_stages = [s for s in self._next_stages() if s != self._stage]
-        next_labels = [STAGES[s]["label"] for s in next_stages[:2]]
+        stage_hint = f"\n\n【{label}】\n"
+        if perm_parts:
+            stage_hint += "审查权限：\n" + "\n".join(perm_parts) + "\n"
 
-        stage_hint = (
-            f"\n\n【当前阶段：{label}】\n"
-            f"可用工具：{', '.join(available) if available else '无（请输出最终结果）'}\n"
-            + (f"前置条件：{prereq_note}\n" if prereq_note else "")
-            + (f"下一步可进入：{' 或 '.join(next_labels)}\n" if next_labels else "")
-            + f"历史调用：{' → '.join(self._tool_history) if self._tool_history else '无'}\n"
-        )
+        if review_prompt:
+            stage_hint += (
+                f"\n⚠️ 审查阶段 — 不可调用工具。请针对上一轮输出进行审查：\n\n"
+                f"{review_prompt}\n"
+            )
+        elif available:
+            stage_hint += f"工具：{', '.join(available)}\n"
+        else:
+            stage_hint += "工具：无（请输出最终结果）\n"
+
+        stage_hint += f"历史：{' → '.join(self._tool_history) if self._tool_history else '无'}\n"
 
         messages = _get_request_messages(request)
         if messages:
@@ -401,61 +463,40 @@ class StageGateMiddleware(AgentMiddleware):
             if role in ("system",):
                 first.content = (first.content or "") + stage_hint
 
-    # ---- wrap_tool_call: 前置检查 + 跟踪 + 推进 ----
+    # ---- wrap_tool_call ----
 
     def wrap_tool_call(self, tool_call, runtime, handler):
-        # tool_call may be dict or ToolCall object
         if isinstance(tool_call, dict):
             tool_name = tool_call.get("name", "")
-            tool_input = tool_call.get("args", {})
         else:
             tool_name = getattr(tool_call, "name", "")
-            tool_input = getattr(tool_call, "args", {})
-
-        info = self._stage_info(self._stage)
-        available = info.get("tools", [])
-
-        if tool_name not in available:
-            logger.warning(
-                "工具 %s 不在当前阶段 %s 的可用列表中（可用: %s）",
-                tool_name, self._stage, available,
-            )
 
         result = handler(tool_call, runtime)
         self._tool_history.append(tool_name)
         self._try_advance()
-        result = self._validate_output(tool_name, result)
-        return result
+        return self._validate(tool_name, result)
 
     def _try_advance(self) -> None:
-        """扫描所有阶段，推进到 requires 全部满足的最远阶段。"""
         best = self._stage
         for name in STAGES:
-            if not self._missing_prereqs(name):
+            if self._can_enter(name):
                 best = name
         if best != self._stage:
-            old_label = STAGES[self._stage]["label"]
+            logger.info("推进: %s → %s", STAGES[self._stage]["label"], STAGES[best]["label"])
             self._stage = best
-            logger.info(
-                "阶段推进: %s → %s (历史: %s)",
-                old_label, STAGES[best]["label"],
-                " → ".join(self._tool_history),
-            )
 
-    def _validate_output(self, tool_name: str, result) -> Any:
-        if tool_name == "write_draft" and isinstance(result, str):
-            if len(result) < 500:
-                return result + "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
-        if tool_name == "polish_draft" and isinstance(result, str):
-            if len(result) < 500:
-                return result + "\n\n⚠️ 润色后正文太短，请输出完整全文。"
+    def _validate(self, tool_name: str, result) -> Any:
+        if tool_name == "write_draft" and isinstance(result, str) and len(result) < 500:
+            return result + "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
+        if tool_name == "polish_draft" and isinstance(result, str) and len(result) < 500:
+            return result + "\n\n⚠️ 润色后正文太短，请输出完整全文。"
         return result
 
 
 class FinalOutputMiddleware(AgentMiddleware):
     """确保最终输出包含【小说正文】和【发布方案】两个章节。"""
 
-    def wrap_model_call(self, request: dict, handler):
+    def wrap_model_call(self, request, handler):
         output_rules = (
             "\n\n【输出铁律】\n"
             "1. 最终回复必须包含两个标记章节：【小说正文】和【发布方案】\n"
@@ -464,7 +505,7 @@ class FinalOutputMiddleware(AgentMiddleware):
             "4. 禁止输出不完整的故事或「未完待续」\n"
         )
         messages = _get_request_messages(request)
-        if messages and hasattr(messages[0], "content"):
+        if messages:
             first = messages[0]
             role = getattr(first, "type", "") or getattr(first, "role", "")
             if role in ("system",):
@@ -477,16 +518,7 @@ def create_coordinator(
     skills_store: SkillsStore | None = None,
     genre: str | None = None,
 ):
-    """创建小说创作 Coordinator DeepAgent。
-
-    Args:
-        llm: LLM 实例
-        skills_store: 技能卡仓库（可选）
-        genre: 目标题材，用于筛选相关技能卡
-
-    Returns:
-        编译后的 DeepAgent（CompiledStateGraph 实例）
-    """
+    """创建小说创作 Coordinator DeepAgent。"""
     from deepagents import create_deep_agent
 
     tools = [
@@ -530,13 +562,6 @@ class ReviewerAgent:
         self.llm = llm
 
     def review(self, draft: str, topic: str) -> dict:
-        """评审小说质量，返回评分和修改建议。
-
-        Returns:
-            dict with keys:
-                total_score (float): 综合评分 (1-10)
-                full_report (str): 完整评审报告
-        """
         prompt = (
             f"创作主题：{topic}\n\n"
             f"待评审小说：\n{draft}\n\n"
@@ -548,13 +573,9 @@ class ReviewerAgent:
         ])
         full_report = normalize_content(response.content)
         total_score = self._extract_score(full_report)
-        return {
-            "total_score": total_score,
-            "full_report": full_report,
-        }
+        return {"total_score": total_score, "full_report": full_report}
 
     def _extract_score(self, report: str) -> float:
-        """从评审报告中提取综合评分。解析 8 个维度的分数取平均。"""
         import re
         scores: list[float] = []
         for line in report.split("\n"):
@@ -566,6 +587,4 @@ class ReviewerAgent:
                         scores.append(s)
                 except ValueError:
                     pass
-        if not scores:
-            return 5.0
-        return sum(scores) / len(scores)
+        return sum(scores) / len(scores) if scores else 5.0
