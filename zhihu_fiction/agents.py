@@ -340,7 +340,7 @@ class ReviewerAgent:
         import re
         scores: list[float] = []
         for line in report.split("\n"):
-            match = re.search(r"(\d+)\s*(?:分|/10)", line)
+            match = re.search(r"(\d+(?:\.\d+)?)\s*(?:分|/10)", line)
             if match:
                 try:
                     s = float(match.group(1))
