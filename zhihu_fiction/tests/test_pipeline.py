@@ -1,8 +1,17 @@
 """Tests for Pipeline orchestration logic."""
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from zhihu_fiction.pipeline import Pipeline, select_topic
+
+# ---- Prevent test pollution of real output/ ----
+
+@pytest.fixture(autouse=True)
+def _isolate_pipeline_output(tmp_path, monkeypatch):
+    """Redirect Pipeline output to a temp directory so tests don't write to real runs.jsonl."""
+    import zhihu_fiction.pipeline as pmod
+    monkeypatch.setattr(pmod, "RUN_DIR", tmp_path / ".pipeline")
+    monkeypatch.setattr(pmod, "SCHEDULE_FILE", tmp_path / ".pipeline" / "schedule.json")
 
 
 class TestSelectTopic:
