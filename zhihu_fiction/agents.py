@@ -270,38 +270,49 @@ from langchain.agents.middleware import AgentMiddleware
 logger = logging.getLogger(__name__)
 
 # 创作流水线阶段定义
-STAGE_TOOLS = {
-    "init":             ["analyze_topic"],
-    "topic_analyzed":   ["analyze_topic", "plan_outline"],
-    "outline_planned":  ["analyze_topic", "plan_outline", "write_draft"],
-    "draft_written":    ["write_draft", "polish_draft"],
-    "polished":         ["polish_draft", "synthesize"],
-    "done":             [],  # 全部完成，不应再调工具
-}
-
-STAGE_TRANSITIONS = {
-    "init":             "topic_analyzed",
-    "topic_analyzed":   "outline_planned",
-    "outline_planned":  "draft_written",
-    "draft_written":    "polished",
-    "polished":         "done",
-}
-
-STAGE_LABELS = {
-    "init":             "🎯 选题分析阶段",
-    "topic_analyzed":   "📋 大纲规划阶段",
-    "outline_planned":  "✍️ 初稿创作阶段",
-    "draft_written":    "✨ 润色优化阶段",
-    "polished":         "📦 发布整合阶段",
-    "done":             "✅ 全部完成",
+# requires: 进入该阶段前必须已完成的工具调用（在 _tool_history 中）
+STAGES = {
+    "init": {
+        "label":    "🎯 选题分析",
+        "tools":    ["analyze_topic"],
+        "requires": [],
+    },
+    "topic_analyzed": {
+        "label":    "📋 大纲规划",
+        "tools":    ["analyze_topic", "plan_outline"],
+        "requires": ["analyze_topic"],
+    },
+    "outline_planned": {
+        "label":    "✍️ 初稿创作",
+        "tools":    ["analyze_topic", "plan_outline", "write_draft"],
+        "requires": ["analyze_topic", "plan_outline"],
+    },
+    "draft_written": {
+        "label":    "✨ 润色优化",
+        "tools":    ["write_draft", "polish_draft"],
+        "requires": ["analyze_topic", "plan_outline", "write_draft"],
+    },
+    "polished": {
+        "label":    "📦 发布整合",
+        "tools":    ["polish_draft", "synthesize"],
+        "requires": ["analyze_topic", "plan_outline", "write_draft", "polish_draft"],
+    },
+    "done": {
+        "label":    "✅ 全部完成",
+        "tools":    [],
+        "requires": ["analyze_topic", "plan_outline", "write_draft", "polish_draft", "synthesize"],
+    },
 }
 
 
 class StageGateMiddleware(AgentMiddleware):
     """状态机中间件：跟踪创作阶段，按阶段披露可用工具。
 
+    每个阶段定义：
+    - tools:    当前阶段可用的工具列表
+    - requires: 进入该阶段前必须已完成的工具（在 _tool_history 中）
+
     工作流：init → topic_analyzed → outline_planned → draft_written → polished → done
-    每个阶段只暴露该阶段需要的工具，引导 Coordinator 严格按流程创作。
     """
 
     def __init__(self) -> None:
@@ -313,22 +324,66 @@ class StageGateMiddleware(AgentMiddleware):
     def current_stage(self) -> str:
         return self._stage
 
-    # ---- wrap_model_call: 注入当前阶段 + 可用工具提示 ----
+    @property
+    def tool_history(self) -> list[str]:
+        return list(self._tool_history)
+
+    # ---- helpers ----
+
+    def _stage_info(self, key: str) -> dict:
+        return STAGES.get(self._stage, STAGES["init"])
+
+    def _missing_prereqs(self, target_stage: str) -> list[str]:
+        """返回进入 target_stage 还缺少的前置工具。"""
+        info = STAGES.get(target_stage, {})
+        required = info.get("requires", [])
+        return [r for r in required if r not in self._tool_history]
+
+    def _next_stages(self) -> list[str]:
+        """返回当前可进阶到的阶段列表（所有 requires 已满足的）。"""
+        candidates: list[str] = []
+        for name, info in STAGES.items():
+            if name == self._stage:
+                continue
+            if not self._missing_prereqs(name):
+                candidates.append(name)
+        return candidates
+
+    # ---- wrap_model_call: 注入当前阶段 + 可用工具 + 前置条件提示 ----
 
     def wrap_model_call(self, request: dict, handler):
         self._inject_stage_context(request)
         return handler(request)
 
     def _inject_stage_context(self, request: dict) -> None:
-        available = STAGE_TOOLS.get(self._stage, [])
-        next_stage = STAGE_TRANSITIONS.get(self._stage, "done")
-        label = STAGE_LABELS.get(self._stage, self._stage)
+        info = self._stage_info(self._stage)
+        available = info.get("tools", [])
+        label = info.get("label", self._stage)
+        requires = info.get("requires", [])
+
+        # 检查当前阶段的前置条件是否满足
+        missing = self._missing_prereqs(self._stage)
+        prereq_note = ""
+        if requires:
+            met = [r for r in requires if r in self._tool_history]
+            unmet = [r for r in requires if r not in self._tool_history]
+            parts: list[str] = []
+            if met:
+                parts.append(f"已完成：{' → '.join(met)}")
+            if unmet:
+                parts.append(f"⚠️ 缺少：{' → '.join(unmet)}（请先完成前置步骤）")
+            prereq_note = " | ".join(parts)
+
+        # 下一阶段提示
+        next_stages = [s for s in self._next_stages() if s != self._stage]
+        next_labels = [STAGES[s]["label"] for s in next_stages[:2]]
 
         stage_hint = (
             f"\n\n【当前阶段：{label}】\n"
             f"可用工具：{', '.join(available) if available else '无（请输出最终结果）'}\n"
-            f"下一阶段：{STAGE_LABELS.get(next_stage, next_stage)}\n"
-            f"已完成步骤：{' → '.join(self._tool_history) if self._tool_history else '无'}\n"
+            + (f"前置条件：{prereq_note}\n" if prereq_note else "")
+            + (f"下一步可进入：{' 或 '.join(next_labels)}\n" if next_labels else "")
+            + f"历史调用：{' → '.join(self._tool_history) if self._tool_history else '无'}\n"
         )
 
         messages = request.get("messages", [])
@@ -338,60 +393,52 @@ class StageGateMiddleware(AgentMiddleware):
             if role in ("system",):
                 first.content = (first.content or "") + stage_hint
 
-    # ---- wrap_tool_call: 跟踪调用 + 检查是否越权 ----
+    # ---- wrap_tool_call: 前置检查 + 跟踪 + 推进 ----
 
     def wrap_tool_call(self, tool_name: str, tool_input: dict, handler):
-        available = STAGE_TOOLS.get(self._stage, [])
+        info = self._stage_info(self._stage)
+        available = info.get("tools", [])
 
+        # 越权警告
         if tool_name not in available:
             logger.warning(
-                "工具 %s 不在当前阶段 %s 的可用列表中（可用: %s），允许调用但可能不合理",
+                "工具 %s 不在当前阶段 %s 的可用列表中（可用: %s）",
                 tool_name, self._stage, available,
             )
 
-        # 执行工具
+        # 执行
         result = handler(tool_name, tool_input)
         self._tool_history.append(tool_name)
 
-        # 阶段推进
-        self._advance_stage(tool_name)
+        # 尝试推进到最高可达阶段
+        self._try_advance()
 
         # 质量校验
         result = self._validate_output(tool_name, result)
-
         return result
 
-    def _advance_stage(self, tool_name: str) -> None:
-        stage_triggers = {
-            "analyze_topic":    "topic_analyzed",
-            "plan_outline":     "outline_planned",
-            "write_draft":      "draft_written",
-            "polish_draft":     "polished",
-            "synthesize":       "done",
-        }
-        new_stage = stage_triggers.get(tool_name)
-        if new_stage:
-            old = self._stage
-            self._stage = new_stage
+    def _try_advance(self) -> None:
+        """扫描所有阶段，推进到 requires 全部满足的最远阶段。"""
+        best = self._stage
+        for name in STAGES:
+            if not self._missing_prereqs(name):
+                best = name
+        if best != self._stage:
+            old_label = STAGES[self._stage]["label"]
+            self._stage = best
             logger.info(
-                "阶段推进: %s → %s (触发工具: %s)",
-                STAGE_LABELS.get(old, old),
-                STAGE_LABELS.get(new_stage, new_stage),
-                tool_name,
+                "阶段推进: %s → %s (历史: %s)",
+                old_label, STAGES[best]["label"],
+                " → ".join(self._tool_history),
             )
 
     def _validate_output(self, tool_name: str, result) -> Any:
-        """校验关键工具的输出质量。"""
         if tool_name == "write_draft" and isinstance(result, str):
             if len(result) < 500:
-                return result + (
-                    "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
-                )
+                return result + "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
         if tool_name == "polish_draft" and isinstance(result, str):
             if len(result) < 500:
-                return result + (
-                    "\n\n⚠️ 润色后正文太短，请输出完整全文。"
-                )
+                return result + "\n\n⚠️ 润色后正文太短，请输出完整全文。"
         return result
 
 
