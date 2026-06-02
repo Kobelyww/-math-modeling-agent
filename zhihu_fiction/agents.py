@@ -359,11 +359,11 @@ class StageGateMiddleware(AgentMiddleware):
 
     # ---- wrap_model_call: 注入当前阶段 + 可用工具 + 前置条件提示 ----
 
-    def wrap_model_call(self, request: dict, handler):
+    def wrap_model_call(self, request, handler):
         self._inject_stage_context(request)
         return handler(request)
 
-    def _inject_stage_context(self, request: dict) -> None:
+    def _inject_stage_context(self, request) -> None:
         info = self._stage_info(self._stage)
         available = info.get("tools", [])
         label = info.get("label", self._stage)
@@ -403,25 +403,27 @@ class StageGateMiddleware(AgentMiddleware):
 
     # ---- wrap_tool_call: 前置检查 + 跟踪 + 推进 ----
 
-    def wrap_tool_call(self, tool_name: str, tool_input: dict, handler):
+    def wrap_tool_call(self, tool_call, runtime, handler):
+        # tool_call may be dict or ToolCall object
+        if isinstance(tool_call, dict):
+            tool_name = tool_call.get("name", "")
+            tool_input = tool_call.get("args", {})
+        else:
+            tool_name = getattr(tool_call, "name", "")
+            tool_input = getattr(tool_call, "args", {})
+
         info = self._stage_info(self._stage)
         available = info.get("tools", [])
 
-        # 越权警告
         if tool_name not in available:
             logger.warning(
                 "工具 %s 不在当前阶段 %s 的可用列表中（可用: %s）",
                 tool_name, self._stage, available,
             )
 
-        # 执行
-        result = handler(tool_name, tool_input)
+        result = handler(tool_call, runtime)
         self._tool_history.append(tool_name)
-
-        # 尝试推进到最高可达阶段
         self._try_advance()
-
-        # 质量校验
         result = self._validate_output(tool_name, result)
         return result
 
