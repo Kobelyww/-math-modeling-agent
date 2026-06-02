@@ -1,0 +1,248 @@
+"""Thin wrapper around DeepAgent Coordinator invocation."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from .agents import create_coordinator, ReviewerAgent
+from .base import normalize_content
+from .config import Settings
+from .llm import create_llm
+from .skills_store import SkillsStore
+
+
+@dataclass
+class StageResult:
+    role: str
+    content: str
+
+
+@dataclass
+class WorkflowResult:
+    topic: str
+    genre: str
+    topic_analysis: str
+    outline: str
+    draft: str
+    polished: str
+    review: str
+    synthesis: str
+
+    def __post_init__(self) -> None:
+        """Normalise StageResult fields to plain strings for backward compatibility."""
+        for _field in ("topic_analysis", "outline", "draft"):
+            val = getattr(self, _field)
+            if isinstance(val, StageResult):
+                setattr(self, _field, val.content)
+
+    def format_overview(self) -> str:
+        lines = [
+            "=" * 60,
+            f"  选题：{self.topic}",
+            f"  题材：{self.genre}",
+            "=" * 60,
+            "",
+            self.polished,
+            "",
+            "=" * 60,
+            self.synthesis,
+        ]
+        return "\n".join(lines)
+
+    def format_analysis(self) -> str:
+        lines = [
+            "=" * 60,
+            f"  选题：{self.topic}",
+            f"  题材：{self.genre}",
+            "=" * 60,
+            "",
+            "【选题分析】",
+            self.topic_analysis[:400] + "..." if len(self.topic_analysis) > 400 else self.topic_analysis,
+            "",
+            "【故事大纲】",
+            self.outline[:400] + "..." if len(self.outline) > 400 else self.outline,
+            "",
+            "【评审意见】",
+            self.review[:400] + "..." if len(self.review) > 400 else self.review,
+        ]
+        return "\n".join(lines)
+
+    @property
+    def final_story(self) -> str:
+        return self.polished
+
+
+def _parse_coordinator_output(output: str) -> dict[str, str]:
+    """Parse Coordinator's final output into structured sections.
+
+    Coordinator outputs:
+    【小说正文】
+    <story>
+    【发布方案】
+    <publish plan>
+    """
+    result = {"story": "", "synthesis": ""}
+
+    STORY_MARKER = "【小说正文】"
+    SYNTH_MARKER = "【发布方案】"
+
+    story_start = output.find(STORY_MARKER)
+    synth_start = output.find(SYNTH_MARKER)
+
+    if story_start >= 0 and synth_start >= 0:
+        result["story"] = output[story_start + len(STORY_MARKER):synth_start].strip()
+        result["synthesis"] = output[synth_start + len(SYNTH_MARKER):].strip()
+    elif story_start >= 0:
+        result["story"] = output[story_start + len(STORY_MARKER):].strip()
+    else:
+        result["story"] = output
+
+    return result
+
+
+def run_coordinator(
+    llm,
+    coordinator,
+    topic: str,
+    hot_trends: str = "",
+    genre: str | None = None,
+    revision_feedback: str = "",
+) -> WorkflowResult:
+    """Run the Coordinator DeepAgent to create a fiction from topic.
+
+    Args:
+        llm: LLM instance
+        coordinator: Compiled DeepAgent from create_coordinator()
+        topic: The fiction topic/theme
+        hot_trends: Current Zhihu hot trends summary (for context)
+        genre: Target genre (optional)
+        revision_feedback: Reviewer feedback for retry (empty on first run)
+
+    Returns:
+        WorkflowResult with the complete fiction and metadata
+    """
+    feedback_section = ""
+    if revision_feedback:
+        feedback_section = f"\n\n【修改要求】上一轮评审未达标，请根据以下反馈重新创作：\n{revision_feedback}"
+
+    prompt = f"""请创作一篇关于以下主题的知乎爆款小说：{topic}
+
+当前知乎热榜趋势参考：
+{hot_trends or '暂无热榜数据，请根据你的知识判断选题方向'}
+
+请按照标准工作流程完成创作：选题分析 → 大纲规划 → 初稿创作 → 润色优化 → 发布方案整合。
+最终用【小说正文】和【发布方案】两个标记分别输出。{feedback_section}"""
+
+    resolved_genre = genre or "未指定"
+
+    result = coordinator.invoke({
+        "messages": [{"role": "user", "content": prompt}],
+    })
+
+    messages = result.get("messages", [])
+    if not messages:
+        return WorkflowResult(
+            topic=topic,
+            genre=resolved_genre,
+            topic_analysis="",
+            outline="",
+            draft="",
+            polished="",
+            review="",
+            synthesis="",
+        )
+
+    final_message = messages[-1]
+    output = normalize_content(final_message.content)
+
+    parsed = _parse_coordinator_output(output)
+
+    return WorkflowResult(
+        topic=topic,
+        genre=resolved_genre,
+        topic_analysis="",
+        outline="",
+        draft="",
+        polished=parsed["story"],
+        review="",
+        synthesis=parsed["synthesis"],
+    )
+
+
+def create_orchestrator(
+    settings: Settings,
+    skills_store: SkillsStore | None = None,
+    genre: str | None = None,
+):
+    """Create the Coordinator and ReviewerAgent for the given settings.
+
+    Returns a tuple of (coordinator, reviewer, llm).
+    """
+    llm = create_llm(settings)
+    coordinator = create_coordinator(llm, skills_store=skills_store, genre=genre)
+    reviewer = ReviewerAgent(llm)
+    return coordinator, reviewer, llm
+
+
+class OrchestratorCompat:
+    """Backward-compatible wrapper so old CLI commands (/create, /fast, etc) keep working.
+
+    Delegates to run_coordinator under the hood.
+    """
+
+    def __init__(self, settings: Settings, skills_store: SkillsStore | None = None) -> None:
+        """Construct the wrapper, creating the internal Coordinator/Reviewer/LLM automatically.
+
+        This signature matches the old ``Orchestrator(settings, skills_store=...)``
+        so existing CLI and test code continues to work unchanged.
+        """
+        from .llm import create_llm
+        from .agents import create_coordinator, ReviewerAgent
+
+        self.settings = settings
+        self.skills = skills_store
+        self._llm = create_llm(settings)
+        self._coordinator = create_coordinator(self._llm, skills_store=skills_store)
+        self._reviewer = ReviewerAgent(self._llm)
+
+    def solve_fast(self, topic: str, genre: str | None = None, memory=None) -> WorkflowResult:
+        return run_coordinator(self._llm, self._coordinator, topic=topic, genre=genre)
+
+    def solve_full(self, topic: str, genre: str | None = None, max_review_rounds=2, memory=None) -> WorkflowResult:
+        return run_coordinator(self._llm, self._coordinator, topic=topic, genre=genre)
+
+    def solve_polish(self, topic: str, genre: str | None = None, max_review_rounds=2, memory=None) -> WorkflowResult:
+        return run_coordinator(self._llm, self._coordinator, topic=topic, genre=genre)
+
+    def solve_stream(
+        self,
+        topic: str,
+        genre: str | None = None,
+        on_topic_token=None,
+        on_outline_token=None,
+        on_draft_token=None,
+        on_polish_token=None,
+        on_synthesis_token=None,
+    ) -> WorkflowResult:
+        return run_coordinator(self._llm, self._coordinator, topic=topic, genre=genre)
+
+    def continue_story(
+        self,
+        existing_story: str,
+        topic: str,
+        genre: str | None = None,
+        chapter_count: int = 1,
+    ) -> str:
+        prompt = (
+            f"创作主题：{topic}\n\n"
+            f"已有故事：\n{existing_story}\n\n"
+            f"请续写第 {chapter_count + 1} 章，保持文风一致，2000-4000 字，章末留悬念。"
+        )
+        result = self._coordinator.invoke({
+            "messages": [{"role": "user", "content": prompt}],
+        })
+        return normalize_content(result["messages"][-1].content)
+
+
+# Backward-compatible alias so ``from .orchestrator import Orchestrator`` still works.
+Orchestrator = OrchestratorCompat
