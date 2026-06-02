@@ -258,6 +258,86 @@ COORDINATOR_SYSTEM_PROMPT = """你是知乎爆款小说创作主编。你通过�
 （synthesize 的输出）"""
 
 
+# ============================================================
+# DeepAgent Middleware — 约束输出内容和结构
+# ============================================================
+
+from typing import Any
+
+from langchain.agents.middleware import AgentMiddleware
+
+
+class OutputStructureMiddleware(AgentMiddleware):
+    """约束 Coordinator 的输出结构和内容质量。
+
+    三个钩子：
+    1. wrap_model_call: 每次 LLM 调用前注入格式要求
+    2. wrap_tool_call:  校验工具输出（最低字数、完整性）
+    3. after_model_call: 检查最终输出是否包含必要章节
+    """
+
+    def wrap_model_call(self, request: dict, handler):
+        """注入输出格式约束到 system prompt。"""
+        structure_rules = (
+            "\n\n【输出铁律】\n"
+            "1. 最终回复必须包含两个标记章节：【小说正文】和【发布方案】\n"
+            "2. 【小说正文】中必须包含完整故事，至少 2000 字，有开头、发展、高潮、结局\n"
+            "3. 【发布方案】中必须包含：5 个备选标题、5-8 个话题标签、爆款概率评估\n"
+            "4. 不要输出未完成的故事或留下「未完待续」\n"
+        )
+
+        messages = request.get("messages", [])
+        if messages and hasattr(messages[0], "content"):
+            first = messages[0]
+            if getattr(first, "type", "") == "system" or getattr(first, "role", "") == "system":
+                first.content = (first.content or "") + structure_rules
+
+        return handler(request)
+
+    def wrap_tool_call(self, tool_name: str, tool_input: dict, handler):
+        """校验关键工具的输出质量。"""
+        result = handler(tool_name, tool_input)
+
+        if tool_name == "write_draft" and isinstance(result, str):
+            if len(result) < 500:
+                return result + (
+                    "\n\n⚠️ [系统提示] 正文不足 500 字，不符合知乎爆款标准。"
+                    "请确保完整故事至少 2000 字。"
+                )
+
+        if tool_name == "polish_draft" and isinstance(result, str):
+            if len(result) < 500:
+                return result + (
+                    "\n\n⚠️ [系统提示] 润色后正文太短，请输出完整全文。"
+                )
+
+        return result
+
+
+class ContentValidationMiddleware(AgentMiddleware):
+    """在每次 Agent 响应后检查输出完整性。"""
+
+    def after_model_call(self, response: Any, handler) -> Any:
+        result = handler(response)
+
+        # 提取最后一条 AI 消息的文本内容
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        if messages:
+            last_msg = messages[-1]
+            content = getattr(last_msg, "content", "")
+            if isinstance(content, str) and len(content) > 50:
+                has_story = "【小说正文】" in content
+                has_synthesis = "【发布方案】" in content
+                if not has_story:
+                    logger = __import__("logging").getLogger(__name__)
+                    logger.warning("Coordinator 输出缺少【小说正文】标记")
+                if not has_synthesis:
+                    logger = __import__("logging").getLogger(__name__)
+                    logger.warning("Coordinator 输出缺少【发布方案】标记")
+
+        return result
+
+
 def create_coordinator(
     llm: BaseChatModel,
     skills_store: SkillsStore | None = None,
@@ -297,6 +377,10 @@ def create_coordinator(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
+        middleware=[
+            OutputStructureMiddleware(),
+            ContentValidationMiddleware(),
+        ],
     )
     return agent
 

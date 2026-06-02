@@ -3,21 +3,62 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import APP_ROOT, load_settings
 from .orchestrator import create_orchestrator, run_coordinator as _orig_run_coordinator
 from .pipeline import Pipeline, RUN_DIR
 from .skills_store import SkillsStore
 
+logger = logging.getLogger("zhihu_fiction.server")
+
 app = FastAPI(title="Zhihu Fiction Studio", version="1.0")
+
+# ---- Middleware ----
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+class TimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response = await call_next(request)
+        elapsed = time.time() - start
+        logger.info(
+            "%s %s — %d (%.2fs)",
+            request.method, request.url.path, response.status_code, elapsed,
+        )
+        return response
+
+
+app.add_middleware(TimingMiddleware)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc), "path": str(request.url.path)},
+    )
 OUTPUT_DIR = APP_ROOT / "output"
 
 settings = load_settings()
