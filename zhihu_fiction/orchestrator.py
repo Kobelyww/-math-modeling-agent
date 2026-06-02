@@ -137,30 +137,34 @@ def run_coordinator(
         messages = result.get("messages", [])
     else:
         messages = []
-        # Stream each message as it comes — capture tool calls/results and AI text
         for chunk in coordinator.stream(input_msg, stream_mode="messages"):
-            for msg in chunk:
-                msg_type = getattr(msg, "type", "")
-                content = normalize_content(getattr(msg, "content", ""))
+            # chunk can be a message, a (message, metadata) tuple, or a list
+            items = chunk if isinstance(chunk, list) else [chunk]
+            for msg in items:
+                # Normalize: msg can be a LangChain message object or a dict
+                if isinstance(msg, (tuple, list)) and len(msg) >= 1:
+                    msg = msg[0]  # (message, metadata) tuple → take message
+
+                msg_type = (getattr(msg, "type", "") if not isinstance(msg, dict) else msg.get("type", ""))
+                msg_content = (getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", ""))
+                msg_name = (getattr(msg, "name", "") if not isinstance(msg, dict) else msg.get("name", ""))
+                msg_tool_calls = (getattr(msg, "tool_calls", None) if not isinstance(msg, dict) else msg.get("tool_calls"))
+
+                content_str = normalize_content(msg_content or "")
 
                 if msg_type == "ai":
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            stream_callback({
-                                "type": "tool_call",
-                                "name": tc.get("name", ""),
-                                "args": tc.get("args", {}),
-                            })
-                    elif content:
-                        stream_callback({"type": "ai_text", "content": content[:200] + ("..." if len(content) > 200 else "")})
+                    if msg_tool_calls:
+                        for tc in msg_tool_calls:
+                            tc_name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
+                            tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                            stream_callback({"type": "tool_call", "name": tc_name, "args": tc_args})
+                    elif content_str:
+                        preview = content_str[:200] + ("..." if len(content_str) > 200 else "")
+                        stream_callback({"type": "ai_text", "content": preview})
 
                 elif msg_type == "tool":
-                    tool_name = getattr(msg, "name", "")
-                    stream_callback({
-                        "type": "tool_result",
-                        "name": tool_name,
-                        "content": content[:200] + ("..." if len(content) > 200 else ""),
-                    })
+                    preview = content_str[:200] + ("..." if len(content_str) > 200 else "")
+                    stream_callback({"type": "tool_result", "name": msg_name, "content": preview})
 
                 messages.append(msg)
 
@@ -172,7 +176,11 @@ def run_coordinator(
         )
 
     final_message = messages[-1]
-    output = normalize_content(final_message.content)
+    if isinstance(final_message, dict):
+        final_content = final_message.get("content", "")
+    else:
+        final_content = getattr(final_message, "content", "")
+    output = normalize_content(final_content or "")
     parsed = _parse_coordinator_output(output)
 
     return WorkflowResult(
