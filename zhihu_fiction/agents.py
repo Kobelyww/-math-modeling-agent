@@ -269,6 +269,14 @@ from langchain.agents.middleware import AgentMiddleware
 
 logger = logging.getLogger(__name__)
 
+
+def _get_request_messages(request) -> list:
+    """Normalize request.messages — request can be dict or ModelRequest object."""
+    if isinstance(request, dict):
+        return request.get("messages", [])
+    return getattr(request, "messages", [])
+
+
 # 创作流水线阶段定义
 # requires: 进入该阶段前必须已完成的工具调用（在 _tool_history 中）
 STAGES = {
@@ -386,7 +394,7 @@ class StageGateMiddleware(AgentMiddleware):
             + f"历史调用：{' → '.join(self._tool_history) if self._tool_history else '无'}\n"
         )
 
-        messages = request.get("messages", [])
+        messages = _get_request_messages(request)
         if messages:
             first = messages[0]
             role = getattr(first, "type", "") or getattr(first, "role", "")
@@ -453,7 +461,7 @@ class FinalOutputMiddleware(AgentMiddleware):
             "3. 【发布方案】：5 个备选标题 + 5-8 个标签 + 爆款概率评估\n"
             "4. 禁止输出不完整的故事或「未完待续」\n"
         )
-        messages = request.get("messages", [])
+        messages = _get_request_messages(request)
         if messages and hasattr(messages[0], "content"):
             first = messages[0]
             role = getattr(first, "type", "") or getattr(first, "role", "")
