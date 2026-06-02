@@ -1,0 +1,11 @@
+langchain
+langchain-core
+langchain-deepseek
+python-dotenv
+scikit-learn
+jieba
+requests
+beautifulsoup4
+lxml
+playwright
+deepagents>=0.5.0
