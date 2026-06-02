@@ -190,20 +190,30 @@ class OrchestratorCompat:
     Delegates to run_coordinator under the hood.
     """
 
-    def __init__(self, settings: Settings, skills_store: SkillsStore | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        skills_store: SkillsStore | None = None,
+        coordinator=None,
+        reviewer=None,
+        llm=None,
+    ) -> None:
         """Construct the wrapper, creating the internal Coordinator/Reviewer/LLM automatically.
 
         This signature matches the old ``Orchestrator(settings, skills_store=...)``
         so existing CLI and test code continues to work unchanged.
+
+        When ``coordinator``, ``reviewer``, or ``llm`` are provided they take
+        precedence over auto-created instances (used by Pipeline).
         """
         from .llm import create_llm
         from .agents import create_coordinator, ReviewerAgent
 
         self.settings = settings
         self.skills = skills_store
-        self._llm = create_llm(settings)
-        self._coordinator = create_coordinator(self._llm, skills_store=skills_store)
-        self._reviewer = ReviewerAgent(self._llm)
+        self._llm = llm or create_llm(settings)
+        self._coordinator = coordinator or create_coordinator(self._llm, skills_store=skills_store)
+        self._reviewer = reviewer or ReviewerAgent(self._llm)
 
     def solve_fast(self, topic: str, genre: str | None = None, memory=None) -> WorkflowResult:
         return run_coordinator(self._llm, self._coordinator, topic=topic, genre=genre)
