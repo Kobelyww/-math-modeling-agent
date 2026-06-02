@@ -259,83 +259,160 @@ COORDINATOR_SYSTEM_PROMPT = """你是知乎爆款小说创作主编。你通过�
 
 
 # ============================================================
-# DeepAgent Middleware — 约束输出内容和结构
+# DeepAgent Middleware — 状态机 + 分阶段披露工具
 # ============================================================
 
+import logging
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 
+logger = logging.getLogger(__name__)
 
-class OutputStructureMiddleware(AgentMiddleware):
-    """约束 Coordinator 的输出结构和内容质量。
+# 创作流水线阶段定义
+STAGE_TOOLS = {
+    "init":             ["analyze_topic"],
+    "topic_analyzed":   ["analyze_topic", "plan_outline"],
+    "outline_planned":  ["analyze_topic", "plan_outline", "write_draft"],
+    "draft_written":    ["write_draft", "polish_draft"],
+    "polished":         ["polish_draft", "synthesize"],
+    "done":             [],  # 全部完成，不应再调工具
+}
 
-    三个钩子：
-    1. wrap_model_call: 每次 LLM 调用前注入格式要求
-    2. wrap_tool_call:  校验工具输出（最低字数、完整性）
-    3. after_model_call: 检查最终输出是否包含必要章节
+STAGE_TRANSITIONS = {
+    "init":             "topic_analyzed",
+    "topic_analyzed":   "outline_planned",
+    "outline_planned":  "draft_written",
+    "draft_written":    "polished",
+    "polished":         "done",
+}
+
+STAGE_LABELS = {
+    "init":             "🎯 选题分析阶段",
+    "topic_analyzed":   "📋 大纲规划阶段",
+    "outline_planned":  "✍️ 初稿创作阶段",
+    "draft_written":    "✨ 润色优化阶段",
+    "polished":         "📦 发布整合阶段",
+    "done":             "✅ 全部完成",
+}
+
+
+class StageGateMiddleware(AgentMiddleware):
+    """状态机中间件：跟踪创作阶段，按阶段披露可用工具。
+
+    工作流：init → topic_analyzed → outline_planned → draft_written → polished → done
+    每个阶段只暴露该阶段需要的工具，引导 Coordinator 严格按流程创作。
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._stage: str = "init"
+        self._tool_history: list[str] = []
+
+    @property
+    def current_stage(self) -> str:
+        return self._stage
+
+    # ---- wrap_model_call: 注入当前阶段 + 可用工具提示 ----
+
     def wrap_model_call(self, request: dict, handler):
-        """注入输出格式约束到 system prompt。"""
-        structure_rules = (
-            "\n\n【输出铁律】\n"
-            "1. 最终回复必须包含两个标记章节：【小说正文】和【发布方案】\n"
-            "2. 【小说正文】中必须包含完整故事，至少 2000 字，有开头、发展、高潮、结局\n"
-            "3. 【发布方案】中必须包含：5 个备选标题、5-8 个话题标签、爆款概率评估\n"
-            "4. 不要输出未完成的故事或留下「未完待续」\n"
+        self._inject_stage_context(request)
+        return handler(request)
+
+    def _inject_stage_context(self, request: dict) -> None:
+        available = STAGE_TOOLS.get(self._stage, [])
+        next_stage = STAGE_TRANSITIONS.get(self._stage, "done")
+        label = STAGE_LABELS.get(self._stage, self._stage)
+
+        stage_hint = (
+            f"\n\n【当前阶段：{label}】\n"
+            f"可用工具：{', '.join(available) if available else '无（请输出最终结果）'}\n"
+            f"下一阶段：{STAGE_LABELS.get(next_stage, next_stage)}\n"
+            f"已完成步骤：{' → '.join(self._tool_history) if self._tool_history else '无'}\n"
         )
 
         messages = request.get("messages", [])
-        if messages and hasattr(messages[0], "content"):
+        if messages:
             first = messages[0]
-            if getattr(first, "type", "") == "system" or getattr(first, "role", "") == "system":
-                first.content = (first.content or "") + structure_rules
+            role = getattr(first, "type", "") or getattr(first, "role", "")
+            if role in ("system",):
+                first.content = (first.content or "") + stage_hint
 
-        return handler(request)
+    # ---- wrap_tool_call: 跟踪调用 + 检查是否越权 ----
 
     def wrap_tool_call(self, tool_name: str, tool_input: dict, handler):
-        """校验关键工具的输出质量。"""
-        result = handler(tool_name, tool_input)
+        available = STAGE_TOOLS.get(self._stage, [])
 
+        if tool_name not in available:
+            logger.warning(
+                "工具 %s 不在当前阶段 %s 的可用列表中（可用: %s），允许调用但可能不合理",
+                tool_name, self._stage, available,
+            )
+
+        # 执行工具
+        result = handler(tool_name, tool_input)
+        self._tool_history.append(tool_name)
+
+        # 阶段推进
+        self._advance_stage(tool_name)
+
+        # 质量校验
+        result = self._validate_output(tool_name, result)
+
+        return result
+
+    def _advance_stage(self, tool_name: str) -> None:
+        stage_triggers = {
+            "analyze_topic":    "topic_analyzed",
+            "plan_outline":     "outline_planned",
+            "write_draft":      "draft_written",
+            "polish_draft":     "polished",
+            "synthesize":       "done",
+        }
+        new_stage = stage_triggers.get(tool_name)
+        if new_stage:
+            old = self._stage
+            self._stage = new_stage
+            logger.info(
+                "阶段推进: %s → %s (触发工具: %s)",
+                STAGE_LABELS.get(old, old),
+                STAGE_LABELS.get(new_stage, new_stage),
+                tool_name,
+            )
+
+    def _validate_output(self, tool_name: str, result) -> Any:
+        """校验关键工具的输出质量。"""
         if tool_name == "write_draft" and isinstance(result, str):
             if len(result) < 500:
                 return result + (
-                    "\n\n⚠️ [系统提示] 正文不足 500 字，不符合知乎爆款标准。"
-                    "请确保完整故事至少 2000 字。"
+                    "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
                 )
-
         if tool_name == "polish_draft" and isinstance(result, str):
             if len(result) < 500:
                 return result + (
-                    "\n\n⚠️ [系统提示] 润色后正文太短，请输出完整全文。"
+                    "\n\n⚠️ 润色后正文太短，请输出完整全文。"
                 )
-
         return result
 
 
-class ContentValidationMiddleware(AgentMiddleware):
-    """在每次 Agent 响应后检查输出完整性。"""
+class FinalOutputMiddleware(AgentMiddleware):
+    """确保最终输出包含【小说正文】和【发布方案】两个章节。"""
 
-    def after_model_call(self, response: Any, handler) -> Any:
-        result = handler(response)
-
-        # 提取最后一条 AI 消息的文本内容
-        messages = result.get("messages", []) if isinstance(result, dict) else []
-        if messages:
-            last_msg = messages[-1]
-            content = getattr(last_msg, "content", "")
-            if isinstance(content, str) and len(content) > 50:
-                has_story = "【小说正文】" in content
-                has_synthesis = "【发布方案】" in content
-                if not has_story:
-                    logger = __import__("logging").getLogger(__name__)
-                    logger.warning("Coordinator 输出缺少【小说正文】标记")
-                if not has_synthesis:
-                    logger = __import__("logging").getLogger(__name__)
-                    logger.warning("Coordinator 输出缺少【发布方案】标记")
-
-        return result
+    def wrap_model_call(self, request: dict, handler):
+        output_rules = (
+            "\n\n【输出铁律】\n"
+            "1. 最终回复必须包含两个标记章节：【小说正文】和【发布方案】\n"
+            "2. 【小说正文】：完整故事 ≥2000 字，有开头、发展、高潮、结局\n"
+            "3. 【发布方案】：5 个备选标题 + 5-8 个标签 + 爆款概率评估\n"
+            "4. 禁止输出不完整的故事或「未完待续」\n"
+        )
+        messages = request.get("messages", [])
+        if messages and hasattr(messages[0], "content"):
+            first = messages[0]
+            role = getattr(first, "type", "") or getattr(first, "role", "")
+            if role in ("system",):
+                first.content = (first.content or "") + output_rules
+        return handler(request)
 
 
 def create_coordinator(
@@ -378,8 +455,8 @@ def create_coordinator(
         tools=tools,
         system_prompt=system_prompt,
         middleware=[
-            OutputStructureMiddleware(),
-            ContentValidationMiddleware(),
+            StageGateMiddleware(),
+            FinalOutputMiddleware(),
         ],
     )
     return agent
