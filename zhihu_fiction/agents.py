@@ -409,12 +409,16 @@ class StageGateMiddleware(AgentMiddleware):
         return result
 
     def _detect_approval(self, result) -> None:
-        messages = result.get("messages", []) if isinstance(result, dict) else []
-        if not messages:
-            return
-        last = messages[-1]
-        content = getattr(last, "content", "") if not isinstance(last, dict) else last.get("content", "")
-        if not isinstance(content, str):
+        # result can be ModelResponse, AIMessage, or dict
+        content = ""
+        if isinstance(result, dict):
+            messages = result.get("messages", [])
+            if messages:
+                last = messages[-1]
+                content = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
+        else:
+            content = getattr(result, "content", "")
+        if not isinstance(content, str) or not content:
             return
         info = self._stage_info()
         marker = info.get("approval_marker", "")
@@ -465,13 +469,12 @@ class StageGateMiddleware(AgentMiddleware):
 
     # ---- wrap_tool_call ----
 
-    def wrap_tool_call(self, tool_call, runtime, handler):
-        if isinstance(tool_call, dict):
-            tool_name = tool_call.get("name", "")
-        else:
-            tool_name = getattr(tool_call, "name", "")
+    def wrap_tool_call(self, request, handler):
+        # ToolCallRequest has: tool_call (dict with name/args), tool, state, runtime
+        tc = request.tool_call if hasattr(request, "tool_call") else request
+        tool_name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
 
-        result = handler(tool_call, runtime)
+        result = handler(request)
         self._tool_history.append(tool_name)
         self._try_advance()
         return self._validate(tool_name, result)
@@ -486,10 +489,14 @@ class StageGateMiddleware(AgentMiddleware):
             self._stage = best
 
     def _validate(self, tool_name: str, result) -> Any:
-        if tool_name == "write_draft" and isinstance(result, str) and len(result) < 500:
-            return result + "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
-        if tool_name == "polish_draft" and isinstance(result, str) and len(result) < 500:
-            return result + "\n\n⚠️ 润色后正文太短，请输出完整全文。"
+        # Unwrap ToolMessage to get content string
+        text = result
+        if not isinstance(result, str):
+            text = getattr(result, "content", "") or str(result)
+        if tool_name == "write_draft" and isinstance(text, str) and len(text) < 500:
+            return text + "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
+        if tool_name == "polish_draft" and isinstance(text, str) and len(text) < 500:
+            return text + "\n\n⚠️ 润色后正文太短，请输出完整全文。"
         return result
 
 
