@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zhihu Fiction Studio</title>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js" defer></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .tab-active { border-bottom: 2px solid #6366f1; color: #6366f1; }
+  .progress-bar { transition: width 0.5s ease; }
+  .stage-ok { color: #22c55e; } .stage-running { color: #f59e0b; }
+  .stage-failed { color: #ef4444; } .stage-skipped { color: #9ca3af; }
+  .log-line { font-family: 'SF Mono', monospace; font-size: 13px; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="app()" x-init="init()">
+
+<!-- Header -->
+<header class="bg-white shadow-sm border-b">
+  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+    <h1 class="text-lg font-bold text-gray-800">Zhihu Fiction Studio</h1>
+    <span class="text-xs text-gray-400">知乎爆款小说自动创作系统</span>
+  </div>
+</header>
+
+<!-- Tabs -->
+<nav class="bg-white border-b">
+  <div class="max-w-5xl mx-auto px-4 flex gap-0">
+    <button @click="tab='run'" :class="tab==='run'?'tab-active':''"
+      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">运行</button>
+    <button @click="tab='history'; loadHistory()" :class="tab==='history'?'tab-active':''"
+      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">历史</button>
+    <button @click="tab='skills'; loadSkills()" :class="tab==='skills'?'tab-active':''"
+      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">技能</button>
+    <button @click="tab='scheduler'; loadScheduler()" :class="tab==='scheduler'?'tab-active':''"
+      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">调度</button>
+    <button @click="tab='stories'; loadStories()" :class="tab==='stories'?'tab-active':''"
+      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">作品</button>
+  </div>
+</nav>
+
+<main class="max-w-5xl mx-auto px-4 py-6">
+
+  <!-- ====== RUN TAB ====== -->
+  <section x-show="tab==='run'" x-cloak>
+    <div class="bg-white rounded-lg shadow p-6 mb-4">
+      <h2 class="text-base font-semibold mb-4">创作配置</h2>
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">主题（留空则 AI 自选热榜话题）</label>
+          <input x-model="runForm.topic" placeholder="如：穿越古代用现代医学救人"
+            class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">目标流派</label>
+          <select x-model="runForm.genre" class="w-full border rounded px-3 py-2 text-sm">
+            <option value="">自动识别</option>
+            <template x-for="g in genres" :key="g">
+              <option :value="g" x-text="g"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+      <button @click="startRun()" :disabled="running"
+        class="px-6 py-2 bg-indigo-600 text-white rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">
+        <span x-show="!running">开始创作</span>
+        <span x-show="running" class="flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          运行中...
+        </span>
+      </button>
+    </div>
+
+    <!-- Progress -->
+    <div x-show="running" class="bg-white rounded-lg shadow p-6 mb-4" x-transition>
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-sm text-gray-500" x-text="progress.message"></span>
+        <span class="text-sm font-mono text-gray-400" x-text="progress.progress + '%'"></span>
+      </div>
+      <div class="w-full bg-gray-200 rounded-full h-2 mb-4">
+        <div class="bg-indigo-600 h-2 rounded-full progress-bar" :style="'width:'+progress.progress+'%'"></div>
+      </div>
+      <div class="max-h-48 overflow-y-auto space-y-1">
+        <template x-for="log in stageLog" :key="log.time">
+          <div class="log-line text-gray-600 flex gap-2">
+            <span class="text-gray-400 w-20 shrink-0" x-text="log.time"></span>
+            <span :class="'stage-'+log.status" x-text="'['+log.stage+']'"></span>
+            <span x-text="log.message"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Result -->
+    <div x-show="runResult" class="bg-white rounded-lg shadow p-6" x-transition>
+      <h2 class="text-base font-semibold mb-3">创作结果</h2>
+      <div class="grid grid-cols-2 gap-3 text-sm mb-4">
+        <div><span class="text-gray-500">主题：</span><span x-text="runResult.topic"></span></div>
+        <div><span class="text-gray-500">流派：</span><span x-text="runResult.genre"></span></div>
+        <div v-if="runResult.stages?.create"><span class="text-gray-500">字数：</span><span x-text="runResult.stages.create.words"></span></div>
+        <div v-if="runResult.stages?.review"><span class="text-gray-500">评分：</span><span x-text="runResult.stages.review.score?.toFixed(1)"></span></div>
+        <div><span class="text-gray-500">耗时：</span><span x-text="(runResult.total_duration_s/60).toFixed(1)+' 分钟'"></span></div>
+      </div>
+      <div v-if="runResult.published_url && !runResult.published_url.endsWith('.md')" class="text-sm text-blue-600 mb-2">
+        发布地址：<span x-text="runResult.published_url"></span>
+      </div>
+      <button @click="tab='stories'; loadStories()"
+        class="px-4 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50 transition">查看所有作品</button>
+    </div>
+  </section>
+
+  <!-- ====== HISTORY TAB ====== -->
+  <section x-show="tab==='history'" x-cloak>
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+      <div class="p-4 border-b flex justify-between items-center">
+        <h2 class="text-base font-semibold">运行历史 <span class="text-gray-400 text-sm ml-2" x-text="runs.length+' 条'"></span></h2>
+        <button @click="loadHistory()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+      </div>
+      <div x-show="runs.length===0" class="p-8 text-center text-gray-400 text-sm">暂无运行记录，先去「运行」标签创作一篇吧</div>
+      <div class="overflow-x-auto" x-show="runs.length>0">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-left text-gray-500">
+            <tr>
+              <th class="px-4 py-2 font-medium">运行 ID</th>
+              <th class="px-4 py-2 font-medium">主题</th>
+              <th class="px-4 py-2 font-medium">流派</th>
+              <th class="px-4 py-2 font-medium">状态</th>
+              <th class="px-4 py-2 font-medium">字数</th>
+              <th class="px-4 py-2 font-medium">评分</th>
+              <th class="px-4 py-2 font-medium">时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in runs" :key="r.run_id">
+              <tr @click="selectedRun = selectedRun===r.run_id ? null : r.run_id"
+                class="border-t hover:bg-gray-50 cursor-pointer transition">
+                <td class="px-4 py-2 font-mono text-xs" x-text="r.run_id"></td>
+                <td class="px-4 py-2 max-w-40 truncate" x-text="r.topic"></td>
+                <td class="px-4 py-2"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs" x-text="r.genre"></span></td>
+                <td class="px-4 py-2">
+                  <span :class="r.error?'text-red-500':'text-green-500'" x-text="r.error?'失败':'完成'"></span>
+                </td>
+                <td class="px-4 py-2" x-text="r.stages?.create?.words || '-'"></td>
+                <td class="px-4 py-2" x-text="r.stages?.review?.score?.toFixed?.(1) || '-'"></td>
+                <td class="px-4 py-2 text-gray-400 text-xs" x-text="r.timestamp?.slice(11,16)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <!-- Expanded detail -->
+    <div x-show="selectedRun" class="bg-white rounded-lg shadow p-6 mt-4" x-transition>
+      <template x-for="r in runs.filter(x=>x.run_id===selectedRun)" :key="r.run_id">
+        <div>
+          <h3 class="font-semibold mb-2" x-text="r.topic"></h3>
+          <div class="grid grid-cols-3 gap-3 text-sm">
+            <template x-for="(s, name) in r.stages" :key="name">
+              <div class="border rounded p-3">
+                <div class="text-gray-500 text-xs mb-1" x-text="name"></div>
+                <div :class="'stage-'+s.status" x-text="s.status"></div>
+                <template x-for="(v, k) in s" :key="k">
+                  <div v-if="k!=='status'" class="text-gray-500 text-xs" x-text="k+': '+v"></div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- ====== SKILLS TAB ====== -->
+  <section x-show="tab==='skills'" x-cloak>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <template x-for="g in genres" :key="g">
+        <div @click="viewSkill(g)" class="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition text-center">
+          <div class="text-2xl mb-2" x-text="skillIcons[g] || '📚'"></div>
+          <div class="font-medium text-sm" x-text="g"></div>
+        </div>
+      </template>
+    </div>
+    <div x-show="genres.length===0" class="text-center text-gray-400 text-sm py-12">技能库为空，请先蒸馏数据</div>
+
+    <!-- Skill Modal -->
+    <div x-show="skillModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" @click.self="skillModal=null" x-transition>
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6 m-4">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-semibold text-lg" x-text="skillGenre"></h3>
+          <button @click="skillModal=null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+        </div>
+        <pre class="text-sm text-gray-700 whitespace-pre-wrap font-sans" x-text="skillContent"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== SCHEDULER TAB ====== -->
+  <section x-show="tab==='scheduler'" x-cloak>
+    <div class="bg-white rounded-lg shadow p-6">
+      <div class="flex items-center gap-3 mb-4">
+        <div :class="scheduler.active?'bg-green-500':'bg-gray-300'" class="w-3 h-3 rounded-full"></div>
+        <span class="font-semibold" x-text="scheduler.active?'调度运行中':'调度未启动'"></span>
+      </div>
+      <div x-show="scheduler.active" class="text-sm text-gray-500 mb-4">
+        <div>间隔：每 <span x-text="scheduler.interval_minutes"></span> 分钟</div>
+        <div>启动时间：<span x-text="scheduler.started_at"></span></div>
+      </div>
+      <div class="flex gap-3">
+        <div x-show="scheduler.active" class="flex gap-3 items-center">
+          <span class="text-sm text-gray-500">间隔(分钟)：</span>
+          <input x-model="schedulerInterval" type="number" min="10" class="w-24 border rounded px-2 py-1 text-sm">
+        </div>
+        <button v-if="!scheduler.active" @click="startScheduler()"
+          class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">启动调度</button>
+        <button v-if="scheduler.active" @click="stopScheduler()"
+          class="px-4 py-2 bg-red-500 text-white rounded text-sm hover:bg-red-600 transition">停止调度</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== STORIES TAB ====== -->
+  <section x-show="tab==='stories'" x-cloak>
+    <div class="space-y-4">
+      <template x-for="s in stories" :key="s.path">
+        <div class="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition" @click="viewStory(s)">
+          <div class="flex justify-between items-start mb-2">
+            <h3 class="font-medium text-sm" x-text="s.name"></h3>
+            <span class="text-xs text-gray-400" x-text="s.created_at?.slice(0,10)"></span>
+          </div>
+          <p class="text-sm text-gray-500 line-clamp-2" x-text="s.excerpt"></p>
+        </div>
+      </template>
+      <div x-show="stories.length===0" class="text-center text-gray-400 text-sm py-12">暂无作品</div>
+    </div>
+
+    <!-- Story Viewer Modal -->
+    <div x-show="storyViewer" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" @click.self="storyViewer=null" x-transition>
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 m-4">
+        <div class="flex justify-between items-center mb-4 sticky top-0 bg-white pb-2 border-b">
+          <h3 class="font-semibold text-lg" x-text="viewingStory?.name"></h3>
+          <button @click="storyViewer=null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+        </div>
+        <div class="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap font-sans leading-relaxed" x-text="storyContent"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+function app() {
+  return {
+    tab: 'run',
+    genres: [],
+    runs: [],
+    selectedRun: null,
+    stories: [],
+    skillIcons: {'悬疑':'🔍','历史':'📜','科幻':'🚀','言情':'💕','职场':'💼','脑洞':'💡','现实':'🏠','武侠':'⚔️'},
+    // Run form
+    runForm: { topic: '', genre: '' },
+    running: false,
+    runId: null,
+    progress: { stage: '', status: '', message: '就绪', progress: 0 },
+    stageLog: [],
+    runResult: null,
+    // Scheduler
+    scheduler: { active: false, interval_minutes: 360 },
+    schedulerInterval: 360,
+    // Skills modal
+    skillModal: false,
+    skillGenre: '',
+    skillContent: '',
+    // Stories
+    storyViewer: false,
+    viewingStory: null,
+    storyContent: '',
+
+    async init() {
+      try { this.genres = await (await fetch('/api/skills/genres')).json(); } catch(e) {}
+      this.loadScheduler();
+    },
+
+    // ---- Run ----
+    async startRun() {
+      this.running = true; this.runResult = null; this.stageLog = []; this.progress = {message:'启动中...',progress:0};
+      try {
+        const res = await fetch('/api/run', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(this.runForm),
+        });
+        if (res.status===409) { alert('已有运行正在执行，请等待完成'); this.running=false; return; }
+        const data = await res.json();
+        this.runId = data.run_id;
+        this.connectSSE(data.run_id);
+      } catch(e) {
+        this.running = false;
+        this.stageLog.push({time: new Date().toLocaleTimeString(), stage:'error', status:'failed', message:'请求失败: '+e.message});
+      }
+    },
+
+    connectSSE(runId) {
+      const es = new EventSource('/api/stream/'+runId);
+      es.addEventListener('stage_update', e => {
+        const d = JSON.parse(e.data);
+        this.progress = d;
+        this.stageLog.push({time: new Date().toLocaleTimeString(), stage:d.stage, status:d.status, message:d.message});
+      });
+      es.addEventListener('complete', e => {
+        const d = JSON.parse(e.data);
+        this.running = false;
+        if (d.status==='completed') this.runResult = d;
+        else this.stageLog.push({time: new Date().toLocaleTimeString(), stage:'error', status:'failed', message:d.message});
+        es.close();
+      });
+      es.onerror = () => { /* will reconnect or close after complete */ };
+    },
+
+    // ---- History ----
+    async loadHistory() { try { this.runs = await (await fetch('/api/runs?limit=100')).json(); } catch(e) {} },
+
+    // ---- Skills ----
+    async loadSkills() { try { this.genres = await (await fetch('/api/skills/genres')).json(); } catch(e) {} },
+    async viewSkill(genre) {
+      try {
+        const d = await (await fetch('/api/skills/'+encodeURIComponent(genre))).json();
+        this.skillGenre = genre; this.skillContent = d.content; this.skillModal = true;
+      } catch(e) {}
+    },
+
+    // ---- Scheduler ----
+    async loadScheduler() { try { this.scheduler = await (await fetch('/api/scheduler')).json(); } catch(e) {} },
+    async startScheduler() {
+      try {
+        await fetch('/api/scheduler/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({interval: this.schedulerInterval})});
+        await this.loadScheduler();
+      } catch(e) {}
+    },
+    async stopScheduler() {
+      try { await fetch('/api/scheduler/stop', {method:'POST'}); await this.loadScheduler(); } catch(e) {}
+    },
+
+    // ---- Stories ----
+    async loadStories() { try { this.stories = await (await fetch('/api/stories')).json(); } catch(e) {} },
+    async viewStory(s) {
+      try {
+        const d = await (await fetch('/api/stories/'+encodeURIComponent(s.path))).json();
+        this.viewingStory = s; this.storyContent = d.content; this.storyViewer = true;
+      } catch(e) {}
+    },
+  }
+}
+</script>
+</body>
+</html>
