@@ -125,12 +125,22 @@ def _patch_for_progress(pipeline: Pipeline, run_id: str):
     # Patch orchestrator.run_coordinator
     import zhihu_fiction.orchestrator as orch_mod
     _orig_coord = orch_mod.run_coordinator
+
+    def _make_stream_cb():
+        def _cb(event: dict):
+            asyncio.run(q.put({
+                "type": "agent_event",
+                "data": {"run_id": run_id, **event},
+            }))
+        return _cb
+
     def _coord_wrapper(*args, **kwargs):
-        asyncio.run(_emit("create", "running", "正在创作小说 (DeepAgent 协调中)...", 35))
+        asyncio.run(_emit("create", "running", "正在创作 (DeepAgent 协调中)...", 35))
+        kwargs["stream_callback"] = _make_stream_cb()
         try:
             result = _orig_coord(*args, **kwargs)
             word_count = len(result.final_story)
-            asyncio.run(_emit("create", "completed", f"小说创作完成，{word_count} 字", 80, words=word_count))
+            asyncio.run(_emit("create", "completed", f"创作完成，{word_count} 字", 80, words=word_count))
             return result
         except Exception as e:
             asyncio.run(_emit("create", "failed", str(e), -1))
@@ -234,6 +244,9 @@ async def stream_run(run_id: str):
             if event["type"] == "stage_update":
                 payload = json.dumps(event["data"], ensure_ascii=False)
                 yield f"event: stage_update\ndata: {payload}\n\n"
+            elif event["type"] == "agent_event":
+                payload = json.dumps(event["data"], ensure_ascii=False)
+                yield f"event: agent_event\ndata: {payload}\n\n"
             elif event["type"] == "complete":
                 payload = json.dumps(event["data"], ensure_ascii=False)
                 yield f"event: complete\ndata: {payload}\n\n"

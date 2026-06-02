@@ -107,19 +107,15 @@ def run_coordinator(
     hot_trends: str = "",
     genre: str | None = None,
     revision_feedback: str = "",
+    stream_callback: callable | None = None,
 ) -> WorkflowResult:
     """Run the Coordinator DeepAgent to create a fiction from topic.
 
     Args:
-        llm: LLM instance
-        coordinator: Compiled DeepAgent from create_coordinator()
-        topic: The fiction topic/theme
-        hot_trends: Current Zhihu hot trends summary (for context)
-        genre: Target genre (optional)
-        revision_feedback: Reviewer feedback for retry (empty on first run)
-
-    Returns:
-        WorkflowResult with the complete fiction and metadata
+        stream_callback: If provided, called with dict events:
+            {"type": "tool_call", "name": str, "args": dict}
+            {"type": "tool_result", "name": str, "content": str}
+            {"type": "ai_text", "content": str}
     """
     feedback_section = ""
     if revision_feedback:
@@ -134,37 +130,55 @@ def run_coordinator(
 最终用【小说正文】和【发布方案】两个标记分别输出。{feedback_section}"""
 
     resolved_genre = genre or "未指定"
+    input_msg = {"messages": [{"role": "user", "content": prompt}]}
 
-    result = coordinator.invoke({
-        "messages": [{"role": "user", "content": prompt}],
-    })
+    if stream_callback is None:
+        result = coordinator.invoke(input_msg)
+        messages = result.get("messages", [])
+    else:
+        messages = []
+        # Stream each message as it comes — capture tool calls/results and AI text
+        for chunk in coordinator.stream(input_msg, stream_mode="messages"):
+            for msg in chunk:
+                msg_type = getattr(msg, "type", "")
+                content = normalize_content(getattr(msg, "content", ""))
 
-    messages = result.get("messages", [])
+                if msg_type == "ai":
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            stream_callback({
+                                "type": "tool_call",
+                                "name": tc.get("name", ""),
+                                "args": tc.get("args", {}),
+                            })
+                    elif content:
+                        stream_callback({"type": "ai_text", "content": content[:200] + ("..." if len(content) > 200 else "")})
+
+                elif msg_type == "tool":
+                    tool_name = getattr(msg, "name", "")
+                    stream_callback({
+                        "type": "tool_result",
+                        "name": tool_name,
+                        "content": content[:200] + ("..." if len(content) > 200 else ""),
+                    })
+
+                messages.append(msg)
+
     if not messages:
         return WorkflowResult(
-            topic=topic,
-            genre=resolved_genre,
-            topic_analysis="",
-            outline="",
-            draft="",
-            polished="",
-            review="",
-            synthesis="",
+            topic=topic, genre=resolved_genre,
+            topic_analysis="", outline="", draft="",
+            polished="", review="", synthesis="",
         )
 
     final_message = messages[-1]
     output = normalize_content(final_message.content)
-
     parsed = _parse_coordinator_output(output)
 
     return WorkflowResult(
-        topic=topic,
-        genre=resolved_genre,
-        topic_analysis="",
-        outline="",
-        draft="",
-        polished=parsed["story"],
-        review="",
+        topic=topic, genre=resolved_genre,
+        topic_analysis="", outline="", draft="",
+        polished=parsed["story"], review="",
         synthesis=parsed["synthesis"],
     )
 
