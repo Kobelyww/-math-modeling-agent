@@ -205,7 +205,8 @@ def _unpatch_pipeline(pipeline: Pipeline):
     orch_mod.run_coordinator = _orig_run_coordinator
 
 
-async def _execute_in_background(run_id: str, pipeline: Pipeline, topic: str | None, genre: str | None):
+async def _execute_in_background(run_id: str, pipeline: Pipeline, topic: str | None, genre: str | None,
+                                 chapters: int = 1):
     global _active_run_id
     q = _run_events.setdefault(run_id, asyncio.Queue())
     try:
@@ -217,7 +218,7 @@ async def _execute_in_background(run_id: str, pipeline: Pipeline, topic: str | N
         _patch_for_progress(pipeline, run_id)
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, lambda: pipeline.run(topic=topic, genre=genre))
+        result = await loop.run_in_executor(None, lambda: pipeline.run(topic=topic, genre=genre, chapters=chapters))
 
         await q.put({"type": "complete", "data": {
             "run_id": run_id, "status": "completed",
@@ -265,6 +266,7 @@ async def trigger_run(req: Request):
     body = await req.json() if req.headers.get("content-type") == "application/json" else {}
     topic = (body.get("topic") or "").strip() or None
     genre = (body.get("genre") or "").strip() or None
+    chapters = body.get("chapters", 1)
 
     with _active_lock:
         if _active_run_id:
@@ -276,7 +278,7 @@ async def trigger_run(req: Request):
     _run_events[run_id] = asyncio.Queue()
     _run_progress[run_id] = {"status": "starting"}
 
-    asyncio.create_task(_execute_in_background(run_id, pipeline, topic, genre))
+    asyncio.create_task(_execute_in_background(run_id, pipeline, topic, genre, chapters))
     return {"run_id": run_id, "status": "started"}
 
 
@@ -306,6 +308,21 @@ async def stream_run(run_id: str):
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/run/continue")
+async def continue_chapter(req: Request):
+    body = await req.json() if req.headers.get("content-type") == "application/json" else {}
+    topic = body.get("topic", "")
+    genre = body.get("genre", "")
+    existing_story = body.get("existing_story", "")
+    chapter_count = body.get("chapter_count", 1)
+
+    pipeline = _create_pipeline()
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: pipeline.continue_chapter(topic, genre, existing_story, chapter_count))
+    return result.published_url if hasattr(result, "published_url") else {"status": "ok"}
 
 
 # ============================================================

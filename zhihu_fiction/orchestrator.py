@@ -108,18 +108,31 @@ def run_coordinator(
     genre: str | None = None,
     revision_feedback: str = "",
     stream_callback: callable | None = None,
+    chapter_index: int = 1,
+    total_chapters: int = 1,
+    existing_story: str = "",
 ) -> WorkflowResult:
-    """Run the Coordinator DeepAgent to create a fiction from topic.
+    """Run the Coordinator DeepAgent.
 
     Args:
-        stream_callback: If provided, called with dict events:
-            {"type": "tool_call", "name": str, "args": dict}
-            {"type": "tool_result", "name": str, "content": str}
-            {"type": "ai_text", "content": str}
+        stream_callback: SSE event callback
+        chapter_index: Current chapter (1-based)
+        total_chapters: Total planned chapters
+        existing_story: Previous chapters content (continuation mode)
     """
     feedback_section = ""
     if revision_feedback:
         feedback_section = f"\n\n【修改要求】上一轮评审未达标，请根据以下反馈重新创作：\n{revision_feedback}"
+
+    chapter_info = ""
+    if total_chapters > 1:
+        chapter_info = (
+            f"\n\n【章节信息】\n这是第 {chapter_index}/{total_chapters} 章。\n"
+            + (f"已有前文：\n{existing_story[-2000:]}\n" if existing_story else "")
+            + "请调用 write_draft(chapter_index={0}, total_chapters={1}) 创作本章。".format(chapter_index, total_chapters)
+        )
+    elif existing_story:
+        chapter_info = f"\n\n【续写模式】已有前文，请续写下一章：\n{existing_story[-2000:]}\n"
 
     prompt = f"""请创作一篇关于以下主题的知乎爆款小说：{topic}
 
@@ -127,7 +140,7 @@ def run_coordinator(
 {hot_trends or '暂无热榜数据，请根据你的知识判断选题方向'}
 
 请按照标准工作流程完成创作：选题分析 → 大纲规划 → 初稿创作 → 润色优化 → 发布方案整合。
-最终用【小说正文】和【发布方案】两个标记分别输出。{feedback_section}"""
+最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}{feedback_section}"""
 
     resolved_genre = genre or "未指定"
     input_msg = {"messages": [{"role": "user", "content": prompt}]}

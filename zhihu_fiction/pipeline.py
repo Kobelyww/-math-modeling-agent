@@ -144,8 +144,9 @@ class Pipeline:
 
         RUN_DIR.mkdir(parents=True, exist_ok=True)
 
-    def run(self, topic: str | None = None, genre: str | None = None) -> RunResult:
-        """Execute one full pipeline run."""
+    def run(self, topic: str | None = None, genre: str | None = None,
+            chapters: int = 1) -> RunResult:
+        """Execute one full pipeline run. chapters>1 enables multi-chapter mode."""
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         result = RunResult(
             run_id=run_id,
@@ -211,13 +212,28 @@ class Pipeline:
         try:
             from .orchestrator import run_coordinator
 
-            wf_result = run_coordinator(
-                self.llm,
-                self.coordinator,
-                topic=topic,
-                hot_trends=hot_summary,
-                genre=genre,
-            )
+            all_chapters: list[str] = []
+            total_chapters = getattr(self, '_chapters', 1) or 1
+            if chapters and chapters > 1:
+                total_chapters = chapters
+
+            for ch_idx in range(1, total_chapters + 1):
+                existing = "\n\n".join(all_chapters) if all_chapters else ""
+                wf_result = run_coordinator(
+                    self.llm, self.coordinator,
+                    topic=topic, hot_trends=hot_summary, genre=genre,
+                    chapter_index=ch_idx, total_chapters=total_chapters,
+                    existing_story=existing,
+                )
+                all_chapters.append(wf_result.final_story)
+
+            # Combine all chapters
+            if not all_chapters:
+                wf_result = run_coordinator(
+                    self.llm, self.coordinator,
+                    topic=topic, hot_trends=hot_summary, genre=genre,
+                )
+                all_chapters = [wf_result.final_story]
 
             # Quality gate: review + retry loop
             review_rounds = 0
@@ -255,13 +271,11 @@ class Pipeline:
                 extra={"score": review["total_score"], "rounds": review_rounds},
             )
 
-            # Save story to output directory
+            # Save story to output directory (all chapters)
+            full_story = "\n\n".join(all_chapters)
             story_path = self._save_story(
-                run_id=run_id,
-                topic=topic,
-                genre=result.genre,
-                story=wf_result.final_story,
-                synthesis=wf_result.synthesis,
+                run_id=run_id, topic=topic, genre=result.genre,
+                story=full_story, synthesis=wf_result.synthesis,
             )
             result.published_url = str(story_path)
 
@@ -365,6 +379,31 @@ class Pipeline:
             if excerpt:
                 lines.append(f"   摘要: {excerpt}")
         return "\n".join(lines)
+
+    def continue_chapter(self, topic: str, genre: str, existing_story: str,
+                         chapter_count: int) -> RunResult:
+        """Continue an existing story with one more chapter. Returns quickly (no scrape)."""
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result = RunResult(run_id=run_id, trigger="manual", topic=topic, genre=genre,
+                           timestamp=datetime.now().isoformat())
+        start = time.time()
+        from .orchestrator import run_coordinator
+        wf_result = run_coordinator(
+            self.llm, self.coordinator,
+            topic=topic, genre=genre,
+            chapter_index=chapter_count + 1, total_chapters=0,
+            existing_story=existing_story,
+        )
+        new_chapter = wf_result.final_story
+        full_story = existing_story + "\n\n" + new_chapter
+        story_path = self._save_story(run_id=run_id, topic=topic, genre=genre,
+                                       story=full_story, synthesis=wf_result.synthesis)
+        result.stages["create"] = StageRecord(status="ok", duration_s=round(time.time()-start, 1),
+                                               extra={"words": len(new_chapter)})
+        result.published_url = str(story_path)
+        result.total_duration_s = round(time.time() - start, 1)
+        self._append_run(result)
+        return result
 
     def _save_story(self, run_id: str, topic: str, genre: str, story: str, synthesis: str) -> Path:
         """Save the generated story to output directory."""

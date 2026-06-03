@@ -50,7 +50,7 @@ DRAFT_WRITER_PROMPT = """你是知乎爆款小说创作者，文笔过硬，深�
 5) **爆点密度**：每 1000-1500 字必须有一个小反转或悬念
 6) **写完结局**：结尾必须有完整的收束，让读者有读完的满足感
 
-字数要求：正文至少 2000 字，目标 3000-6000 字。必须达到最低字数要求。
+字数要求：正文至少 8000 字，目标 10000-12000 字。必须达到最低字数要求。
 如果大纲规划的内容较多，优先保证故事情节完整，可以精简描写但不能砍掉关键情节。
 
 输出格式：
@@ -147,23 +147,36 @@ def _make_plan_outline(llm: BaseChatModel):
 
 def _make_write_draft(llm: BaseChatModel):
     @tool
-    def write_draft(topic: str, outline: str, skills: str, revision_feedback: str = "") -> str:
-        """根据大纲创作完整的小说正文。如果有修改意见，基于反馈进行重写。
+    def write_draft(topic: str, outline: str, skills: str, revision_feedback: str = "",
+                    chapter_index: int = 1, total_chapters: int = 1) -> str:
+        """根据大纲创作小说正文。支持单章和多章模式。
 
         Args:
             topic: 创作主题
-            outline: 故事大纲
+            outline: 故事大纲（多章时包含章节划分）
             skills: 相关创作技能卡内容
             revision_feedback: 上一轮的评审修改意见（首次创作时为空字符串）
+            chapter_index: 当前章节序号（1-based，单章模式为1）
+            total_chapters: 总章节数（单章模式为1）
         """
         feedback_section = f"\n\n修改意见（必须照此修改）：\n{revision_feedback}" if revision_feedback else ""
-        prompt = (
-            f"创作主题：{topic}\n\n"
-            f"故事大纲：\n{outline}\n\n"
-            f"{skills}\n\n"
-            f"请根据大纲创作完整的小说正文。重要：你必须写完整个故事，有完整的开头、发展、高潮和结局，至少2000字。不要只写第一章或留下未完待续。"
-            f"{feedback_section}"
-        )
+        if total_chapters > 1:
+            chapter_hint = (
+                f"你正在创作第 {chapter_index}/{total_chapters} 章。\n"
+                f"本章目标：8000-12000 字，有独立的起承转合，章末留悬念钩子。\n"
+                + (f"这是第一章——建立世界观、引入主角和核心冲突。\n" if chapter_index == 1 else "")
+                + (f"这是中间章节——推进主线、展开支线、加深人物关系。\n" if 1 < chapter_index < total_chapters else "")
+                + (f"这是最终章——收束所有伏笔，给出完整结局。\n" if chapter_index == total_chapters else "")
+            )
+            prompt = (
+                f"创作主题：{topic}\n\n故事大纲：\n{outline}\n\n{skills}\n\n"
+                f"{chapter_hint}\n请创作第 {chapter_index} 章完整正文。{feedback_section}"
+            )
+        else:
+            prompt = (
+                f"创作主题：{topic}\n\n故事大纲：\n{outline}\n\n{skills}\n\n"
+                f"请创作完整小说正文，至少 8000 字，有完整的开头、发展、高潮和结局。{feedback_section}"
+            )
         response = llm.invoke([
             SystemMessage(content=DRAFT_WRITER_PROMPT),
             HumanMessage(content=prompt),
@@ -174,17 +187,20 @@ def _make_write_draft(llm: BaseChatModel):
 
 def _make_polish_draft(llm: BaseChatModel):
     @tool
-    def polish_draft(topic: str, draft: str, feedback: str = "") -> str:
-        """对初稿进行润色优化，提升文学质量和传播力。
+    def polish_draft(topic: str, draft: str, feedback: str = "",
+                     chapter_index: int = 1, total_chapters: int = 1) -> str:
+        """润色优化小说正文，提升文学质量和传播力。
 
         Args:
             topic: 创作主题
             draft: 需要润色的小说正文
             feedback: 评审反馈（可选）
+            chapter_index: 当前章节序号
+            total_chapters: 总章节数
         """
+        ch_hint = f"（第 {chapter_index}/{total_chapters} 章）" if total_chapters > 1 else ""
         prompt = (
-            f"创作主题：{topic}\n\n"
-            f"原文：\n{draft}\n\n"
+            f"创作主题：{topic}\n\n原文{ch_hint}：\n{draft}\n\n"
             + (f"评审意见：\n{feedback}\n\n" if feedback else "")
             + "请对以上文本进行润色优化，输出完整的润色后全文。"
         )
@@ -232,25 +248,27 @@ COORDINATOR_SYSTEM_PROMPT = """你是知乎爆款小说创作主编。你通过�
 
 你的工具包括：
 - **analyze_topic**: 分析选题的爆款潜力和题材方向
-- **plan_outline**: 根据选题分析设计故事大纲
-- **write_draft**: 根据大纲创作完整小说正文（2000+ 字）
+- **plan_outline**: 设计故事大纲（多章时需划分每章要点）
+- **write_draft**: 创作小说正文，参数 chapter_index/total_chapters 控制章节
 - **polish_draft**: 润色优化文本质量
-- **synthesize**: 整合所有产出，生成发布方案（标题、标签、爆款评估）
+- **synthesize**: 整合所有产出，生成发布方案
 
 工作流程：
-1. 首先调用 analyze_topic 分析选题，获取题材建议和切入点
-2. 基于选题分析，调用 plan_outline 设计故事结构
-3. 有了大纲后，调用 write_draft 创作正文
-4. 初稿完成后，系统将引导你进行计划审查和质量审查
-5. 审查通过后，调用 polish_draft 润色提升
-6. 最后调用 synthesize 生成发布方案
 
-最终必须交付：完整小说正文（润色后）+ 发布方案。
-用以下格式输出：
-【小说正文】
-（完整的润色后小说）
-【发布方案】
-（synthesize 的输出）"""
+[单章模式] total_chapters=1：
+1. analyze_topic → 2. plan_outline → 3. write_draft(chapter_index=1) → 审查 → polish_draft → synthesize
+
+[多章模式] total_chapters>1：
+1. analyze_topic
+2. plan_outline（标注每章核心情节、人物弧光、悬念点）
+3. 对每一章依次：write_draft(chapter_index=N) → 审查 → polish_draft(chapter_index=N)
+4. 全部章节完成后：synthesize（生成完整发布方案）
+
+[续写模式] 已有前文，需要续写下一章：
+- 根据已有章节内容和大纲，调用 write_draft 创作下一章，保持连贯
+
+每章目标 8000-12000 字。章末留悬念钩子。
+最终输出格式：【小说正文】（含所有章节）和【发布方案】"""
 
 
 # ============================================================
@@ -489,13 +507,12 @@ class StageGateMiddleware(AgentMiddleware):
             self._stage = best
 
     def _validate(self, tool_name: str, result) -> Any:
-        # Unwrap ToolMessage to get content string
         text = result
         if not isinstance(result, str):
             text = getattr(result, "content", "") or str(result)
-        if tool_name == "write_draft" and isinstance(text, str) and len(text) < 500:
-            return text + "\n\n⚠️ 正文不足 500 字，请确保完整故事至少 2000 字。"
-        if tool_name == "polish_draft" and isinstance(text, str) and len(text) < 500:
+        if tool_name == "write_draft" and isinstance(text, str) and len(text) < 1000:
+            return text + "\n\n⚠️ 正文不足 1000 字，请确保完整章节至少 8000 字。"
+        if tool_name == "polish_draft" and isinstance(text, str) and len(text) < 1000:
             return text + "\n\n⚠️ 润色后正文太短，请输出完整全文。"
         return result
 

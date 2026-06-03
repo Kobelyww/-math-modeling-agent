@@ -64,6 +64,17 @@
           </select>
         </div>
       </div>
+      <div class="flex items-center gap-3 mb-4">
+        <label class="text-sm text-gray-600">章节数:</label>
+        <input x-model.number="runForm.chapters" type="number" min="1" max="100"
+          class="w-20 border rounded px-2 py-1.5 text-sm text-center">
+        <button @click="runForm.chapters=1" :class="runForm.chapters===1?'bg-indigo-600 text-white':'bg-gray-100'"
+          class="px-3 py-1.5 rounded text-xs transition">短篇</button>
+        <button @click="runForm.chapters=5" :class="runForm.chapters===5?'bg-indigo-600 text-white':'bg-gray-100'"
+          class="px-3 py-1.5 rounded text-xs transition">中篇 5章</button>
+        <button @click="runForm.chapters=20" :class="runForm.chapters===20?'bg-indigo-600 text-white':'bg-gray-100'"
+          class="px-3 py-1.5 rounded text-xs transition">长篇 20章</button>
+      </div>
       <button @click="startRun()" :disabled="running"
         class="px-6 py-2 bg-indigo-600 text-white rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">
         <span x-show="!running">开始创作</span>
@@ -295,7 +306,7 @@ function app() {
     stories: [],
     skillIcons: {'悬疑':'🔍','历史':'📜','科幻':'🚀','言情':'💕','职场':'💼','脑洞':'💡','现实':'🏠','武侠':'⚔️'},
     // Run form
-    runForm: { topic: '', genre: '' },
+    runForm: { topic: '', genre: '', chapters: 1 },
     running: false,
     runId: null,
     progress: { stage: '', status: '', message: '就绪', progress: 0 },
@@ -325,7 +336,7 @@ function app() {
         const res = await fetch('/api/run', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(this.runForm),
+          body: JSON.stringify({topic: this.runForm.topic, genre: this.runForm.genre, chapters: this.runForm.chapters}),
         });
         if (res.status===409) { alert('已有运行正在执行，请等待完成'); this.running=false; return; }
         const data = await res.json();
