@@ -173,12 +173,31 @@ def run_coordinator(
             polished="", review="", synthesis="",
         )
 
-    final_message = messages[-1]
-    if isinstance(final_message, dict):
-        final_content = final_message.get("content", "")
-    else:
-        final_content = getattr(final_message, "content", "")
-    output = normalize_content(final_content or "")
+    # Reverse-search for the final AI message containing the story markers.
+    # DeepAgents injects write_todos calls, so messages[-1] is often a
+    # tool result, not the final Coordinator summary.
+    output = ""
+    for msg in reversed(messages):
+        content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+        content = normalize_content(content or "")
+        if "【小说正文】" in content:
+            output = content
+            break
+    if not output:
+        # Fallback: use the last AI-type message
+        for msg in reversed(messages):
+            msg_type = msg.get("type", "") if isinstance(msg, dict) else getattr(msg, "type", "")
+            if msg_type == "ai":
+                content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+                output = normalize_content(content or "")
+                if output:
+                    break
+    if not output:
+        # Last resort: try the very last message
+        last = messages[-1]
+        output = normalize_content(
+            (last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")) or ""
+        )
     parsed = _parse_coordinator_output(output)
 
     return WorkflowResult(
