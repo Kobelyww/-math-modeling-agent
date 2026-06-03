@@ -136,35 +136,37 @@ def run_coordinator(
         result = coordinator.invoke(input_msg)
         messages = result.get("messages", [])
     else:
-        messages = []
-        for chunk in coordinator.stream(input_msg, stream_mode="messages"):
-            # chunk can be a message, a (message, metadata) tuple, or a list
-            items = chunk if isinstance(chunk, list) else [chunk]
-            for msg in items:
-                # Normalize: msg can be a LangChain message object or a dict
-                if isinstance(msg, (tuple, list)) and len(msg) >= 1:
-                    msg = msg[0]  # (message, metadata) tuple → take message
-
-                msg_type = (getattr(msg, "type", "") if not isinstance(msg, dict) else msg.get("type", ""))
-                msg_content = (getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", ""))
-                msg_name = (getattr(msg, "name", "") if not isinstance(msg, dict) else msg.get("name", ""))
-                msg_tool_calls = (getattr(msg, "tool_calls", None) if not isinstance(msg, dict) else msg.get("tool_calls"))
-
-                content_str = normalize_content(msg_content or "")
+        # Use stream_mode="values" to get complete state snapshots (not token chunks).
+        # stream_mode="messages" returns AIMessageChunk with empty content.
+        last_state = None
+        for chunk in coordinator.stream(input_msg, stream_mode="values"):
+            last_state = chunk
+            # Extract tool call events from the latest messages for the frontend
+            msgs = chunk.get("messages", []) if isinstance(chunk, dict) else []
+            if msgs:
+                last_msg = msgs[-1]
+                msg_type = (last_msg.get("type", "") if isinstance(last_msg, dict)
+                            else getattr(last_msg, "type", ""))
+                msg_name = (last_msg.get("name", "") if isinstance(last_msg, dict)
+                            else getattr(last_msg, "name", ""))
+                content = (last_msg.get("content", "") if isinstance(last_msg, dict)
+                           else normalize_content(getattr(last_msg, "content", "") or ""))
 
                 if msg_type == "ai":
-                    if msg_tool_calls:
-                        for tc in msg_tool_calls:
-                            tc_name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
-                            tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
-                            stream_callback({"type": "tool_call", "name": tc_name, "args": tc_args})
-                    elif content_str:
-                        stream_callback({"type": "ai_text", "content": content_str})
+                    tc = (last_msg.get("tool_calls", None) if isinstance(last_msg, dict)
+                          else getattr(last_msg, "tool_calls", None))
+                    if tc:
+                        for t in tc:
+                            t_name = t.get("name", "") if isinstance(t, dict) else getattr(t, "name", "")
+                            t_args = t.get("args", {}) if isinstance(t, dict) else getattr(t, "args", {})
+                            stream_callback({"type": "tool_call", "name": t_name, "args": t_args})
+                    elif content:
+                        stream_callback({"type": "ai_text", "content": content})
 
                 elif msg_type == "tool":
-                    stream_callback({"type": "tool_result", "name": msg_name, "content": content_str})
+                    stream_callback({"type": "tool_result", "name": msg_name, "content": content})
 
-                messages.append(msg)
+        messages = last_state.get("messages", []) if last_state else []
 
     if not messages:
         return WorkflowResult(
@@ -173,31 +175,41 @@ def run_coordinator(
             polished="", review="", synthesis="",
         )
 
+    # Debug: dump all message types to help trace the 0-word issue
+    import logging
+    _log = logging.getLogger(__name__)
+    for i, m in enumerate(messages):
+        mt = m.get("type", "?") if isinstance(m, dict) else getattr(m, "type", "?")
+        mc = (m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")) or ""
+        mc = (mc[:80] + "...") if len(str(mc)) > 80 else str(mc)
+        mn = (m.get("name", "") if isinstance(m, dict) else getattr(m, "name", ""))
+        extra = f" name={mn}" if mn else ""
+        _log.debug("msg[%d] type=%s content=%s%s", i, mt, repr(mc), extra)
+
     # Reverse-search for the final AI message containing the story markers.
-    # DeepAgents injects write_todos calls, so messages[-1] is often a
-    # tool result, not the final Coordinator summary.
     output = ""
     for msg in reversed(messages):
         content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
         content = normalize_content(content or "")
         if "【小说正文】" in content:
             output = content
+            _log.info("Found 【小说正文】 at reversed position")
             break
     if not output:
-        # Fallback: use the last AI-type message
         for msg in reversed(messages):
             msg_type = msg.get("type", "") if isinstance(msg, dict) else getattr(msg, "type", "")
             if msg_type == "ai":
                 content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
                 output = normalize_content(content or "")
                 if output:
+                    _log.info("Fallback to ai message, content_len=%d", len(output))
                     break
     if not output:
-        # Last resort: try the very last message
         last = messages[-1]
         output = normalize_content(
             (last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")) or ""
         )
+        _log.warning("Last resort — no 【小说正文】 found, using messages[-1]")
     parsed = _parse_coordinator_output(output)
 
     return WorkflowResult(

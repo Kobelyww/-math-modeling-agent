@@ -73,11 +73,22 @@ _active_run_id: str | None = None
 _scheduler_pipeline: Pipeline | None = None
 
 
+class _NoopPublisher:
+    """Placeholder publisher that skips actual publishing.
+
+    Real publishing is done via the CLI /autopublish command or
+    by calling ZhihuPublisher directly from the frontend's
+    scheduler tab.
+    """
+    def publish(self, title: str, content: str, tags=None, genre: str = "") -> dict:
+        return {"success": True, "url": "", "message": "publish skipped (use /autopublish or scheduler)"}
+
+
 def _create_pipeline() -> Pipeline:
     coordinator, reviewer, llm = create_orchestrator(settings, skills_store=skills_store)
     return Pipeline(
         coordinator=coordinator, reviewer=reviewer, llm=llm,
-        publisher=None,  # type: ignore[arg-type]
+        publisher=_NoopPublisher(),
         quality_threshold=6.0, max_rewrites=2,
     )
 
