@@ -213,9 +213,8 @@ class Pipeline:
             from .orchestrator import run_coordinator
 
             all_chapters: list[str] = []
-            total_chapters = getattr(self, '_chapters', 1) or 1
-            if chapters and chapters > 1:
-                total_chapters = chapters
+            existing = ""
+            total_chapters = chapters if (chapters and chapters > 1) else 1
 
             for ch_idx in range(1, total_chapters + 1):
                 existing = "\n\n".join(all_chapters) if all_chapters else ""
@@ -235,30 +234,32 @@ class Pipeline:
                 )
                 all_chapters = [wf_result.final_story]
 
-            # Quality gate: review + retry loop
+            # Quality gate: review + always-improve loop
             review_rounds = 0
-            review = None
+            review = {"total_score": 0.0, "full_report": ""}
+
             for round_num in range(self.max_rewrites + 1):
                 review = self.reviewer.review(wf_result.final_story, topic)
                 score = review["total_score"]
                 review_rounds += 1
 
-                if score >= self.quality_threshold:
-                    break
-
+                # Always try to improve — even if score passes threshold
                 if round_num < self.max_rewrites:
-                    feedback = f"评分 {score:.1f}/10 (门槛 {self.quality_threshold})。\n{review['full_report']}"
+                    feedback = (
+                        f"【评审分数】{score:.1f}/10 (门槛 {self.quality_threshold})\n\n"
+                        f"【评审意见】\n{review['full_report']}\n\n"
+                        f"请根据以上评审意见修改小说。即使评分达标，也请针对扣分项进行改进。"
+                    )
                     wf_result = run_coordinator(
-                        self.llm,
-                        self.coordinator,
-                        topic=topic,
-                        hot_trends=hot_summary,
-                        genre=genre,
+                        self.llm, self.coordinator,
+                        topic=topic, hot_trends=hot_summary, genre=genre,
                         revision_feedback=feedback,
+                        chapter_index=ch_idx, total_chapters=total_chapters,
+                        existing_story=existing,
                     )
 
-            if review is None:
-                review = {"total_score": 5.0, "full_report": ""}
+                if score >= self.quality_threshold and round_num > 0:
+                    break  # Already improved once and passed, stop
 
             result.stages["create"] = StageRecord(
                 status="ok",
