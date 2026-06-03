@@ -130,6 +130,7 @@ def _make_plan_outline(llm: BaseChatModel):
         """根据选题分析设计完整的小说大纲。
 
         当你有了选题分析报告后，调用此工具生成故事大纲。
+        大纲会自动经过内容安全筛查。
 
         Args:
             topic: 创作主题
@@ -141,7 +142,10 @@ def _make_plan_outline(llm: BaseChatModel):
             SystemMessage(content=OUTLINE_PLANNER_PROMPT),
             HumanMessage(content=prompt),
         ])
-        return normalize_content(response.content)
+        outline = normalize_content(response.content)
+        # 内容安全筛查
+        from .pipeline import moderate_content
+        return moderate_content(llm, outline)
     return plan_outline
 
 

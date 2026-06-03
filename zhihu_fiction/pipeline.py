@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from .config import APP_ROOT
 from .scraper import scrape_zhihu_hot
 
@@ -113,6 +115,36 @@ class RunResult:
 
 
 # ============================================================
+# Content Moderation
+# ============================================================
+
+MODERATE_PROMPT = """你是内容安全审查专家。检查以下文本是否包含违规内容：
+
+违规类型：
+1. 政治敏感 — 涉及具体政治事件、人物、体制攻击
+2. 暴力血腥 — 过度描写暴力细节
+3. 色情低俗 — 露骨性描写
+4. 违法引导 — 教唆犯罪、诈骗
+5. 平台违规 — 造谣、人身攻击、引战
+
+如果文本安全，直接原样返回。
+如果发现问题，请输出安全润色后的版本：保留核心创意和故事框架，但用中性、安全的表述替换违规部分。
+只输出润色后的文本，不要解释修改了什么。"""
+
+
+def moderate_content(llm, text: str) -> str:
+    """Screen and polish text for content safety. Returns safe version."""
+    if not text or len(text) < 5:
+        return text
+    response = llm.invoke([
+        SystemMessage(content=MODERATE_PROMPT),
+        HumanMessage(content=f"请审查以下文本：\n\n{text}"),
+    ])
+    from .base import normalize_content
+    return normalize_content(response.content)
+
+
+# ============================================================
 # Pipeline
 # ============================================================
 
@@ -204,6 +236,19 @@ class Pipeline:
             result.stages["select_topic"] = StageRecord(
                 status="ok", duration_s=0, extra={"selected": topic}
             )
+
+        # Stage 2.5: Moderate topic (screen for sensitive content)
+        t0_mod = time.time()
+        original_topic = topic
+        topic = moderate_content(self.llm, topic)
+        if topic != original_topic:
+            logger = __import__("logging").getLogger(__name__)
+            logger.info("Topic moderated: %s → %s", original_topic[:50], topic[:50])
+        result.stages["moderate"] = StageRecord(
+            status="ok",
+            duration_s=round(time.time() - t0_mod, 1),
+            extra={"topic_moderated": topic != original_topic},
+        )
 
         # Stage 3: Create (Coordinator + Review loop)
         t0 = time.time()
