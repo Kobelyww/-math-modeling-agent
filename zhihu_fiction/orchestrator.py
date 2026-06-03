@@ -134,13 +134,23 @@ def run_coordinator(
     elif existing_story:
         chapter_info = f"\n\n【续写模式】已有前文，请续写下一章：\n{existing_story[-2000:]}\n"
 
-    prompt = f"""请创作一篇关于以下主题的知乎爆款小说：{topic}
-
-当前知乎热榜趋势参考：
-{hot_trends or '暂无热榜数据，请根据你的知识判断选题方向'}
-
-请按照标准工作流程完成创作：选题分析 → 大纲规划 → 初稿创作 → 润色优化 → 发布方案整合。
-最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}{feedback_section}"""
+    if revision_feedback:
+        prompt = (
+            f"【修改任务】请根据以下评审意见修改小说。\n\n"
+            f"创作主题：{topic}\n\n"
+            f"评审意见：\n{revision_feedback}\n\n"
+            f"重要：你只需要针对评审意见修改小说正文，不需要重新做选题分析和大纲规划。"
+            f"直接调用 write_draft（传入 revision_feedback）和 polish_draft 即可。"
+            f"最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}"
+        )
+    else:
+        prompt = (
+            f"请创作一篇关于以下主题的知乎爆款小说：{topic}\n\n"
+            f"当前知乎热榜趋势参考：\n"
+            f"{hot_trends or '暂无热榜数据，请根据你的知识判断选题方向'}\n\n"
+            f"请按照标准工作流程完成创作：选题分析 → 大纲规划 → 初稿创作 → 润色优化 → 发布方案整合。\n"
+            f"最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}{feedback_section}"
+        )
 
     resolved_genre = genre or "未指定"
     input_msg = {"messages": [{"role": "user", "content": prompt}]}

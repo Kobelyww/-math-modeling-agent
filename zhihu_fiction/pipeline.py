@@ -234,7 +234,7 @@ class Pipeline:
                 )
                 all_chapters = [wf_result.final_story]
 
-            # Quality gate: review + always-improve loop
+            # Quality gate: review + targeted retry
             review_rounds = 0
             review = {"total_score": 0.0, "full_report": ""}
 
@@ -243,12 +243,15 @@ class Pipeline:
                 score = review["total_score"]
                 review_rounds += 1
 
-                # Always try to improve — even if score passes threshold
+                if score >= self.quality_threshold:
+                    break  # 达标，通过
+
                 if round_num < self.max_rewrites:
+                    # 不达标：只重写 draft + polish，不重新跑全流程
                     feedback = (
                         f"【评审分数】{score:.1f}/10 (门槛 {self.quality_threshold})\n\n"
                         f"【评审意见】\n{review['full_report']}\n\n"
-                        f"请根据以上评审意见修改小说。即使评分达标，也请针对扣分项进行改进。"
+                        f"请根据评审意见针对性修改小说。"
                     )
                     wf_result = run_coordinator(
                         self.llm, self.coordinator,
@@ -257,9 +260,6 @@ class Pipeline:
                         chapter_index=ch_idx, total_chapters=total_chapters,
                         existing_story=existing,
                     )
-
-                if score >= self.quality_threshold and round_num > 0:
-                    break  # Already improved once and passed, stop
 
             result.stages["create"] = StageRecord(
                 status="ok",
