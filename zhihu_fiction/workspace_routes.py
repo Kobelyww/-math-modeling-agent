@@ -5,12 +5,24 @@ from fastapi import APIRouter, HTTPException
 
 from .workspace.schemas import (
     CreateTaskRequest,
-    DraftUpdateRequest,
     GeneratePackageRequest,
     ImportScrapedRequest,
     ManualMaterialRequest,
     TopicCardRequest,
 )
+
+
+MATERIAL_PATCH_FIELDS = {"title", "excerpt", "content", "url", "hot_score", "tags"}
+TOPIC_CARD_PATCH_FIELDS = {
+    "title",
+    "genre",
+    "platform",
+    "hook",
+    "angle",
+    "risk_notes",
+    "target_reader",
+}
+DRAFT_PATCH_FIELDS = {"title", "synopsis", "tags", "body", "editor_notes"}
 
 
 def _not_found(name: str) -> HTTPException:
@@ -25,6 +37,20 @@ def _model_dump(model, *, exclude_unset: bool = False) -> dict:
     if hasattr(model, "model_dump"):
         return model.model_dump(exclude_unset=exclude_unset)
     return model.dict(exclude_unset=exclude_unset)
+
+
+def _reject_nulls(raw: dict) -> None:
+    if any(value is None for value in raw.values()):
+        raise HTTPException(status_code=422, detail="Null values are not allowed")
+
+
+def _filter_patch(raw: dict, allowed: set[str]) -> dict:
+    _reject_nulls(raw)
+    extra = set(raw) - allowed
+    if extra:
+        fields = ", ".join(sorted(extra))
+        raise HTTPException(status_code=422, detail=f"Unsupported fields: {fields}")
+    return {key: raw[key] for key in raw}
 
 
 def _record_dict(record) -> dict:
@@ -53,6 +79,7 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
 
     @router.patch("/materials/{material_id}")
     def update_material(material_id: str, changes: dict):
+        changes = _filter_patch(changes, MATERIAL_PATCH_FIELDS)
         try:
             material = repo.update_material(material_id, changes)
         except KeyError as exc:
@@ -77,6 +104,7 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
 
     @router.patch("/topic-cards/{card_id}")
     def update_topic_card(card_id: str, changes: dict):
+        changes = _filter_patch(changes, TOPIC_CARD_PATCH_FIELDS)
         try:
             card = repo.update_topic_card(card_id, changes)
         except KeyError as exc:
@@ -147,12 +175,10 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
         return _record_dict(draft)
 
     @router.patch("/drafts/{task_id}")
-    def update_draft(task_id: str, req: DraftUpdateRequest):
+    def update_draft(task_id: str, changes: dict):
+        changes = _filter_patch(changes, DRAFT_PATCH_FIELDS)
         try:
-            draft = service.update_review_draft(
-                task_id,
-                _model_dump(req, exclude_unset=True),
-            )
+            draft = service.update_review_draft(task_id, changes)
         except KeyError as exc:
             raise _not_found("draft") from exc
         except ValueError as exc:
@@ -161,6 +187,10 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
 
     @router.post("/drafts/{task_id}/ready")
     def mark_draft_ready(task_id: str):
+        if repo.get_task(task_id) is None:
+            raise _not_found("task")
+        if repo.get_review_draft(task_id) is None:
+            raise _not_found("draft")
         try:
             draft = service.mark_draft_ready(task_id)
         except KeyError as exc:
@@ -175,6 +205,10 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
 
     @router.post("/packages/generate")
     def generate_package(req: GeneratePackageRequest):
+        if repo.get_task(req.task_id) is None:
+            raise _not_found("task")
+        if repo.get_review_draft(req.task_id) is None:
+            raise _not_found("draft")
         try:
             package = service.generate_publish_package(
                 req.task_id,
