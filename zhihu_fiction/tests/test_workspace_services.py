@@ -62,6 +62,7 @@ def test_approve_card_and_create_task(tmp_path):
     assert task.status == "queued"
     assert task.topic == "悬疑选题"
     assert task.chapters == 3
+    assert task.mode == "full"
     assert task.priority == 5
 
 
@@ -145,4 +146,5 @@ def test_generate_publish_package_uses_exporter(tmp_path):
     assert package.platform == "zhihu"
     assert package.status == "generated"
     assert package.package_dir == str(tmp_path / "zhihu_pkg")
+    assert service.repo.get_publish_package(package.id) == package
     exporter.export.assert_called_once()
