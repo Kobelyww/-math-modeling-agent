@@ -135,7 +135,11 @@ class ReviewDraft:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ReviewDraft":
-        return cls(**data)
+        body_present = "body" in data
+        draft = cls(**data)
+        if body_present:
+            draft.body = data["body"]
+        return draft
 
 
 @dataclass

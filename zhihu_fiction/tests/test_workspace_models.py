@@ -96,6 +96,21 @@ def test_review_draft_round_trips_and_preserves_original_body_separately():
     assert restored.body == "编辑后正文"
 
 
+def test_review_draft_from_dict_preserves_persisted_empty_body():
+    data = {
+        "id": "draft_1",
+        "task_id": "task_1",
+        "story_path": "output/story.md",
+        "original_body": "初稿正文",
+        "title": "标题",
+        "body": "",
+    }
+
+    loaded = ReviewDraft.from_dict(data)
+
+    assert loaded.body == ""
+
+
 def test_publish_package_defaults_to_generated_and_status_is_valid():
     package = PublishPackage(
         id="pkg_1",
