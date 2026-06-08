@@ -1,6 +1,8 @@
 """FastAPI routes for workspace workflows."""
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import APIRouter, HTTPException
 
 from .workspace.schemas import (
@@ -12,17 +14,48 @@ from .workspace.schemas import (
 )
 
 
-MATERIAL_PATCH_FIELDS = {"title", "excerpt", "content", "url", "hot_score", "tags"}
-TOPIC_CARD_PATCH_FIELDS = {
-    "title",
-    "genre",
-    "platform",
-    "hook",
-    "angle",
-    "risk_notes",
-    "target_reader",
+def _is_str(value: object) -> bool:
+    return isinstance(value, str)
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_str_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+PatchValidator = Callable[[object], bool]
+
+MATERIAL_PATCH_VALIDATORS: dict[str, PatchValidator] = {
+    "title": _is_str,
+    "excerpt": _is_str,
+    "content": _is_str,
+    "url": _is_str,
+    "hot_score": _is_number,
+    "tags": _is_str_list,
 }
-DRAFT_PATCH_FIELDS = {"title", "synopsis", "tags", "body", "editor_notes"}
+TOPIC_CARD_PATCH_VALIDATORS: dict[str, PatchValidator] = {
+    "title": _is_str,
+    "genre": _is_str,
+    "platform": _is_str,
+    "hook": _is_str,
+    "angle": _is_str,
+    "risk_notes": _is_str,
+    "target_reader": _is_str,
+}
+DRAFT_PATCH_VALIDATORS: dict[str, PatchValidator] = {
+    "title": _is_str,
+    "synopsis": _is_str,
+    "tags": _is_str_list,
+    "body": _is_str,
+    "editor_notes": _is_str,
+}
+
+MATERIAL_PATCH_FIELDS = set(MATERIAL_PATCH_VALIDATORS)
+TOPIC_CARD_PATCH_FIELDS = set(TOPIC_CARD_PATCH_VALIDATORS)
+DRAFT_PATCH_FIELDS = set(DRAFT_PATCH_VALIDATORS)
 
 
 def _not_found(name: str) -> HTTPException:
@@ -44,12 +77,24 @@ def _reject_nulls(raw: dict) -> None:
         raise HTTPException(status_code=422, detail="Null values are not allowed")
 
 
-def _filter_patch(raw: dict, allowed: set[str]) -> dict:
+def _filter_patch(
+    raw: dict,
+    allowed: set[str],
+    validators: dict[str, PatchValidator],
+) -> dict:
     _reject_nulls(raw)
     extra = set(raw) - allowed
     if extra:
         fields = ", ".join(sorted(extra))
         raise HTTPException(status_code=422, detail=f"Unsupported fields: {fields}")
+
+    for field, value in raw.items():
+        if not validators[field](value):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid field type: {field}",
+            )
+
     return {key: raw[key] for key in raw}
 
 
@@ -79,7 +124,11 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
 
     @router.patch("/materials/{material_id}")
     def update_material(material_id: str, changes: dict):
-        changes = _filter_patch(changes, MATERIAL_PATCH_FIELDS)
+        changes = _filter_patch(
+            changes,
+            MATERIAL_PATCH_FIELDS,
+            MATERIAL_PATCH_VALIDATORS,
+        )
         try:
             material = repo.update_material(material_id, changes)
         except KeyError as exc:
@@ -104,7 +153,11 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
 
     @router.patch("/topic-cards/{card_id}")
     def update_topic_card(card_id: str, changes: dict):
-        changes = _filter_patch(changes, TOPIC_CARD_PATCH_FIELDS)
+        changes = _filter_patch(
+            changes,
+            TOPIC_CARD_PATCH_FIELDS,
+            TOPIC_CARD_PATCH_VALIDATORS,
+        )
         try:
             card = repo.update_topic_card(card_id, changes)
         except KeyError as exc:
@@ -176,7 +229,11 @@ def create_workspace_router(service, queue, exporter_factory) -> APIRouter:
 
     @router.patch("/drafts/{task_id}")
     def update_draft(task_id: str, changes: dict):
-        changes = _filter_patch(changes, DRAFT_PATCH_FIELDS)
+        changes = _filter_patch(
+            changes,
+            DRAFT_PATCH_FIELDS,
+            DRAFT_PATCH_VALIDATORS,
+        )
         try:
             draft = service.update_review_draft(task_id, changes)
         except KeyError as exc:

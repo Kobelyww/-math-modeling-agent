@@ -84,6 +84,32 @@ def test_material_patch_rejects_unsafe_fields(tmp_path):
     assert service.repo.get_material("mat_hijack") is None
 
 
+def test_material_patch_rejects_tags_string(tmp_path):
+    client, service, _ = _client(tmp_path)
+    material = service.create_manual_material("素材", tags=["原标签"])
+
+    response = client.patch(
+        f"/api/workspace/materials/{material.id}",
+        json={"tags": "bad"},
+    )
+
+    assert response.status_code == 422
+    assert service.repo.get_material(material.id).tags == ["原标签"]
+
+
+def test_material_patch_rejects_bool_hot_score(tmp_path):
+    client, service, _ = _client(tmp_path)
+    material = service.create_manual_material("素材", hot_score=1.5)
+
+    response = client.patch(
+        f"/api/workspace/materials/{material.id}",
+        json={"hot_score": True},
+    )
+
+    assert response.status_code == 422
+    assert service.repo.get_material(material.id).hot_score == 1.5
+
+
 def test_topic_card_to_task_flow(tmp_path):
     client, _, queue = _client(tmp_path)
     material = client.post(
@@ -131,6 +157,19 @@ def test_topic_card_patch_rejects_status_and_source_material_changes(tmp_path):
     assert sources_response.status_code == 422
     assert service.repo.get_topic_card(card.id).status == "draft"
     assert service.repo.get_topic_card(card.id).source_material_ids == []
+
+
+def test_topic_card_patch_rejects_numeric_title(tmp_path):
+    client, service, _ = _client(tmp_path)
+    card = service.create_topic_card("原选题")
+
+    response = client.patch(
+        f"/api/workspace/topic-cards/{card.id}",
+        json={"title": 123},
+    )
+
+    assert response.status_code == 422
+    assert service.repo.get_topic_card(card.id).title == "原选题"
 
 
 def test_create_task_from_unapproved_card_returns_409(tmp_path):
@@ -210,6 +249,29 @@ def test_draft_patch_rejects_explicit_null(tmp_path):
     response = client.patch(
         f"/api/workspace/drafts/{task.id}",
         json={"tags": None},
+    )
+
+    assert response.status_code == 422
+    assert service.repo.get_review_draft(task.id).tags == ["悬疑"]
+
+
+def test_draft_patch_rejects_tags_string(tmp_path):
+    client, service, _ = _client(tmp_path)
+    task = service.repo.save_task(
+        StoryTask(
+            id="task_1",
+            topic_card_id="card_1",
+            topic="待审选题",
+            genre="悬疑",
+            status="needs_review",
+        )
+    )
+    service.create_review_draft_from_result(task, Path("story.md"), "初稿正文", {})
+    service.update_review_draft(task.id, {"tags": ["悬疑"]})
+
+    response = client.patch(
+        f"/api/workspace/drafts/{task.id}",
+        json={"tags": "bad"},
     )
 
     assert response.status_code == 422
