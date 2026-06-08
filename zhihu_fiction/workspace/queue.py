@@ -164,6 +164,21 @@ class WorkspaceQueue:
                 genre=task.genre,
                 chapters=task.chapters,
             )
+            failure_error, failed_stage = _pipeline_result_failure(result)
+            if failure_error:
+                with self._task_state_lock():
+                    self.repo.update_task(
+                        task.id,
+                        {
+                            "status": "failed",
+                            "run_id": result.run_id,
+                            "error": failure_error,
+                            "failed_stage": failed_stage,
+                            "finished_at": utc_now_iso(),
+                        },
+                    )
+                return
+
             review_stage = result.stages.get("review")
             review_result = getattr(review_stage, "extra", None) or {}
             body = _read_story_body(result.published_url)
@@ -194,6 +209,20 @@ class WorkspaceQueue:
                         "finished_at": utc_now_iso(),
                     },
                 )
+
+
+def _pipeline_result_failure(result: Any) -> tuple[str, str]:
+    stages = getattr(result, "stages", None) or {}
+    error = getattr(result, "error", "") or ""
+    for stage_name in ("scrape", "create"):
+        stage = stages.get(stage_name)
+        if getattr(stage, "status", "") == "failed":
+            stage_extra = getattr(stage, "extra", None) or {}
+            stage_error = stage_extra.get("error", "")
+            return error or stage_error or f"{stage_name} failed", stage_name
+    if error:
+        return error, "pipeline"
+    return "", ""
 
 
 def _read_story_body(story_path: str | Path) -> str:

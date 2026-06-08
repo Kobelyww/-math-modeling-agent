@@ -63,6 +63,27 @@ class FakePipeline:
         )
 
 
+class ReturningErrorPipeline(FakePipeline):
+    def run(self, *args, **kwargs):
+        self.calls.append(
+            {
+                "topic": kwargs.get("topic"),
+                "genre": kwargs.get("genre"),
+                "chapters": kwargs.get("chapters", 1),
+                "stream_callback": kwargs.get("stream_callback"),
+                "on_progress": kwargs.get("on_progress"),
+            }
+        )
+        return FakeResult(
+            run_id="run_error",
+            topic=kwargs.get("topic"),
+            genre=kwargs.get("genre"),
+            published_url="",
+            stages={"scrape": FakeStage(status="failed", extra={"error": "boom"})},
+            error="scrape failed: boom",
+        )
+
+
 def _task(task_id, priority=0):
     return StoryTask(
         id=task_id,
@@ -280,6 +301,21 @@ def test_failed_pipeline_marks_task_failed(tmp_path):
     updated = repo.get_task(task.id)
     assert updated.status == "failed"
     assert "pipeline failed" in updated.error
+
+
+def test_returned_pipeline_error_marks_task_failed_without_draft(tmp_path):
+    pipeline = ReturningErrorPipeline()
+    repo, queue = _queue(tmp_path, pipeline)
+    task = repo.save_task(_task("task_1"))
+
+    assert queue.run_next() is True
+
+    updated = repo.get_task(task.id)
+    assert updated.status == "failed"
+    assert updated.error == "scrape failed: boom"
+    assert updated.failed_stage == "scrape"
+    assert updated.run_id == "run_error"
+    assert repo.get_review_draft(task.id) is None
 
 
 def test_read_story_body_resolves_app_root_relative_paths(tmp_path, monkeypatch):
