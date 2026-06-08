@@ -160,6 +160,103 @@ def test_two_queue_instances_do_not_claim_same_task(tmp_path):
     assert len(first_pipeline.calls) + len(second_pipeline.calls) == 1
 
 
+def test_cancel_cannot_win_against_claim_in_progress(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    task = repo.save_task(_task("task_1"))
+    claim_update_started = threading.Event()
+    release_claim_update = threading.Event()
+    cancel_read_queued = threading.Event()
+    cancel_done = threading.Event()
+    pipeline_started = threading.Event()
+    release_pipeline = threading.Event()
+
+    class BlockingPipeline(FakePipeline):
+        def run(self, *args, **kwargs):
+            result = super().run(*args, **kwargs)
+            pipeline_started.set()
+            if not release_pipeline.wait(timeout=2.0):
+                raise AssertionError("pipeline was not released")
+            return result
+
+    pipeline = BlockingPipeline()
+    first_queue = WorkspaceQueue(repo, WorkspaceService(repo), lambda: pipeline)
+    second_queue = WorkspaceQueue(repo, WorkspaceService(repo), lambda: FakePipeline())
+    original_update_task = repo.update_task
+    original_get_task = repo.get_task
+
+    def paused_update_task(task_id, changes):
+        if task_id == task.id and changes.get("status") == "running":
+            claim_update_started.set()
+            if not release_claim_update.wait(timeout=2.0):
+                raise AssertionError("claim update was not released")
+        return original_update_task(task_id, changes)
+
+    def observed_get_task(task_id):
+        current = original_get_task(task_id)
+        if (
+            threading.current_thread().name == "cancel-thread"
+            and current is not None
+            and current.status == "queued"
+        ):
+            cancel_read_queued.set()
+        return current
+
+    repo.update_task = paused_update_task
+    repo.get_task = observed_get_task
+    run_results: list[bool] = []
+    cancel_results: list[tuple[str, str]] = []
+    errors: list[Exception] = []
+    results_lock = threading.Lock()
+
+    def run_next():
+        try:
+            result = first_queue.run_next()
+            with results_lock:
+                run_results.append(result)
+        except Exception as exc:
+            with results_lock:
+                errors.append(exc)
+
+    def cancel_task():
+        try:
+            canceled = second_queue.cancel(task.id)
+            with results_lock:
+                cancel_results.append(("success", canceled.status))
+        except ValueError as exc:
+            with results_lock:
+                cancel_results.append(("value_error", str(exc)))
+        except Exception as exc:
+            with results_lock:
+                errors.append(exc)
+        finally:
+            cancel_done.set()
+
+    run_thread = threading.Thread(target=run_next, name="run-next-thread")
+    run_thread.start()
+    assert claim_update_started.wait(timeout=1.0)
+
+    cancel_thread = threading.Thread(target=cancel_task, name="cancel-thread")
+    cancel_thread.start()
+    cancel_read_queued_during_claim = cancel_read_queued.wait(timeout=1.0)
+
+    release_claim_update.set()
+    assert pipeline_started.wait(timeout=1.0)
+    assert cancel_done.wait(timeout=1.0)
+    release_pipeline.set()
+    run_thread.join(timeout=2.0)
+    cancel_thread.join(timeout=2.0)
+
+    assert not run_thread.is_alive()
+    assert not cancel_thread.is_alive()
+    assert errors == []
+    assert run_results == [True]
+    assert len(cancel_results) == 1
+    assert cancel_results[0][0] == "value_error"
+    assert not cancel_read_queued_during_claim
+    assert len(pipeline.calls) == 1
+    assert repo.get_task(task.id).status == "needs_review"
+
+
 def test_kick_starts_background_worker_until_idle(tmp_path):
     pipeline = FakePipeline()
     repo, queue = _queue(tmp_path, pipeline)

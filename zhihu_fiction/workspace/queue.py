@@ -42,14 +42,13 @@ class WorkspaceQueue:
         self.repo = repo
         self.service = service
         self.pipeline_factory = pipeline_factory
-        self._lock = threading.Lock()
         self._claim_lock = _lock_for_root(self.repo.root)
         self._claim_lock_path = Path(self.repo.root).resolve() / ".queue_claim.lock"
         self._worker_lock = threading.Lock()
         self._worker_thread: threading.Thread | None = None
 
     def repair_stale_running(self) -> int:
-        with self._lock:
+        with self._task_state_lock():
             running_tasks = self.repo.list_running_tasks()
             for task in running_tasks:
                 self.repo.update_task(
@@ -67,7 +66,7 @@ class WorkspaceQueue:
             return len(running_tasks)
 
     def run_next(self) -> bool:
-        with self._claim_lock, _file_lock(self._claim_lock_path):
+        with self._task_state_lock():
             if self.repo.list_running_tasks():
                 return False
 
@@ -117,7 +116,7 @@ class WorkspaceQueue:
         return False
 
     def retry(self, task_id: str) -> StoryTask:
-        with self._lock:
+        with self._task_state_lock():
             task = self.repo.get_task(task_id)
             if task is None:
                 raise KeyError(task_id)
@@ -137,7 +136,7 @@ class WorkspaceQueue:
             )
 
     def cancel(self, task_id: str) -> StoryTask:
-        with self._lock:
+        with self._task_state_lock():
             task = self.repo.get_task(task_id)
             if task is None:
                 raise KeyError(task_id)
@@ -151,6 +150,11 @@ class WorkspaceQueue:
                     "finished_at": utc_now_iso(),
                 },
             )
+
+    @contextmanager
+    def _task_state_lock(self):
+        with self._claim_lock, _file_lock(self._claim_lock_path):
+            yield
 
     def _run_claimed_task(self, task: StoryTask) -> None:
         try:
@@ -170,24 +174,26 @@ class WorkspaceQueue:
                 body,
                 review_result,
             )
-            self.repo.update_task(
-                task.id,
-                {
-                    "status": "needs_review",
-                    "run_id": result.run_id,
-                    "finished_at": utc_now_iso(),
-                },
-            )
+            with self._task_state_lock():
+                self.repo.update_task(
+                    task.id,
+                    {
+                        "status": "needs_review",
+                        "run_id": result.run_id,
+                        "finished_at": utc_now_iso(),
+                    },
+                )
         except Exception as exc:
-            self.repo.update_task(
-                task.id,
-                {
-                    "status": "failed",
-                    "error": str(exc),
-                    "failed_stage": "pipeline",
-                    "finished_at": utc_now_iso(),
-                },
-            )
+            with self._task_state_lock():
+                self.repo.update_task(
+                    task.id,
+                    {
+                        "status": "failed",
+                        "error": str(exc),
+                        "failed_stage": "pipeline",
+                        "finished_at": utc_now_iso(),
+                    },
+                )
 
 
 def _read_story_body(story_path: str | Path) -> str:
