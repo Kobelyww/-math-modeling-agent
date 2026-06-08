@@ -1,11 +1,13 @@
 """Tests for single-worker workspace queue orchestration."""
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 import pytest
 
 from zhihu_fiction.workspace.models import StoryTask
+from zhihu_fiction.workspace import queue as queue_module
 from zhihu_fiction.workspace.queue import WorkspaceQueue
 from zhihu_fiction.workspace.repositories import WorkspaceRepository
 from zhihu_fiction.workspace.services import WorkspaceService
@@ -109,6 +111,55 @@ def test_run_next_returns_false_when_no_queued_task(tmp_path):
     assert pipeline.calls == []
 
 
+def test_two_queue_instances_do_not_claim_same_task(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    repo.save_task(_task("task_1"))
+    first_pipeline = FakePipeline()
+    second_pipeline = FakePipeline()
+    first_queue = WorkspaceQueue(repo, WorkspaceService(repo), lambda: first_pipeline)
+    second_queue = WorkspaceQueue(repo, WorkspaceService(repo), lambda: second_pipeline)
+    start_barrier = threading.Barrier(2)
+    claim_barrier = threading.Barrier(2)
+    original_update_task = repo.update_task
+
+    def racing_update_task(task_id, changes):
+        if changes.get("status") == "running":
+            try:
+                claim_barrier.wait(timeout=1.0)
+            except threading.BrokenBarrierError:
+                pass
+        return original_update_task(task_id, changes)
+
+    repo.update_task = racing_update_task
+    results: list[bool] = []
+    errors: list[Exception] = []
+    results_lock = threading.Lock()
+
+    def run(queue):
+        try:
+            start_barrier.wait(timeout=1.0)
+            result = queue.run_next()
+            with results_lock:
+                results.append(result)
+        except Exception as exc:
+            with results_lock:
+                errors.append(exc)
+
+    threads = [
+        threading.Thread(target=run, args=(first_queue,)),
+        threading.Thread(target=run, args=(second_queue,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2.0)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert sorted(results) == [False, True]
+    assert len(first_pipeline.calls) + len(second_pipeline.calls) == 1
+
+
 def test_kick_starts_background_worker_until_idle(tmp_path):
     pipeline = FakePipeline()
     repo, queue = _queue(tmp_path, pipeline)
@@ -132,6 +183,25 @@ def test_failed_pipeline_marks_task_failed(tmp_path):
     updated = repo.get_task(task.id)
     assert updated.status == "failed"
     assert "pipeline failed" in updated.error
+
+
+def test_read_story_body_resolves_app_root_relative_paths(tmp_path, monkeypatch):
+    app_root = tmp_path / "app"
+    story_path = app_root / "output" / "story.md"
+    story_path.parent.mkdir(parents=True)
+    story_path.write_text("app-root story body", encoding="utf-8")
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(queue_module, "APP_ROOT", app_root, raising=False)
+    pipeline = FakePipeline()
+    repo, queue = _queue(tmp_path / "workspace", pipeline)
+    task = repo.save_task(_task("task_1"))
+
+    assert queue.run_next() is True
+
+    draft = repo.get_review_draft(task.id)
+    assert draft.body == "app-root story body"
 
 
 def test_retry_failed_task_returns_to_queued(tmp_path):

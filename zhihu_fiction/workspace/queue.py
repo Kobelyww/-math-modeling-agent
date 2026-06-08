@@ -1,14 +1,33 @@
 """Single-worker queue for workspace story tasks."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
 
+from ..config import APP_ROOT
 from .models import StoryTask, utc_now_iso
 from .repositories import WorkspaceRepository
 from .services import WorkspaceService
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - fcntl is available on Unix/macOS.
+    fcntl = None
+
+
+_ROOT_LOCKS: dict[Path, threading.Lock] = {}
+_ROOT_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for_root(root: Path) -> threading.Lock:
+    root_key = Path(root).resolve()
+    with _ROOT_LOCKS_GUARD:
+        if root_key not in _ROOT_LOCKS:
+            _ROOT_LOCKS[root_key] = threading.Lock()
+        return _ROOT_LOCKS[root_key]
 
 
 class WorkspaceQueue:
@@ -24,6 +43,8 @@ class WorkspaceQueue:
         self.service = service
         self.pipeline_factory = pipeline_factory
         self._lock = threading.Lock()
+        self._claim_lock = _lock_for_root(self.repo.root)
+        self._claim_lock_path = Path(self.repo.root).resolve() / ".queue_claim.lock"
         self._worker_lock = threading.Lock()
         self._worker_thread: threading.Thread | None = None
 
@@ -46,7 +67,7 @@ class WorkspaceQueue:
             return len(running_tasks)
 
     def run_next(self) -> bool:
-        with self._lock:
+        with self._claim_lock, _file_lock(self._claim_lock_path):
             if self.repo.list_running_tasks():
                 return False
 
@@ -171,6 +192,23 @@ class WorkspaceQueue:
 
 def _read_story_body(story_path: str | Path) -> str:
     path = Path(story_path)
+    if not path.is_absolute():
+        path = APP_ROOT / path
     if path.is_file():
         return path.read_text(encoding="utf-8")
     return ""
+
+
+@contextmanager
+def _file_lock(path: Path):
+    if fcntl is None:
+        yield
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
