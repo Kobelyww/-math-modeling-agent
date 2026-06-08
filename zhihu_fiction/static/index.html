@@ -28,17 +28,27 @@
 
 <!-- Tabs -->
 <nav class="bg-white border-b">
-  <div class="max-w-5xl mx-auto px-4 flex gap-0">
+  <div class="max-w-5xl mx-auto px-4 flex gap-0 overflow-x-auto whitespace-nowrap">
     <button @click="tab='run'" :class="tab==='run'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">运行</button>
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">运行</button>
     <button @click="tab='history'; loadHistory()" :class="tab==='history'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">历史</button>
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">历史</button>
     <button @click="tab='skills'; loadSkills()" :class="tab==='skills'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">技能</button>
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">技能</button>
     <button @click="tab='scheduler'; loadScheduler()" :class="tab==='scheduler'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">调度</button>
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">调度</button>
     <button @click="tab='stories'; loadStories()" :class="tab==='stories'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">作品</button>
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">作品</button>
+    <button @click="tab='workspace_materials'; loadWorkspace()" :class="tab==='workspace_materials'?'tab-active':''"
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">素材</button>
+    <button @click="tab='workspace_cards'; loadWorkspace()" :class="tab==='workspace_cards'?'tab-active':''"
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">选题卡</button>
+    <button @click="tab='workspace_tasks'; loadWorkspace()" :class="tab==='workspace_tasks'?'tab-active':''"
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">任务</button>
+    <button @click="tab='workspace_review'; loadWorkspace()" :class="tab==='workspace_review'?'tab-active':''"
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">审核</button>
+    <button @click="tab='workspace_packages'; loadWorkspace()" :class="tab==='workspace_packages'?'tab-active':''"
+      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">发布包</button>
   </div>
 </nav>
 
@@ -294,6 +304,297 @@
     </div>
   </section>
 
+  <!-- ====== WORKSPACE MATERIALS TAB ====== -->
+  <section x-show="tab==='workspace_materials'" x-cloak>
+    <div class="bg-white rounded-lg shadow p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold">素材</h2>
+        <button @click="loadWorkspaceMaterials()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">标题</label>
+          <input x-model="materialForm.title" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">标签</label>
+          <input x-model="materialForm.tagsText" placeholder="悬疑, 反转"
+            class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm text-gray-600 mb-1">摘要</label>
+          <textarea x-model="materialForm.excerpt" rows="3"
+            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm text-gray-600 mb-1">正文</label>
+          <textarea x-model="materialForm.content" rows="6"
+            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+        </div>
+      </div>
+      <button @click="createWorkspaceMaterial()"
+        class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">新增素材</button>
+    </div>
+
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+      <div class="p-4 border-b flex items-center justify-between">
+        <h3 class="text-sm font-semibold">素材列表 <span class="text-gray-400 ml-1" x-text="workspaceMaterials.length"></span></h3>
+        <span class="text-xs text-gray-400">已选 <span x-text="cardForm.source_material_ids.length"></span></span>
+      </div>
+      <div x-show="workspaceMaterials.length===0" class="p-8 text-center text-gray-400 text-sm">暂无素材</div>
+      <div class="divide-y" x-show="workspaceMaterials.length>0">
+        <template x-for="m in workspaceMaterials" :key="m.id">
+          <label class="p-4 flex gap-3 hover:bg-gray-50 transition cursor-pointer">
+            <input type="checkbox" :value="m.id" x-model="cardForm.source_material_ids"
+              class="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-300 shrink-0">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-3 mb-1">
+                <h4 class="text-sm font-medium text-gray-800 truncate" x-text="m.title"></h4>
+                <span class="text-xs text-gray-400 shrink-0" x-text="m.status"></span>
+              </div>
+              <p class="text-sm text-gray-500 line-clamp-2" x-text="m.excerpt || m.content"></p>
+              <div class="flex flex-wrap gap-1 mt-2">
+                <template x-for="tag in (m.tags || [])" :key="tag">
+                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="tag"></span>
+                </template>
+              </div>
+            </div>
+          </label>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE CARDS TAB ====== -->
+  <section x-show="tab==='workspace_cards'" x-cloak>
+    <div class="bg-white rounded-lg shadow p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold">选题卡</h2>
+        <span class="text-xs text-gray-400">素材数 <span x-text="cardForm.source_material_ids.length"></span></span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">标题</label>
+          <input x-model="cardForm.title" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">流派</label>
+          <input x-model="cardForm.genre" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">平台</label>
+          <select x-model="cardForm.platform" class="w-full border rounded px-3 py-2 text-sm">
+            <option value="zhihu">zhihu</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">目标读者</label>
+          <input x-model="cardForm.target_reader" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">钩子</label>
+          <textarea x-model="cardForm.hook" rows="4"
+            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-600 mb-1">角度</label>
+          <textarea x-model="cardForm.angle" rows="4"
+            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm text-gray-600 mb-1">风险备注</label>
+          <textarea x-model="cardForm.risk_notes" rows="3"
+            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+        </div>
+      </div>
+      <button @click="createWorkspaceCard()"
+        class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">创建选题卡</button>
+    </div>
+
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+      <div class="p-4 border-b flex items-center justify-between">
+        <h3 class="text-sm font-semibold">选题列表 <span class="text-gray-400 ml-1" x-text="workspaceCards.length"></span></h3>
+        <button @click="loadWorkspaceCards()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+      </div>
+      <div x-show="workspaceCards.length===0" class="p-8 text-center text-gray-400 text-sm">暂无选题卡</div>
+      <div class="divide-y" x-show="workspaceCards.length>0">
+        <template x-for="card in workspaceCards" :key="card.id">
+          <div class="p-4">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <h4 class="font-medium text-sm text-gray-800 truncate" x-text="card.title"></h4>
+                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="card.status"></span>
+                </div>
+                <div class="text-xs text-gray-400">
+                  <span x-text="card.genre || '未定流派'"></span>
+                  <span class="mx-1">/</span>
+                  <span x-text="card.platform"></span>
+                  <span class="mx-1">/</span>
+                  <span>素材 <span x-text="(card.source_material_ids || []).length"></span></span>
+                </div>
+                <p class="text-sm text-gray-500 mt-2 line-clamp-2" x-text="card.hook || card.angle || card.target_reader"></p>
+              </div>
+              <div class="flex gap-2 shrink-0">
+                <button @click="approveWorkspaceCard(card)" :disabled="card.status==='approved'"
+                  class="px-3 py-1.5 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition">通过</button>
+                <button @click="createTaskFromCard(card)" :disabled="card.status!=='approved'"
+                  class="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">建任务</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE TASKS TAB ====== -->
+  <section x-show="tab==='workspace_tasks'" x-cloak>
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+      <div class="p-4 border-b flex items-center justify-between">
+        <h2 class="text-base font-semibold">任务 <span class="text-gray-400 text-sm ml-1" x-text="workspaceTasks.length"></span></h2>
+        <button @click="loadWorkspaceTasks()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+      </div>
+      <div x-show="workspaceTasks.length===0" class="p-8 text-center text-gray-400 text-sm">暂无任务</div>
+      <div class="divide-y" x-show="workspaceTasks.length>0">
+        <template x-for="task in workspaceTasks" :key="task.id">
+          <div class="p-4">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2 mb-1">
+                  <h3 class="font-medium text-sm text-gray-800" x-text="task.topic"></h3>
+                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="task.status"></span>
+                  <span class="text-xs text-gray-400" x-text="'重试 '+task.retry_count"></span>
+                </div>
+                <div class="text-xs text-gray-400">
+                  <span x-text="task.genre || '未定流派'"></span>
+                  <span class="mx-1">/</span>
+                  <span x-text="task.chapters+' 章'"></span>
+                  <span class="mx-1">/</span>
+                  <span x-text="task.mode"></span>
+                </div>
+                <div x-show="task.error" class="mt-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded px-3 py-2 break-words">
+                  <span class="font-medium">错误：</span><span x-text="task.error"></span>
+                </div>
+              </div>
+              <div class="flex gap-2 shrink-0">
+                <button @click="retryWorkspaceTask(task)" :disabled="task.status!=='failed'"
+                  class="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">重试</button>
+                <button @click="cancelWorkspaceTask(task)" :disabled="task.status!=='queued'"
+                  class="px-3 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition">取消</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE REVIEW TAB ====== -->
+  <section x-show="tab==='workspace_review'" x-cloak>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="p-4 border-b flex items-center justify-between">
+          <h2 class="text-base font-semibold">草稿 <span class="text-gray-400 text-sm ml-1" x-text="workspaceDrafts.length"></span></h2>
+          <button @click="loadWorkspaceDrafts()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+        </div>
+        <div x-show="workspaceDrafts.length===0" class="p-8 text-center text-gray-400 text-sm">暂无待审草稿</div>
+        <div class="divide-y" x-show="workspaceDrafts.length>0">
+          <template x-for="draft in workspaceDrafts" :key="draft.id">
+            <button @click="openDraft(draft)" type="button"
+              :class="selectedDraft?.id===draft.id?'bg-indigo-50':'hover:bg-gray-50'"
+              class="w-full p-4 text-left transition">
+              <div class="flex items-start justify-between gap-2 mb-1">
+                <span class="font-medium text-sm text-gray-800 line-clamp-2" x-text="draft.title"></span>
+                <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500 shrink-0" x-text="draft.status"></span>
+              </div>
+              <p class="text-xs text-gray-400 truncate" x-text="draft.task_id"></p>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-lg shadow p-6 lg:col-span-2">
+        <div x-show="!selectedDraft" class="text-center text-gray-400 text-sm py-16">请选择草稿</div>
+        <div x-show="selectedDraft">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+            <div>
+              <h3 class="text-base font-semibold">编辑草稿</h3>
+              <p class="text-xs text-gray-400 mt-1" x-text="selectedDraft?.task_id"></p>
+            </div>
+            <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500 self-start md:self-auto" x-text="selectedDraft?.status"></span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-sm text-gray-600 mb-1">标题</label>
+              <input x-model="draftEdit.title" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            </div>
+            <div>
+              <label class="block text-sm text-gray-600 mb-1">标签</label>
+              <input x-model="draftEdit.tagsText" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-sm text-gray-600 mb-1">简介</label>
+              <textarea x-model="draftEdit.synopsis" rows="3"
+                class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-sm text-gray-600 mb-1">正文</label>
+              <textarea x-model="draftEdit.body" rows="14"
+                class="w-full border rounded px-3 py-2 text-sm resize-y font-sans leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-sm text-gray-600 mb-1">编辑备注</label>
+              <textarea x-model="draftEdit.editor_notes" rows="4"
+                class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button @click="saveDraft()"
+              class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">保存</button>
+            <button @click="markDraftReady()"
+              class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">就绪</button>
+            <button @click="generatePackage(selectedDraft.task_id, 'zhihu')"
+              class="px-4 py-2 bg-gray-800 text-white rounded text-sm hover:bg-gray-900 transition">生成知乎包</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE PACKAGES TAB ====== -->
+  <section x-show="tab==='workspace_packages'" x-cloak>
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+      <div class="p-4 border-b flex items-center justify-between">
+        <h2 class="text-base font-semibold">发布包 <span class="text-gray-400 text-sm ml-1" x-text="workspacePackages.length"></span></h2>
+        <button @click="loadWorkspacePackages()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+      </div>
+      <div x-show="workspacePackages.length===0" class="p-8 text-center text-gray-400 text-sm">暂无发布包</div>
+      <div class="divide-y" x-show="workspacePackages.length>0">
+        <template x-for="pkg in workspacePackages" :key="pkg.id">
+          <div class="p-4">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2 mb-1">
+                  <h3 class="font-medium text-sm text-gray-800" x-text="pkg.title"></h3>
+                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="pkg.status"></span>
+                  <span class="px-2 py-0.5 bg-indigo-50 rounded text-xs text-indigo-600" x-text="pkg.platform"></span>
+                </div>
+                <p class="text-sm text-gray-500 line-clamp-2" x-text="pkg.synopsis"></p>
+                <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-400">
+                  <div class="truncate">正文：<span x-text="pkg.content_path"></span></div>
+                  <div class="truncate">元数据：<span x-text="pkg.metadata_path"></span></div>
+                </div>
+              </div>
+              <button @click="confirmPackage(pkg)" :disabled="pkg.status==='confirmed' || pkg.status==='exported'"
+                class="px-3 py-1.5 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition shrink-0">确认</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
 </main>
 
 <script>
@@ -304,6 +605,15 @@ function app() {
     runs: [],
     selectedRun: null,
     stories: [],
+    workspaceMaterials: [],
+    workspaceCards: [],
+    workspaceTasks: [],
+    workspaceDrafts: [],
+    workspacePackages: [],
+    materialForm: { title: '', content: '', excerpt: '', tagsText: '' },
+    cardForm: { title: '', source_material_ids: [], genre: '', platform: 'zhihu', hook: '', angle: '', risk_notes: '', target_reader: '' },
+    selectedDraft: null,
+    draftEdit: { title: '', synopsis: '', tagsText: '', body: '', editor_notes: '' },
     skillIcons: {'悬疑':'🔍','历史':'📜','科幻':'🚀','言情':'💕','职场':'💼','脑洞':'💡','现实':'🏠','武侠':'⚔️'},
     // Run form
     runForm: { topic: '', genre: '', chapters: 1 },
@@ -401,6 +711,164 @@ function app() {
         const d = await (await fetch('/api/stories/'+encodeURIComponent(s.path))).json();
         this.viewingStory = s; this.storyContent = d.content; this.storyViewer = true;
       } catch(e) {}
+    },
+
+    // ---- Workspace ----
+    parseWorkspaceTags(text) {
+      return (text || '').split(',').map(t => t.trim()).filter(Boolean);
+    },
+    async workspaceFailure(res) {
+      try {
+        const d = await res.json();
+        return d.detail || res.statusText;
+      } catch(e) {
+        return res.statusText;
+      }
+    },
+    async loadWorkspace() {
+      await Promise.all([
+        this.loadWorkspaceMaterials(),
+        this.loadWorkspaceCards(),
+        this.loadWorkspaceTasks(),
+        this.loadWorkspaceDrafts(),
+        this.loadWorkspacePackages(),
+      ]);
+    },
+    async loadWorkspaceMaterials() { try { this.workspaceMaterials = await (await fetch('/api/workspace/materials')).json(); } catch(e) {} },
+    async loadWorkspaceCards() { try { this.workspaceCards = await (await fetch('/api/workspace/topic-cards')).json(); } catch(e) {} },
+    async loadWorkspaceTasks() { try { this.workspaceTasks = await (await fetch('/api/workspace/tasks')).json(); } catch(e) {} },
+    async loadWorkspaceDrafts() { try { this.workspaceDrafts = await (await fetch('/api/workspace/drafts')).json(); } catch(e) {} },
+    async loadWorkspacePackages() { try { this.workspacePackages = await (await fetch('/api/workspace/packages')).json(); } catch(e) {} },
+    async createWorkspaceMaterial() {
+      try {
+        const res = await fetch('/api/workspace/materials/manual', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            title: this.materialForm.title,
+            content: this.materialForm.content,
+            excerpt: this.materialForm.excerpt,
+            tags: this.parseWorkspaceTags(this.materialForm.tagsText),
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this.materialForm = { title: '', content: '', excerpt: '', tagsText: '' };
+        await this.loadWorkspaceMaterials();
+      } catch(e) { alert('素材创建失败: '+e.message); }
+    },
+    async createWorkspaceCard() {
+      try {
+        const res = await fetch('/api/workspace/topic-cards', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            title: this.cardForm.title,
+            source_material_ids: [...this.cardForm.source_material_ids],
+            genre: this.cardForm.genre,
+            platform: this.cardForm.platform,
+            hook: this.cardForm.hook,
+            angle: this.cardForm.angle,
+            risk_notes: this.cardForm.risk_notes,
+            target_reader: this.cardForm.target_reader,
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this.cardForm = { title: '', source_material_ids: [], genre: '', platform: 'zhihu', hook: '', angle: '', risk_notes: '', target_reader: '' };
+        await Promise.all([this.loadWorkspaceCards(), this.loadWorkspaceMaterials()]);
+      } catch(e) { alert('选题卡创建失败: '+e.message); }
+    },
+    async approveWorkspaceCard(card) {
+      try {
+        const res = await fetch('/api/workspace/topic-cards/'+encodeURIComponent(card.id)+'/approve', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceCards();
+      } catch(e) { alert('审核失败: '+e.message); }
+    },
+    async createTaskFromCard(card) {
+      try {
+        const res = await fetch('/api/workspace/topic-cards/'+encodeURIComponent(card.id)+'/create-task', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({chapters: 1, mode: 'full', priority: 0}),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceTasks();
+      } catch(e) { alert('任务创建失败: '+e.message); }
+    },
+    async retryWorkspaceTask(task) {
+      try {
+        const res = await fetch('/api/workspace/tasks/'+encodeURIComponent(task.id)+'/retry', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceTasks();
+      } catch(e) { alert('重试失败: '+e.message); }
+    },
+    async cancelWorkspaceTask(task) {
+      try {
+        const res = await fetch('/api/workspace/tasks/'+encodeURIComponent(task.id)+'/cancel', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceTasks();
+      } catch(e) { alert('取消失败: '+e.message); }
+    },
+    openDraft(draft) {
+      this.selectedDraft = draft;
+      this.draftEdit = {
+        title: draft.title || '',
+        synopsis: draft.synopsis || '',
+        tagsText: (draft.tags || []).join(', '),
+        body: draft.body || '',
+        editor_notes: draft.editor_notes || '',
+      };
+    },
+    async saveDraft() {
+      if (!this.selectedDraft) return;
+      const taskId = this.selectedDraft.task_id;
+      try {
+        const res = await fetch('/api/workspace/drafts/'+encodeURIComponent(taskId), {
+          method: 'PATCH',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            title: this.draftEdit.title,
+            synopsis: this.draftEdit.synopsis,
+            tags: this.parseWorkspaceTags(this.draftEdit.tagsText),
+            body: this.draftEdit.body,
+            editor_notes: this.draftEdit.editor_notes,
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceDrafts();
+        const updated = this.workspaceDrafts.find(d => d.task_id === taskId);
+        if (updated) this.openDraft(updated);
+      } catch(e) { alert('草稿保存失败: '+e.message); }
+    },
+    async markDraftReady() {
+      if (!this.selectedDraft) return;
+      const taskId = this.selectedDraft.task_id;
+      try {
+        const res = await fetch('/api/workspace/drafts/'+encodeURIComponent(taskId)+'/ready', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await Promise.all([this.loadWorkspaceDrafts(), this.loadWorkspaceTasks()]);
+        const updated = this.workspaceDrafts.find(d => d.task_id === taskId);
+        if (updated) this.openDraft(updated);
+      } catch(e) { alert('标记失败: '+e.message); }
+    },
+    async generatePackage(taskId, platform='zhihu') {
+      if (!taskId) return;
+      try {
+        const res = await fetch('/api/workspace/packages/generate', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({task_id: taskId, platform: platform}),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspacePackages();
+      } catch(e) { alert('发布包生成失败: '+e.message); }
+    },
+    async confirmPackage(pkg) {
+      try {
+        const res = await fetch('/api/workspace/packages/'+encodeURIComponent(pkg.id)+'/confirm', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspacePackages();
+      } catch(e) { alert('发布确认失败: '+e.message); }
     },
   }
 }
