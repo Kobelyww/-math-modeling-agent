@@ -75,22 +75,38 @@ def test_save_and_load_review_draft(tmp_path):
 def test_list_queued_tasks_sorts_by_priority_then_created_at(tmp_path):
     repo = WorkspaceRepository(tmp_path)
     repo.save_task(StoryTask(
-        id="task_low",
+        id="task_z",
         topic_card_id="card_1",
-        topic="低优先",
+        topic="同优先级较晚",
         genre="悬疑",
-        priority=0,
+        priority=5,
+        created_at="2026-06-08T12:00:02",
+    ))
+    repo.save_task(StoryTask(
+        id="task_a",
+        topic_card_id="card_2",
+        topic="同优先级较早A",
+        genre="悬疑",
+        priority=5,
+        created_at="2026-06-08T12:00:01",
+    ))
+    repo.save_task(StoryTask(
+        id="task_b",
+        topic_card_id="card_3",
+        topic="同优先级较早B",
+        genre="悬疑",
+        priority=5,
         created_at="2026-06-08T12:00:01",
     ))
     repo.save_task(StoryTask(
         id="task_high",
-        topic_card_id="card_2",
+        topic_card_id="card_4",
         topic="高优先",
         genre="悬疑",
         priority=10,
-        created_at="2026-06-08T12:00:02",
+        created_at="2026-06-08T12:00:03",
     ))
 
     queued = repo.list_queued_tasks()
 
-    assert [task.id for task in queued] == ["task_high", "task_low"]
+    assert [task.id for task in queued] == ["task_high", "task_a", "task_b", "task_z"]
