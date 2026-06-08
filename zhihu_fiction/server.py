@@ -16,9 +16,15 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import APP_ROOT, load_settings
+from .exporter import Exporter
+from .llm import create_llm
 from .orchestrator import create_orchestrator, run_coordinator as _orig_run_coordinator
 from .pipeline import Pipeline, RUN_DIR
 from .skills_store import SkillsStore
+from .workspace.queue import WorkspaceQueue
+from .workspace.repositories import WorkspaceRepository
+from .workspace.services import WorkspaceService
+from .workspace_routes import create_workspace_router
 
 logger = logging.getLogger("zhihu_fiction.server")
 
@@ -91,6 +97,23 @@ def _create_pipeline() -> Pipeline:
         publisher=_NoopPublisher(),
         quality_threshold=6.0, max_rewrites=2,
     )
+
+
+workspace_repo = WorkspaceRepository()
+workspace_service = WorkspaceService(workspace_repo)
+workspace_queue = WorkspaceQueue(
+    workspace_repo,
+    workspace_service,
+    pipeline_factory=_create_pipeline,
+)
+workspace_queue.repair_stale_running()
+
+
+def _create_exporter() -> Exporter:
+    return Exporter(create_llm(settings, temperature=0.3))
+
+
+app.include_router(create_workspace_router(workspace_service, workspace_queue, _create_exporter))
 
 
 # ============================================================
