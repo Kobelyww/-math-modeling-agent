@@ -33,10 +33,15 @@ class WorkspaceService:
         failed: list[dict] = []
 
         for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                failed.append({"index": index, "reason": "invalid item"})
+                continue
+
             title = _clean_text(item.get("title", ""))
             if not title:
                 failed.append({"index": index, "reason": "missing title"})
                 continue
+            tags = item.get("tags", [])
 
             material = Material(
                 id=new_id("mat"),
@@ -46,7 +51,7 @@ class WorkspaceService:
                 content=_clean_text(item.get("content", "")),
                 url=_clean_text(item.get("url", "")),
                 hot_score=_coerce_float(item.get("hot_score") or item.get("votes")),
-                tags=list(item.get("tags", []) or []),
+                tags=list(tags) if isinstance(tags, list) else [],
                 captured_at=item.get("scraped_at") or utc_now_iso(),
             )
             imported.append(self.repo.save_material(material))
@@ -174,7 +179,7 @@ class WorkspaceService:
         if draft is None:
             raise KeyError(task_id)
 
-        allowed = {"title", "synopsis", "tags", "body", "editor_notes", "status"}
+        allowed = {"title", "synopsis", "tags", "body", "editor_notes"}
         updates = {key: value for key, value in changes.items() if key in allowed}
         updates["updated_at"] = utc_now_iso()
 
@@ -214,6 +219,8 @@ class WorkspaceService:
             raise KeyError(task_id)
         if draft.status != "ready_for_package":
             raise ValueError("Review draft must be ready for package generation")
+        if task.status != "approved":
+            raise ValueError("Task must be approved before package generation")
 
         result = WorkflowResult(
             topic=draft.title,
@@ -226,20 +233,12 @@ class WorkspaceService:
             synthesis=draft.synopsis,
         )
 
-        try:
-            exported = exporter.export(result, platforms=[platform])
-            package_dir_value = exported.get(platform)
-            if package_dir_value is None:
-                package_dir_value = self._write_fallback_package(task, draft, platform)
-        except Exception:
-            package_dir_value = self._write_fallback_package(task, draft, platform)
+        package_dir = self._export_package_dir(result, platform, exporter)
+        if package_dir is None or not _package_files_exist(package_dir):
+            package_dir = Path(self._write_fallback_package(task, draft, platform))
 
-        package_dir = Path(package_dir_value)
-        content_path = ""
-        metadata_path = ""
-        if package_dir.exists():
-            content_path = str(package_dir / "发布内容.md")
-            metadata_path = str(package_dir / "元数据.md")
+        content_path = str(package_dir / "发布内容.md")
+        metadata_path = str(package_dir / "元数据.md")
 
         package = PublishPackage(
             id=new_id("pkg"),
@@ -260,6 +259,26 @@ class WorkspaceService:
             raise KeyError(package_id)
 
         return self.repo.update_publish_package(package_id, {"status": "confirmed"})
+
+    def _export_package_dir(
+        self,
+        result: WorkflowResult,
+        platform: str,
+        exporter: Any,
+    ) -> Path | None:
+        try:
+            exported = exporter.export(result, platforms=[platform])
+        except Exception:
+            return None
+
+        if not isinstance(exported, dict):
+            return None
+
+        package_dir = exported.get(platform)
+        if not package_dir:
+            return None
+
+        return Path(package_dir)
 
     def _write_fallback_package(
         self,
@@ -307,3 +326,11 @@ def _coerce_float(value: object) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _package_files_exist(package_dir: Path) -> bool:
+    return (
+        package_dir.is_dir()
+        and (package_dir / "发布内容.md").is_file()
+        and (package_dir / "元数据.md").is_file()
+    )

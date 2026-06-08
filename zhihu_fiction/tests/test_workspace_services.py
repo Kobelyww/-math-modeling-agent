@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from zhihu_fiction.workspace.models import StoryTask
+from zhihu_fiction.workspace.models import ReviewDraft, StoryTask
 from zhihu_fiction.workspace.repositories import WorkspaceRepository
 from zhihu_fiction.workspace.services import WorkspaceService
 
@@ -32,6 +32,23 @@ def test_import_scraped_items_creates_materials(tmp_path):
     assert len(result["failed"]) == 1
     assert result["failed"][0]["reason"] == "missing title"
     assert repo.list_materials()[0].title == "热榜素材"
+
+
+def test_import_scraped_items_skips_invalid_items_and_scalar_tags(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    service = WorkspaceService(repo)
+
+    result = service.import_scraped_items(
+        [
+            "not a dict",
+            {"title": "标量标签素材", "tags": "悬疑"},
+        ],
+        source="zhihu",
+    )
+
+    assert result["imported"] == 1
+    assert result["failed"] == [{"index": 0, "reason": "invalid item"}]
+    assert repo.list_materials()[0].tags == []
 
 
 def test_create_topic_card_marks_materials_selected(tmp_path):
@@ -125,6 +142,28 @@ def test_update_draft_and_mark_ready_updates_task(tmp_path):
     assert repo.get_task(task.id).status == "approved"
 
 
+def test_update_draft_ignores_status_changes(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    service = WorkspaceService(repo)
+    task = StoryTask(
+        id="task_1",
+        topic_card_id="card_1",
+        topic="待审标题",
+        genre="悬疑",
+        status="needs_review",
+    )
+    repo.save_task(task)
+    service.create_review_draft_from_result(task, Path("story.md"), "正文", {})
+
+    draft = service.update_review_draft(
+        task.id,
+        {"status": "ready_for_package"},
+    )
+
+    assert draft.status == "needs_edit"
+    assert repo.get_task(task.id).status == "needs_review"
+
+
 def test_generate_publish_package_uses_exporter(tmp_path):
     repo = WorkspaceRepository(tmp_path)
     service = WorkspaceService(repo)
@@ -138,13 +177,68 @@ def test_generate_publish_package_uses_exporter(tmp_path):
     repo.save_task(task)
     service.create_review_draft_from_result(task, Path("story.md"), "正文", {})
     service.mark_draft_ready(task.id)
+    package_dir = tmp_path / "zhihu_pkg"
+    package_dir.mkdir()
+    (package_dir / "发布内容.md").write_text("正文", encoding="utf-8")
+    (package_dir / "元数据.md").write_text("元数据", encoding="utf-8")
     exporter = MagicMock()
-    exporter.export.return_value = {"zhihu": tmp_path / "zhihu_pkg"}
+    exporter.export.return_value = {"zhihu": package_dir}
 
     package = service.generate_publish_package(task.id, "zhihu", exporter)
 
     assert package.platform == "zhihu"
     assert package.status == "generated"
-    assert package.package_dir == str(tmp_path / "zhihu_pkg")
+    assert package.package_dir == str(package_dir)
     assert service.repo.get_publish_package(package.id) == package
     exporter.export.assert_called_once()
+
+
+def test_generate_publish_package_requires_approved_task(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    service = WorkspaceService(repo)
+    task = StoryTask(
+        id="task_1",
+        topic_card_id="card_1",
+        topic="选题",
+        genre="悬疑",
+        status="needs_review",
+    )
+    repo.save_task(task)
+    repo.save_review_draft(
+        ReviewDraft(
+            id="draft_1",
+            task_id=task.id,
+            story_path="story.md",
+            original_body="正文",
+            title="选题",
+            body="正文",
+            status="ready_for_package",
+        )
+    )
+    exporter = MagicMock()
+
+    with pytest.raises(ValueError, match="approved"):
+        service.generate_publish_package(task.id, "zhihu", exporter)
+
+
+def test_generate_publish_package_falls_back_for_bad_export_dir(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    service = WorkspaceService(repo)
+    task = StoryTask(
+        id="task_1",
+        topic_card_id="card_1",
+        topic="选题",
+        genre="悬疑",
+        status="approved",
+    )
+    repo.save_task(task)
+    service.create_review_draft_from_result(task, Path("story.md"), "正文", {})
+    service.mark_draft_ready(task.id)
+    exporter = MagicMock()
+    exporter.export.return_value = {"zhihu": str(tmp_path / "missing_pkg")}
+
+    package = service.generate_publish_package(task.id, "zhihu", exporter)
+
+    assert Path(package.content_path).exists()
+    assert Path(package.metadata_path).exists()
+    assert Path(package.package_dir).parent == repo.root / "publish_packages"
