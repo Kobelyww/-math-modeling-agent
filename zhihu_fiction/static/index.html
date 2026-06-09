@@ -7,16 +7,107 @@
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js" defer></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  .tab-active { border-bottom: 2px solid #6366f1; color: #6366f1; }
+  :root {
+    --bg-0: #0b1117;
+    --bg-1: #111a22;
+    --surface: rgba(15, 23, 31, 0.82);
+    --surface-strong: rgba(18, 27, 37, 0.94);
+    --surface-muted: rgba(148, 163, 184, 0.08);
+    --border-soft: rgba(148, 163, 184, 0.18);
+    --text-main: #e5edf5;
+    --text-muted: #93a4b8;
+    --accent: #2dd4bf;
+    --accent-cyan: #67e8f9;
+    --danger: #fb7185;
+    --warning: #fbbf24;
+  }
+  [x-cloak] { display: none !important; }
+  .app-shell {
+    position: relative;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 12% 8%, rgba(45, 212, 191, 0.16), transparent 24%),
+      radial-gradient(circle at 86% 2%, rgba(103, 232, 249, 0.1), transparent 26%),
+      linear-gradient(145deg, var(--bg-0), var(--bg-1) 56%, #0d1218);
+    color: var(--text-main);
+  }
+  .particle-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .app-content {
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+  }
+  .surface {
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.24);
+    backdrop-filter: blur(14px);
+  }
+  .surface-strong {
+    background: var(--surface-strong);
+    border: 1px solid var(--border-soft);
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(14px);
+  }
+  .surface-muted {
+    background: var(--surface-muted);
+    border: 1px solid var(--border-soft);
+  }
+  .tab-active {
+    border-bottom: 2px solid var(--accent-cyan);
+    color: var(--accent-cyan);
+  }
+  .nav-tab {
+    color: var(--text-muted);
+  }
+  .nav-tab:hover {
+    color: var(--text-main);
+  }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.375rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-soft);
+    background: rgba(148, 163, 184, 0.12);
+    color: #cbd5e1;
+  }
+  .form-control {
+    background: rgba(2, 6, 12, 0.42);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    color: var(--text-main);
+  }
+  .form-control::placeholder {
+    color: #64748b;
+  }
+  .form-control:focus {
+    outline: none;
+    border-color: rgba(103, 232, 249, 0.72);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.16);
+  }
   .progress-bar { transition: width 0.5s ease; }
   .stage-ok { color: #22c55e; } .stage-running { color: #f59e0b; }
   .stage-failed { color: #ef4444; } .stage-skipped { color: #9ca3af; }
   .log-line { font-family: 'SF Mono', monospace; font-size: 13px; }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+  @media (prefers-reduced-motion: reduce) {
+    .progress-bar {
+      transition: none;
+    }
+  }
 </style>
 </head>
-<body class="bg-gray-50 min-h-screen" x-data="app()" x-init="init()">
+<body class="app-shell min-h-screen" x-data="app()" x-init="init()">
+<canvas id="particleNetwork" class="particle-canvas" aria-hidden="true"></canvas>
+<div class="app-content">
 
 <!-- Header -->
 <header class="bg-white shadow-sm border-b">
@@ -598,6 +689,81 @@
 </main>
 
 <script>
+function initParticleNetwork() {
+  const canvas = document.getElementById('particleNetwork');
+  if (!canvas) return;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  let width = 0;
+  let height = 0;
+  let particles = [];
+  let animationId = null;
+  const particleCount = 42;
+
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = Math.floor(width * window.devicePixelRatio);
+    canvas.height = Math.floor(height * window.devicePixelRatio);
+    ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+    particles = Array.from({ length: particleCount }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.22,
+      vy: (Math.random() - 0.5) * 0.22,
+      r: 1 + Math.random() * 1.8,
+      a: 0.24 + Math.random() * 0.38,
+    }));
+    draw();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, width, height);
+    for (let i = 0; i < particles.length; i += 1) {
+      const a = particles[i];
+      for (let j = i + 1; j < particles.length; j += 1) {
+        const b = particles[j];
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        if (distance < 128) {
+          ctx.strokeStyle = `rgba(45, 212, 191, ${(1 - distance / 128) * 0.13})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+    }
+    for (const p of particles) {
+      ctx.fillStyle = `rgba(103, 232, 249, ${p.a})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function tick() {
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.x < -10) p.x = width + 10;
+      if (p.x > width + 10) p.x = -10;
+      if (p.y < -10) p.y = height + 10;
+      if (p.y > height + 10) p.y = -10;
+    }
+    draw();
+    animationId = requestAnimationFrame(tick);
+  }
+
+  resize();
+  window.addEventListener('resize', resize);
+  if (!reducedMotion) {
+    animationId = requestAnimationFrame(tick);
+  }
+}
+
 function app() {
   return {
     tab: 'run',
@@ -637,6 +803,7 @@ function app() {
     async init() {
       try { this.genres = await (await fetch('/api/skills/genres')).json(); } catch(e) {}
       this.loadScheduler();
+      initParticleNetwork();
     },
 
     // ---- Run ----
@@ -873,5 +1040,6 @@ function app() {
   }
 }
 </script>
+</div>
 </body>
 </html>
