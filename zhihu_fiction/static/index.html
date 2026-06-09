@@ -110,36 +110,36 @@
 <div class="app-content">
 
 <!-- Header -->
-<header class="bg-white shadow-sm border-b">
+<header class="surface-strong border-b border-slate-800/70">
   <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-    <h1 class="text-lg font-bold text-gray-800">Zhihu Fiction Studio</h1>
-    <span class="text-xs text-gray-400">知乎爆款小说自动创作系统</span>
+    <h1 class="text-lg font-bold text-slate-100">Zhihu Fiction Studio</h1>
+    <span class="text-xs text-slate-400">知乎爆款小说自动创作系统</span>
   </div>
 </header>
 
 <!-- Tabs -->
-<nav class="bg-white border-b">
+<nav class="surface-strong border-b border-slate-800/70">
   <div class="max-w-5xl mx-auto px-4 flex gap-0 overflow-x-auto whitespace-nowrap">
     <button @click="tab='run'" :class="tab==='run'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">运行</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">运行</button>
     <button @click="tab='history'; loadHistory()" :class="tab==='history'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">历史</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">历史</button>
     <button @click="tab='skills'; loadSkills()" :class="tab==='skills'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">技能</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">技能</button>
     <button @click="tab='scheduler'; loadScheduler()" :class="tab==='scheduler'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">调度</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">调度</button>
     <button @click="tab='stories'; loadStories()" :class="tab==='stories'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">作品</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">作品</button>
     <button @click="tab='workspace_materials'; loadWorkspace()" :class="tab==='workspace_materials'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">素材</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">素材</button>
     <button @click="tab='workspace_cards'; loadWorkspace()" :class="tab==='workspace_cards'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">选题卡</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">选题卡</button>
     <button @click="tab='workspace_tasks'; loadWorkspace()" :class="tab==='workspace_tasks'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">任务</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">任务</button>
     <button @click="tab='workspace_review'; loadWorkspace()" :class="tab==='workspace_review'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">审核</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">审核</button>
     <button @click="tab='workspace_packages'; loadWorkspace()" :class="tab==='workspace_packages'?'tab-active':''"
-      class="shrink-0 px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">发布包</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">发布包</button>
   </div>
 </nav>
 
@@ -147,16 +147,16 @@
 
   <!-- ====== RUN TAB ====== -->
   <section x-show="tab==='run'" x-cloak>
-    <div class="bg-white rounded-lg shadow p-6 mb-4">
+    <div class="surface rounded-lg p-6 mb-4">
       <h2 class="text-base font-semibold mb-4">创作配置</h2>
       <div class="grid grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="block text-sm text-gray-600 mb-1">主题（留空则 AI 自选热榜话题）</label>
+          <label class="block text-sm text-slate-300 mb-1">主题（留空则 AI 自选热榜话题）</label>
           <input x-model="runForm.topic" placeholder="如：穿越古代用现代医学救人"
             class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">目标流派</label>
+          <label class="block text-sm text-slate-300 mb-1">目标流派</label>
           <select x-model="runForm.genre" class="w-full border rounded px-3 py-2 text-sm">
             <option value="">自动识别</option>
             <template x-for="g in genres" :key="g">
@@ -166,14 +166,14 @@
         </div>
       </div>
       <div class="flex items-center gap-3 mb-4">
-        <label class="text-sm text-gray-600">章节数:</label>
+        <label class="text-sm text-slate-300">章节数:</label>
         <input x-model.number="runForm.chapters" type="number" min="1" max="100"
           class="w-20 border rounded px-2 py-1.5 text-sm text-center">
-        <button @click="runForm.chapters=1" :class="runForm.chapters===1?'bg-indigo-600 text-white':'bg-gray-100'"
+        <button @click="runForm.chapters=1" :class="runForm.chapters===1?'bg-indigo-600 text-white':'bg-slate-800/80'"
           class="px-3 py-1.5 rounded text-xs transition">短篇</button>
-        <button @click="runForm.chapters=5" :class="runForm.chapters===5?'bg-indigo-600 text-white':'bg-gray-100'"
+        <button @click="runForm.chapters=5" :class="runForm.chapters===5?'bg-indigo-600 text-white':'bg-slate-800/80'"
           class="px-3 py-1.5 rounded text-xs transition">中篇 5章</button>
-        <button @click="runForm.chapters=20" :class="runForm.chapters===20?'bg-indigo-600 text-white':'bg-gray-100'"
+        <button @click="runForm.chapters=20" :class="runForm.chapters===20?'bg-indigo-600 text-white':'bg-slate-800/80'"
           class="px-3 py-1.5 rounded text-xs transition">长篇 20章</button>
       </div>
       <button @click="startRun()" :disabled="running"
@@ -187,22 +187,22 @@
     </div>
 
     <!-- Progress -->
-    <div x-show="running" class="bg-white rounded-lg shadow p-6 mb-4" x-transition>
+    <div x-show="running" class="surface rounded-lg p-6 mb-4" x-transition>
       <div class="flex items-center justify-between mb-2">
-        <span class="text-sm text-gray-600 font-medium" x-text="progress.message"></span>
-        <span class="text-sm font-mono text-gray-400" x-text="progress.progress + '%'"></span>
+        <span class="text-sm text-slate-300 font-medium" x-text="progress.message"></span>
+        <span class="text-sm font-mono text-slate-500" x-text="progress.progress + '%'"></span>
       </div>
       <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
         <div class="bg-indigo-600 h-2 rounded-full progress-bar" :style="'width:'+progress.progress+'%'"></div>
       </div>
-      <div class="text-xs text-gray-400 mb-2">智能体实时日志 — 点击展开查看完整内容</div>
+      <div class="text-xs text-slate-500 mb-2">智能体实时日志 — 点击展开查看完整内容</div>
       <div class="h-96 overflow-y-auto space-y-2 bg-gray-900 rounded-lg p-3 font-mono text-xs" x-ref="logContainer"
            x-effect="if($refs.logContainer) $refs.logContainer.scrollTop=$refs.logContainer.scrollHeight">
         <template x-for="log in stageLog" :key="log.id">
           <div>
             <!-- Stage update -->
             <div x-show="log.type==='stage'" class="flex gap-2 text-gray-300 py-0.5">
-              <span class="text-gray-500 w-16 shrink-0" x-text="log.time"></span>
+              <span class="text-slate-400 w-16 shrink-0" x-text="log.time"></span>
               <span :class="log.status==='running'?'text-yellow-400':log.status==='failed'?'text-red-400':'text-green-400'" x-text="'['+log.stage+']'"></span>
               <span x-text="log.message"></span>
             </div>
@@ -211,9 +211,9 @@
                  @click="log._open=!log._open">
               <div class="flex items-center gap-1 text-indigo-400 cursor-pointer">
                 <span>🔧</span><span x-text="log.name"></span>
-                <span class="text-gray-500" x-text="log._open?'收起':'展开参数...'"></span>
+                <span class="text-slate-400" x-text="log._open?'收起':'展开参数...'"></span>
               </div>
-              <pre x-show="log._open" class="text-gray-400 mt-1 whitespace-pre-wrap break-all text-xs"
+              <pre x-show="log._open" class="text-slate-500 mt-1 whitespace-pre-wrap break-all text-xs"
                    x-text="JSON.stringify(log.args, null, 2)"></pre>
             </div>
             <!-- Tool result -->
@@ -221,7 +221,7 @@
                  @click="log._open=!log._open">
               <div class="flex items-center gap-1 text-green-400 cursor-pointer">
                 <span>✓</span><span x-text="log.name + ' 完成'"></span>
-                <span class="text-gray-500" x-text="log._open?'收起':'展开内容 ('+log.content.length+'字)...'"></span>
+                <span class="text-slate-400" x-text="log._open?'收起':'展开内容 ('+log.content.length+'字)...'"></span>
               </div>
               <pre x-show="log._open" class="text-gray-300 mt-1 whitespace-pre-wrap break-all max-h-64 overflow-y-auto text-xs leading-relaxed"
                    x-text="log.content"></pre>
@@ -229,9 +229,9 @@
             <!-- AI text -->
             <div x-show="log.type==='ai_text'" class="border-l-2 border-gray-600 pl-2 my-1"
                  @click="log._open=!log._open">
-              <div class="flex items-center gap-1 text-gray-400 cursor-pointer">
+              <div class="flex items-center gap-1 text-slate-500 cursor-pointer">
                 <span>💬</span><span>AI 思考</span>
-                <span class="text-gray-600" x-text="log._open?'收起':'展开 ('+log.content.length+'字)...'"></span>
+                <span class="text-slate-300" x-text="log._open?'收起':'展开 ('+log.content.length+'字)...'"></span>
               </div>
               <pre x-show="log._open" class="text-gray-300 mt-1 whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-xs leading-relaxed"
                    x-text="log.content"></pre>
@@ -242,34 +242,34 @@
     </div>
 
     <!-- Result -->
-    <div x-show="runResult" class="bg-white rounded-lg shadow p-6" x-transition>
+    <div x-show="runResult" class="surface rounded-lg p-6" x-transition>
       <h2 class="text-base font-semibold mb-3">创作结果</h2>
       <div class="grid grid-cols-2 gap-3 text-sm mb-4">
-        <div><span class="text-gray-500">主题：</span><span x-text="runResult.topic"></span></div>
-        <div><span class="text-gray-500">流派：</span><span x-text="runResult.genre"></span></div>
-        <div v-if="runResult.stages?.create"><span class="text-gray-500">字数：</span><span x-text="runResult.stages.create.words"></span></div>
-        <div v-if="runResult.stages?.review"><span class="text-gray-500">评分：</span><span x-text="runResult.stages.review.score?.toFixed(1)"></span></div>
-        <div><span class="text-gray-500">耗时：</span><span x-text="(runResult.total_duration_s/60).toFixed(1)+' 分钟'"></span></div>
+        <div><span class="text-slate-400">主题：</span><span x-text="runResult.topic"></span></div>
+        <div><span class="text-slate-400">流派：</span><span x-text="runResult.genre"></span></div>
+        <div v-if="runResult.stages?.create"><span class="text-slate-400">字数：</span><span x-text="runResult.stages.create.words"></span></div>
+        <div v-if="runResult.stages?.review"><span class="text-slate-400">评分：</span><span x-text="runResult.stages.review.score?.toFixed(1)"></span></div>
+        <div><span class="text-slate-400">耗时：</span><span x-text="(runResult.total_duration_s/60).toFixed(1)+' 分钟'"></span></div>
       </div>
       <div v-if="runResult.published_url && !runResult.published_url.endsWith('.md')" class="text-sm text-blue-600 mb-2">
         发布地址：<span x-text="runResult.published_url"></span>
       </div>
       <button @click="tab='stories'; loadStories()"
-        class="px-4 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50 transition">查看所有作品</button>
+        class="px-4 py-1.5 text-sm border border-gray-300 rounded hover:bg-slate-800/55 transition">查看所有作品</button>
     </div>
   </section>
 
   <!-- ====== HISTORY TAB ====== -->
   <section x-show="tab==='history'" x-cloak>
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-      <div class="p-4 border-b flex justify-between items-center">
-        <h2 class="text-base font-semibold">运行历史 <span class="text-gray-400 text-sm ml-2" x-text="runs.length+' 条'"></span></h2>
-        <button @click="loadHistory()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex justify-between items-center">
+        <h2 class="text-base font-semibold">运行历史 <span class="text-slate-500 text-sm ml-2" x-text="runs.length+' 条'"></span></h2>
+        <button @click="loadHistory()" class="text-sm text-cyan-300 hover:underline">刷新</button>
       </div>
-      <div x-show="runs.length===0" class="p-8 text-center text-gray-400 text-sm">暂无运行记录，先去「运行」标签创作一篇吧</div>
+      <div x-show="runs.length===0" class="p-8 text-center text-slate-500 text-sm">暂无运行记录，先去「运行」标签创作一篇吧</div>
       <div class="overflow-x-auto" x-show="runs.length>0">
         <table class="w-full text-sm">
-          <thead class="bg-gray-50 text-left text-gray-500">
+          <thead class="bg-slate-800/55 text-left text-slate-400">
             <tr>
               <th class="px-4 py-2 font-medium">运行 ID</th>
               <th class="px-4 py-2 font-medium">主题</th>
@@ -283,16 +283,16 @@
           <tbody>
             <template x-for="r in runs" :key="r.run_id">
               <tr @click="selectedRun = selectedRun===r.run_id ? null : r.run_id"
-                class="border-t hover:bg-gray-50 cursor-pointer transition">
+                class="border-t hover:bg-slate-800/55 cursor-pointer transition">
                 <td class="px-4 py-2 font-mono text-xs" x-text="r.run_id"></td>
                 <td class="px-4 py-2 max-w-40 truncate" x-text="r.topic"></td>
-                <td class="px-4 py-2"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs" x-text="r.genre"></span></td>
+                <td class="px-4 py-2"><span class="px-2 py-0.5 bg-slate-800/80 rounded text-xs" x-text="r.genre"></span></td>
                 <td class="px-4 py-2">
                   <span :class="r.error?'text-red-500':'text-green-500'" x-text="r.error?'失败':'完成'"></span>
                 </td>
                 <td class="px-4 py-2" x-text="r.stages?.create?.words || '-'"></td>
                 <td class="px-4 py-2" x-text="r.stages?.review?.score?.toFixed?.(1) || '-'"></td>
-                <td class="px-4 py-2 text-gray-400 text-xs" x-text="r.timestamp?.slice(11,16)"></td>
+                <td class="px-4 py-2 text-slate-500 text-xs" x-text="r.timestamp?.slice(11,16)"></td>
               </tr>
             </template>
           </tbody>
@@ -300,17 +300,17 @@
       </div>
     </div>
     <!-- Expanded detail -->
-    <div x-show="selectedRun" class="bg-white rounded-lg shadow p-6 mt-4" x-transition>
+    <div x-show="selectedRun" class="surface rounded-lg p-6 mt-4" x-transition>
       <template x-for="r in runs.filter(x=>x.run_id===selectedRun)" :key="r.run_id">
         <div>
           <h3 class="font-semibold mb-2" x-text="r.topic"></h3>
           <div class="grid grid-cols-3 gap-3 text-sm">
             <template x-for="(s, name) in r.stages" :key="name">
               <div class="border rounded p-3">
-                <div class="text-gray-500 text-xs mb-1" x-text="name"></div>
+                <div class="text-slate-400 text-xs mb-1" x-text="name"></div>
                 <div :class="'stage-'+s.status" x-text="s.status"></div>
                 <template x-for="(v, k) in s" :key="k">
-                  <div v-if="k!=='status'" class="text-gray-500 text-xs" x-text="k+': '+v"></div>
+                  <div v-if="k!=='status'" class="text-slate-400 text-xs" x-text="k+': '+v"></div>
                 </template>
               </div>
             </template>
@@ -324,40 +324,40 @@
   <section x-show="tab==='skills'" x-cloak>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <template x-for="g in genres" :key="g">
-        <div @click="viewSkill(g)" class="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition text-center">
+        <div @click="viewSkill(g)" class="surface rounded-lg p-4 cursor-pointer hover:shadow-md transition text-center">
           <div class="text-2xl mb-2" x-text="skillIcons[g] || '📚'"></div>
           <div class="font-medium text-sm" x-text="g"></div>
         </div>
       </template>
     </div>
-    <div x-show="genres.length===0" class="text-center text-gray-400 text-sm py-12">技能库为空，请先蒸馏数据</div>
+    <div x-show="genres.length===0" class="text-center text-slate-500 text-sm py-12">技能库为空，请先蒸馏数据</div>
 
     <!-- Skill Modal -->
     <div x-show="skillModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" @click.self="skillModal=null" x-transition>
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6 m-4">
+      <div class="surface rounded-lg w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6 m-4">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-semibold text-lg" x-text="skillGenre"></h3>
-          <button @click="skillModal=null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+          <button @click="skillModal=null" class="text-slate-500 hover:text-slate-300 text-xl">&times;</button>
         </div>
-        <pre class="text-sm text-gray-700 whitespace-pre-wrap font-sans" x-text="skillContent"></pre>
+        <pre class="text-sm text-slate-200 whitespace-pre-wrap font-sans" x-text="skillContent"></pre>
       </div>
     </div>
   </section>
 
   <!-- ====== SCHEDULER TAB ====== -->
   <section x-show="tab==='scheduler'" x-cloak>
-    <div class="bg-white rounded-lg shadow p-6">
+    <div class="surface rounded-lg p-6">
       <div class="flex items-center gap-3 mb-4">
         <div :class="scheduler.active?'bg-green-500':'bg-gray-300'" class="w-3 h-3 rounded-full"></div>
         <span class="font-semibold" x-text="scheduler.active?'调度运行中':'调度未启动'"></span>
       </div>
-      <div x-show="scheduler.active" class="text-sm text-gray-500 mb-4">
+      <div x-show="scheduler.active" class="text-sm text-slate-400 mb-4">
         <div>间隔：每 <span x-text="scheduler.interval_minutes"></span> 分钟</div>
         <div>启动时间：<span x-text="scheduler.started_at"></span></div>
       </div>
       <div class="flex gap-3">
         <div x-show="scheduler.active" class="flex gap-3 items-center">
-          <span class="text-sm text-gray-500">间隔(分钟)：</span>
+          <span class="text-sm text-slate-400">间隔(分钟)：</span>
           <input x-model="schedulerInterval" type="number" min="10" class="w-24 border rounded px-2 py-1 text-sm">
         </div>
         <button v-if="!scheduler.active" @click="startScheduler()"
@@ -372,81 +372,81 @@
   <section x-show="tab==='stories'" x-cloak>
     <div class="space-y-4">
       <template x-for="s in stories" :key="s.path">
-        <div class="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition" @click="viewStory(s)">
+        <div class="surface rounded-lg p-4 cursor-pointer hover:shadow-md transition" @click="viewStory(s)">
           <div class="flex justify-between items-start mb-2">
             <h3 class="font-medium text-sm" x-text="s.name"></h3>
-            <span class="text-xs text-gray-400" x-text="s.created_at?.slice(0,10)"></span>
+            <span class="text-xs text-slate-500" x-text="s.created_at?.slice(0,10)"></span>
           </div>
-          <p class="text-sm text-gray-500 line-clamp-2" x-text="s.excerpt"></p>
+          <p class="text-sm text-slate-400 line-clamp-2" x-text="s.excerpt"></p>
         </div>
       </template>
-      <div x-show="stories.length===0" class="text-center text-gray-400 text-sm py-12">暂无作品</div>
+      <div x-show="stories.length===0" class="text-center text-slate-500 text-sm py-12">暂无作品</div>
     </div>
 
     <!-- Story Viewer Modal -->
     <div x-show="storyViewer" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" @click.self="storyViewer=null" x-transition>
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 m-4">
-        <div class="flex justify-between items-center mb-4 sticky top-0 bg-white pb-2 border-b">
+      <div class="surface rounded-lg w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 m-4">
+        <div class="flex justify-between items-center mb-4 sticky top-0 bg-slate-950/95 pb-2 border-b border-slate-800/70">
           <h3 class="font-semibold text-lg" x-text="viewingStory?.name"></h3>
-          <button @click="storyViewer=null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+          <button @click="storyViewer=null" class="text-slate-500 hover:text-slate-300 text-xl">&times;</button>
         </div>
-        <div class="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap font-sans leading-relaxed" x-text="storyContent"></div>
+        <div class="prose prose-sm max-w-none text-slate-200 whitespace-pre-wrap font-sans leading-relaxed" x-text="storyContent"></div>
       </div>
     </div>
   </section>
 
   <!-- ====== WORKSPACE MATERIALS TAB ====== -->
   <section x-show="tab==='workspace_materials'" x-cloak>
-    <div class="bg-white rounded-lg shadow p-6 mb-4">
+    <div class="surface rounded-lg p-6 mb-4">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-base font-semibold">素材</h2>
-        <button @click="loadWorkspaceMaterials()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+        <button @click="loadWorkspaceMaterials()" class="text-sm text-cyan-300 hover:underline">刷新</button>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="block text-sm text-gray-600 mb-1">标题</label>
-          <input x-model="materialForm.title" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+          <label class="block text-sm text-slate-300 mb-1">标题</label>
+          <input x-model="materialForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">标签</label>
+          <label class="block text-sm text-slate-300 mb-1">标签</label>
           <input x-model="materialForm.tagsText" placeholder="悬疑, 反转"
-            class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div class="md:col-span-2">
-          <label class="block text-sm text-gray-600 mb-1">摘要</label>
+          <label class="block text-sm text-slate-300 mb-1">摘要</label>
           <textarea x-model="materialForm.excerpt" rows="3"
-            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
         <div class="md:col-span-2">
-          <label class="block text-sm text-gray-600 mb-1">正文</label>
+          <label class="block text-sm text-slate-300 mb-1">正文</label>
           <textarea x-model="materialForm.content" rows="6"
-            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
       </div>
       <button @click="createWorkspaceMaterial()"
         class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">新增素材</button>
     </div>
 
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-      <div class="p-4 border-b flex items-center justify-between">
-        <h3 class="text-sm font-semibold">素材列表 <span class="text-gray-400 ml-1" x-text="workspaceMaterials.length"></span></h3>
-        <span class="text-xs text-gray-400">已选 <span x-text="cardForm.source_material_ids.length"></span></span>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h3 class="text-sm font-semibold">素材列表 <span class="text-slate-500 ml-1" x-text="workspaceMaterials.length"></span></h3>
+        <span class="text-xs text-slate-500">已选 <span x-text="cardForm.source_material_ids.length"></span></span>
       </div>
-      <div x-show="workspaceMaterials.length===0" class="p-8 text-center text-gray-400 text-sm">暂无素材</div>
-      <div class="divide-y" x-show="workspaceMaterials.length>0">
+      <div x-show="workspaceMaterials.length===0" class="p-8 text-center text-slate-500 text-sm">暂无素材</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspaceMaterials.length>0">
         <template x-for="m in workspaceMaterials" :key="m.id">
-          <label class="p-4 flex gap-3 hover:bg-gray-50 transition cursor-pointer">
+          <label class="p-4 flex gap-3 hover:bg-slate-800/55 transition cursor-pointer">
             <input type="checkbox" :value="m.id" x-model="cardForm.source_material_ids"
-              class="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-300 shrink-0">
+              class="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-900/60 text-cyan-300 shrink-0">
             <div class="min-w-0 flex-1">
               <div class="flex items-start justify-between gap-3 mb-1">
-                <h4 class="text-sm font-medium text-gray-800 truncate" x-text="m.title"></h4>
-                <span class="text-xs text-gray-400 shrink-0" x-text="m.status"></span>
+                <h4 class="text-sm font-medium text-slate-100 truncate" x-text="m.title"></h4>
+                <span class="text-xs text-slate-500 shrink-0" x-text="m.status"></span>
               </div>
-              <p class="text-sm text-gray-500 line-clamp-2" x-text="m.excerpt || m.content"></p>
+              <p class="text-sm text-slate-400 line-clamp-2" x-text="m.excerpt || m.content"></p>
               <div class="flex flex-wrap gap-1 mt-2">
                 <template x-for="tag in (m.tags || [])" :key="tag">
-                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="tag"></span>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="tag"></span>
                 </template>
               </div>
             </div>
@@ -458,73 +458,73 @@
 
   <!-- ====== WORKSPACE CARDS TAB ====== -->
   <section x-show="tab==='workspace_cards'" x-cloak>
-    <div class="bg-white rounded-lg shadow p-6 mb-4">
+    <div class="surface rounded-lg p-6 mb-4">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-base font-semibold">选题卡</h2>
-        <span class="text-xs text-gray-400">素材数 <span x-text="cardForm.source_material_ids.length"></span></span>
+        <span class="text-xs text-slate-500">素材数 <span x-text="cardForm.source_material_ids.length"></span></span>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="block text-sm text-gray-600 mb-1">标题</label>
-          <input x-model="cardForm.title" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+          <label class="block text-sm text-slate-300 mb-1">标题</label>
+          <input x-model="cardForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">流派</label>
-          <input x-model="cardForm.genre" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+          <label class="block text-sm text-slate-300 mb-1">流派</label>
+          <input x-model="cardForm.genre" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">平台</label>
-          <select x-model="cardForm.platform" class="w-full border rounded px-3 py-2 text-sm">
+          <label class="block text-sm text-slate-300 mb-1">平台</label>
+          <select x-model="cardForm.platform" class="form-control w-full rounded px-3 py-2 text-sm">
             <option value="zhihu">zhihu</option>
           </select>
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">目标读者</label>
-          <input x-model="cardForm.target_reader" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+          <label class="block text-sm text-slate-300 mb-1">目标读者</label>
+          <input x-model="cardForm.target_reader" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">钩子</label>
+          <label class="block text-sm text-slate-300 mb-1">钩子</label>
           <textarea x-model="cardForm.hook" rows="4"
-            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">角度</label>
+          <label class="block text-sm text-slate-300 mb-1">角度</label>
           <textarea x-model="cardForm.angle" rows="4"
-            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
         <div class="md:col-span-2">
-          <label class="block text-sm text-gray-600 mb-1">风险备注</label>
+          <label class="block text-sm text-slate-300 mb-1">风险备注</label>
           <textarea x-model="cardForm.risk_notes" rows="3"
-            class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
       </div>
       <button @click="createWorkspaceCard()"
         class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">创建选题卡</button>
     </div>
 
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-      <div class="p-4 border-b flex items-center justify-between">
-        <h3 class="text-sm font-semibold">选题列表 <span class="text-gray-400 ml-1" x-text="workspaceCards.length"></span></h3>
-        <button @click="loadWorkspaceCards()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h3 class="text-sm font-semibold">选题列表 <span class="text-slate-500 ml-1" x-text="workspaceCards.length"></span></h3>
+        <button @click="loadWorkspaceCards()" class="text-sm text-cyan-300 hover:underline">刷新</button>
       </div>
-      <div x-show="workspaceCards.length===0" class="p-8 text-center text-gray-400 text-sm">暂无选题卡</div>
-      <div class="divide-y" x-show="workspaceCards.length>0">
+      <div x-show="workspaceCards.length===0" class="p-8 text-center text-slate-500 text-sm">暂无选题卡</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspaceCards.length>0">
         <template x-for="card in workspaceCards" :key="card.id">
           <div class="p-4">
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex items-center gap-2 mb-1">
-                  <h4 class="font-medium text-sm text-gray-800 truncate" x-text="card.title"></h4>
-                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="card.status"></span>
+                  <h4 class="font-medium text-sm text-slate-100 truncate" x-text="card.title"></h4>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="card.status"></span>
                 </div>
-                <div class="text-xs text-gray-400">
+                <div class="text-xs text-slate-500">
                   <span x-text="card.genre || '未定流派'"></span>
                   <span class="mx-1">/</span>
                   <span x-text="card.platform"></span>
                   <span class="mx-1">/</span>
                   <span>素材 <span x-text="(card.source_material_ids || []).length"></span></span>
                 </div>
-                <p class="text-sm text-gray-500 mt-2 line-clamp-2" x-text="card.hook || card.angle || card.target_reader"></p>
+                <p class="text-sm text-slate-400 mt-2 line-clamp-2" x-text="card.hook || card.angle || card.target_reader"></p>
               </div>
               <div class="flex gap-2 shrink-0">
                 <button @click="approveWorkspaceCard(card)" :disabled="card.status==='approved'"
@@ -541,23 +541,23 @@
 
   <!-- ====== WORKSPACE TASKS TAB ====== -->
   <section x-show="tab==='workspace_tasks'" x-cloak>
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-      <div class="p-4 border-b flex items-center justify-between">
-        <h2 class="text-base font-semibold">任务 <span class="text-gray-400 text-sm ml-1" x-text="workspaceTasks.length"></span></h2>
-        <button @click="loadWorkspaceTasks()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h2 class="text-base font-semibold">任务 <span class="text-slate-500 text-sm ml-1" x-text="workspaceTasks.length"></span></h2>
+        <button @click="loadWorkspaceTasks()" class="text-sm text-cyan-300 hover:underline">刷新</button>
       </div>
-      <div x-show="workspaceTasks.length===0" class="p-8 text-center text-gray-400 text-sm">暂无任务</div>
-      <div class="divide-y" x-show="workspaceTasks.length>0">
+      <div x-show="workspaceTasks.length===0" class="p-8 text-center text-slate-500 text-sm">暂无任务</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspaceTasks.length>0">
         <template x-for="task in workspaceTasks" :key="task.id">
           <div class="p-4">
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2 mb-1">
-                  <h3 class="font-medium text-sm text-gray-800" x-text="task.topic"></h3>
-                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="task.status"></span>
-                  <span class="text-xs text-gray-400" x-text="'重试 '+task.retry_count"></span>
+                  <h3 class="font-medium text-sm text-slate-100" x-text="task.topic"></h3>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="task.status"></span>
+                  <span class="text-xs text-slate-500" x-text="'重试 '+task.retry_count"></span>
                 </div>
-                <div class="text-xs text-gray-400">
+                <div class="text-xs text-slate-500">
                   <span x-text="task.genre || '未定流派'"></span>
                   <span class="mx-1">/</span>
                   <span x-text="task.chapters+' 章'"></span>
@@ -584,60 +584,60 @@
   <!-- ====== WORKSPACE REVIEW TAB ====== -->
   <section x-show="tab==='workspace_review'" x-cloak>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div class="bg-white rounded-lg shadow overflow-hidden">
-        <div class="p-4 border-b flex items-center justify-between">
-          <h2 class="text-base font-semibold">草稿 <span class="text-gray-400 text-sm ml-1" x-text="workspaceDrafts.length"></span></h2>
-          <button @click="loadWorkspaceDrafts()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+      <div class="surface rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+          <h2 class="text-base font-semibold">草稿 <span class="text-slate-500 text-sm ml-1" x-text="workspaceDrafts.length"></span></h2>
+          <button @click="loadWorkspaceDrafts()" class="text-sm text-cyan-300 hover:underline">刷新</button>
         </div>
-        <div x-show="workspaceDrafts.length===0" class="p-8 text-center text-gray-400 text-sm">暂无待审草稿</div>
-        <div class="divide-y" x-show="workspaceDrafts.length>0">
+        <div x-show="workspaceDrafts.length===0" class="p-8 text-center text-slate-500 text-sm">暂无待审草稿</div>
+        <div class="divide-y divide-slate-800/70" x-show="workspaceDrafts.length>0">
           <template x-for="draft in workspaceDrafts" :key="draft.id">
             <button @click="openDraft(draft)" type="button"
-              :class="selectedDraft?.id===draft.id?'bg-indigo-50':'hover:bg-gray-50'"
+              :class="selectedDraft?.id===draft.id?'bg-cyan-400/10':'hover:bg-slate-800/55'"
               class="w-full p-4 text-left transition">
               <div class="flex items-start justify-between gap-2 mb-1">
-                <span class="font-medium text-sm text-gray-800 line-clamp-2" x-text="draft.title"></span>
-                <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500 shrink-0" x-text="draft.status"></span>
+                <span class="font-medium text-sm text-slate-100 line-clamp-2" x-text="draft.title"></span>
+                <span class="status-chip px-2 py-0.5 text-xs shrink-0" x-text="draft.status"></span>
               </div>
-              <p class="text-xs text-gray-400 truncate" x-text="draft.task_id"></p>
+              <p class="text-xs text-slate-500 truncate" x-text="draft.task_id"></p>
             </button>
           </template>
         </div>
       </div>
 
-      <div class="bg-white rounded-lg shadow p-6 lg:col-span-2">
-        <div x-show="!selectedDraft" class="text-center text-gray-400 text-sm py-16">请选择草稿</div>
+      <div class="surface rounded-lg p-6 lg:col-span-2">
+        <div x-show="!selectedDraft" class="text-center text-slate-500 text-sm py-16">请选择草稿</div>
         <div x-show="selectedDraft">
           <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div>
               <h3 class="text-base font-semibold">编辑草稿</h3>
-              <p class="text-xs text-gray-400 mt-1" x-text="selectedDraft?.task_id"></p>
+              <p class="text-xs text-slate-500 mt-1" x-text="selectedDraft?.task_id"></p>
             </div>
-            <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500 self-start md:self-auto" x-text="selectedDraft?.status"></span>
+            <span class="status-chip px-2 py-0.5 text-xs self-start md:self-auto" x-text="selectedDraft?.status"></span>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
-              <label class="block text-sm text-gray-600 mb-1">标题</label>
-              <input x-model="draftEdit.title" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+              <label class="block text-sm text-slate-300 mb-1">标题</label>
+              <input x-model="draftEdit.title" class="form-control w-full rounded px-3 py-2 text-sm">
             </div>
             <div>
-              <label class="block text-sm text-gray-600 mb-1">标签</label>
-              <input x-model="draftEdit.tagsText" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+              <label class="block text-sm text-slate-300 mb-1">标签</label>
+              <input x-model="draftEdit.tagsText" class="form-control w-full rounded px-3 py-2 text-sm">
             </div>
             <div class="md:col-span-2">
-              <label class="block text-sm text-gray-600 mb-1">简介</label>
+              <label class="block text-sm text-slate-300 mb-1">简介</label>
               <textarea x-model="draftEdit.synopsis" rows="3"
-                class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+                class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
             </div>
             <div class="md:col-span-2">
-              <label class="block text-sm text-gray-600 mb-1">正文</label>
+              <label class="block text-sm text-slate-300 mb-1">正文</label>
               <textarea x-model="draftEdit.body" rows="14"
-                class="w-full border rounded px-3 py-2 text-sm resize-y font-sans leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+                class="form-control w-full rounded px-3 py-2 text-sm resize-y font-sans leading-relaxed"></textarea>
             </div>
             <div class="md:col-span-2">
-              <label class="block text-sm text-gray-600 mb-1">编辑备注</label>
+              <label class="block text-sm text-slate-300 mb-1">编辑备注</label>
               <textarea x-model="draftEdit.editor_notes" rows="4"
-                class="w-full border rounded px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+                class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
             </div>
           </div>
           <div class="flex flex-wrap gap-2">
@@ -655,24 +655,24 @@
 
   <!-- ====== WORKSPACE PACKAGES TAB ====== -->
   <section x-show="tab==='workspace_packages'" x-cloak>
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-      <div class="p-4 border-b flex items-center justify-between">
-        <h2 class="text-base font-semibold">发布包 <span class="text-gray-400 text-sm ml-1" x-text="workspacePackages.length"></span></h2>
-        <button @click="loadWorkspacePackages()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h2 class="text-base font-semibold">发布包 <span class="text-slate-500 text-sm ml-1" x-text="workspacePackages.length"></span></h2>
+        <button @click="loadWorkspacePackages()" class="text-sm text-cyan-300 hover:underline">刷新</button>
       </div>
-      <div x-show="workspacePackages.length===0" class="p-8 text-center text-gray-400 text-sm">暂无发布包</div>
-      <div class="divide-y" x-show="workspacePackages.length>0">
+      <div x-show="workspacePackages.length===0" class="p-8 text-center text-slate-500 text-sm">暂无发布包</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspacePackages.length>0">
         <template x-for="pkg in workspacePackages" :key="pkg.id">
           <div class="p-4">
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2 mb-1">
-                  <h3 class="font-medium text-sm text-gray-800" x-text="pkg.title"></h3>
-                  <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-500" x-text="pkg.status"></span>
-                  <span class="px-2 py-0.5 bg-indigo-50 rounded text-xs text-indigo-600" x-text="pkg.platform"></span>
+                  <h3 class="font-medium text-sm text-slate-100" x-text="pkg.title"></h3>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="pkg.status"></span>
+                  <span class="status-chip px-2 py-0.5 text-xs text-cyan-200" x-text="pkg.platform"></span>
                 </div>
-                <p class="text-sm text-gray-500 line-clamp-2" x-text="pkg.synopsis"></p>
-                <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-400">
+                <p class="text-sm text-slate-400 line-clamp-2" x-text="pkg.synopsis"></p>
+                <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-slate-500">
                   <div class="truncate">正文：<span x-text="pkg.content_path"></span></div>
                   <div class="truncate">元数据：<span x-text="pkg.metadata_path"></span></div>
                 </div>

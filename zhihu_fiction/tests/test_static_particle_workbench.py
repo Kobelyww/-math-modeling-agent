@@ -18,3 +18,15 @@ def test_particle_workbench_shell_markers_exist():
     assert "function initParticleNetwork()" in html
     assert "prefers-reduced-motion: reduce" in html
     assert "requestAnimationFrame" in html
+
+
+def test_dark_workbench_surface_classes_are_applied():
+    html = _html()
+
+    assert 'class="surface-strong' in html
+    assert 'class="surface ' in html
+    assert "nav-tab" in html
+    assert "form-control" in html
+    assert "status-chip" in html
+    assert "bg-white rounded" not in html
+    assert "bg-gray-50" not in html
