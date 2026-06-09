@@ -157,6 +157,30 @@ def test_rejects_unknown_location_reference():
         project.validate()
 
 
+def test_rejects_blank_character_id():
+    project = make_project()
+    project.characters[0].id = " "
+
+    with pytest.raises(DramaValidationError, match="character id is required"):
+        project.validate()
+
+
+def test_rejects_blank_location_id():
+    project = make_project()
+    project.locations[0].id = ""
+
+    with pytest.raises(DramaValidationError, match="location id is required"):
+        project.validate()
+
+
+def test_from_dict_rejects_malformed_episode_count():
+    data = make_project().to_dict()
+    data["episode_count"] = "many"
+
+    with pytest.raises(DramaValidationError, match="episode_count"):
+        DramaProject.from_dict(data)
+
+
 def test_rejects_episode_with_too_few_shots():
     project = make_project()
     project.episodes[0].shots = project.episodes[0].shots[:5]

@@ -83,6 +83,11 @@ class DramaProject:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DramaProject":
+        try:
+            episode_count = int(data.get("episode_count", 0))
+        except (TypeError, ValueError) as exc:
+            raise DramaValidationError("episode_count must be an integer") from exc
+
         characters = [
             DramaCharacter(**item)
             for item in data.get("characters", [])
@@ -106,7 +111,7 @@ class DramaProject:
             genre=data.get("genre", ""),
             logline=data.get("logline", ""),
             audience=data.get("audience", ""),
-            episode_count=int(data.get("episode_count", 0)),
+            episode_count=episode_count,
             characters=characters,
             locations=locations,
             episodes=episodes,
@@ -149,7 +154,11 @@ class DramaProject:
 
     @staticmethod
     def _unique_ids(kind: str, values: list[str]) -> set[str]:
-        cleaned = [value.strip() for value in values if value and value.strip()]
+        cleaned = []
+        for value in values:
+            if not value or not value.strip():
+                raise DramaValidationError(f"{kind} id is required")
+            cleaned.append(value.strip())
         if len(cleaned) != len(set(cleaned)):
             raise DramaValidationError(f"duplicate {kind} id")
         return set(cleaned)
