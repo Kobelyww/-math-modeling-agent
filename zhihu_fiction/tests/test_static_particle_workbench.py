@@ -30,3 +30,10 @@ def test_dark_workbench_surface_classes_are_applied():
     assert "status-chip" in html
     assert "bg-white rounded" not in html
     assert "bg-gray-50" not in html
+    assert "bg-gray-200" not in html
+    assert "bg-gray-300" not in html
+    assert " bg-red-50 " not in html
+    assert " border-red-100 " not in html
+    assert 'class="w-full border rounded' not in html
+    assert 'class="w-20 border rounded' not in html
+    assert 'class="w-24 border rounded' not in html
