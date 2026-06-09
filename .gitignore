@@ -44,3 +44,6 @@ zhihu_fiction/data/scraped/*
 zhihu_fiction/data/skills/*
 !zhihu_fiction/data/skills/.gitkeep
 zhihu_fiction/data/workspace/*
+
+# local brainstorming mockups
+.superpowers/
