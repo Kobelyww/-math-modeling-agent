@@ -69,3 +69,7 @@ def test_workspace_ux_state_markers_exist():
         assert f'for="{field_id}"' in html
         assert f'id="{field_id}"' in html
     assert "break-words" in html
+    assert 'class="font-medium text-sm text-slate-100 break-words" x-text="card.title"' in html
+    assert 'class="break-words">正文：<span x-text="pkg.content_path"' in html
+    assert 'class="break-words">元数据：<span x-text="pkg.metadata_path"' in html
+    assert 'class="truncate break-words"' not in html

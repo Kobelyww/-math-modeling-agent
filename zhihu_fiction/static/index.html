@@ -520,7 +520,7 @@
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex items-center gap-2 mb-1">
-                  <h4 class="font-medium text-sm text-slate-100 truncate" x-text="card.title"></h4>
+                  <h4 class="font-medium text-sm text-slate-100 break-words" x-text="card.title"></h4>
                   <span class="status-chip px-2 py-0.5 text-xs" x-text="card.status"></span>
                 </div>
                 <div class="text-xs text-slate-500">
@@ -680,8 +680,8 @@
                 </div>
                 <p class="text-sm text-slate-400 line-clamp-2" x-text="pkg.synopsis"></p>
                 <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-slate-500">
-                  <div class="truncate break-words">正文：<span x-text="pkg.content_path"></span></div>
-                  <div class="truncate break-words">元数据：<span x-text="pkg.metadata_path"></span></div>
+                  <div class="break-words">正文：<span x-text="pkg.content_path"></span></div>
+                  <div class="break-words">元数据：<span x-text="pkg.metadata_path"></span></div>
                 </div>
               </div>
               <button @click="confirmPackage(pkg)" :disabled="pkg.status==='confirmed' || pkg.status==='exported'"
