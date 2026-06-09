@@ -144,6 +144,12 @@
 </nav>
 
 <main class="max-w-5xl mx-auto px-4 py-6">
+  <div x-show="workspaceError" x-cloak class="surface-muted rounded-lg px-4 py-3 mb-4 text-sm text-amber-200">
+    <div class="flex items-start justify-between gap-3">
+      <span x-text="workspaceError"></span>
+      <button type="button" @click="workspaceError=''" class="text-amber-100 hover:text-white">关闭</button>
+    </div>
+  </div>
 
   <!-- ====== RUN TAB ====== -->
   <section x-show="tab==='run'" x-cloak>
@@ -404,22 +410,22 @@
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="block text-sm text-slate-300 mb-1">标题</label>
-          <input x-model="materialForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
+          <label for="material-title" class="block text-sm text-slate-300 mb-1">标题</label>
+          <input id="material-title" x-model="materialForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-slate-300 mb-1">标签</label>
-          <input x-model="materialForm.tagsText" placeholder="悬疑, 反转"
+          <label for="material-tags" class="block text-sm text-slate-300 mb-1">标签</label>
+          <input id="material-tags" x-model="materialForm.tagsText" placeholder="悬疑, 反转"
             class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div class="md:col-span-2">
-          <label class="block text-sm text-slate-300 mb-1">摘要</label>
-          <textarea x-model="materialForm.excerpt" rows="3"
+          <label for="material-excerpt" class="block text-sm text-slate-300 mb-1">摘要</label>
+          <textarea id="material-excerpt" x-model="materialForm.excerpt" rows="3"
             class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
         <div class="md:col-span-2">
-          <label class="block text-sm text-slate-300 mb-1">正文</label>
-          <textarea x-model="materialForm.content" rows="6"
+          <label for="material-content" class="block text-sm text-slate-300 mb-1">正文</label>
+          <textarea id="material-content" x-model="materialForm.content" rows="6"
             class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
       </div>
@@ -465,36 +471,36 @@
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="block text-sm text-slate-300 mb-1">标题</label>
-          <input x-model="cardForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
+          <label for="card-title" class="block text-sm text-slate-300 mb-1">标题</label>
+          <input id="card-title" x-model="cardForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-slate-300 mb-1">流派</label>
-          <input x-model="cardForm.genre" class="form-control w-full rounded px-3 py-2 text-sm">
+          <label for="card-genre" class="block text-sm text-slate-300 mb-1">流派</label>
+          <input id="card-genre" x-model="cardForm.genre" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-slate-300 mb-1">平台</label>
-          <select x-model="cardForm.platform" class="form-control w-full rounded px-3 py-2 text-sm">
+          <label for="card-platform" class="block text-sm text-slate-300 mb-1">平台</label>
+          <select id="card-platform" x-model="cardForm.platform" class="form-control w-full rounded px-3 py-2 text-sm">
             <option value="zhihu">zhihu</option>
           </select>
         </div>
         <div>
-          <label class="block text-sm text-slate-300 mb-1">目标读者</label>
-          <input x-model="cardForm.target_reader" class="form-control w-full rounded px-3 py-2 text-sm">
+          <label for="card-target-reader" class="block text-sm text-slate-300 mb-1">目标读者</label>
+          <input id="card-target-reader" x-model="cardForm.target_reader" class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-slate-300 mb-1">钩子</label>
-          <textarea x-model="cardForm.hook" rows="4"
+          <label for="card-hook" class="block text-sm text-slate-300 mb-1">钩子</label>
+          <textarea id="card-hook" x-model="cardForm.hook" rows="4"
             class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
         <div>
-          <label class="block text-sm text-slate-300 mb-1">角度</label>
-          <textarea x-model="cardForm.angle" rows="4"
+          <label for="card-angle" class="block text-sm text-slate-300 mb-1">角度</label>
+          <textarea id="card-angle" x-model="cardForm.angle" rows="4"
             class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
         <div class="md:col-span-2">
-          <label class="block text-sm text-slate-300 mb-1">风险备注</label>
-          <textarea x-model="cardForm.risk_notes" rows="3"
+          <label for="card-risk-notes" class="block text-sm text-slate-300 mb-1">风险备注</label>
+          <textarea id="card-risk-notes" x-model="cardForm.risk_notes" rows="3"
             class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
         </div>
       </div>
@@ -553,7 +559,7 @@
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2 mb-1">
-                  <h3 class="font-medium text-sm text-slate-100" x-text="task.topic"></h3>
+                  <h3 class="font-medium text-sm text-slate-100 break-words" x-text="task.topic"></h3>
                   <span class="status-chip px-2 py-0.5 text-xs" x-text="task.status"></span>
                   <span class="text-xs text-slate-500" x-text="'重试 '+task.retry_count"></span>
                 </div>
@@ -617,26 +623,26 @@
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
-              <label class="block text-sm text-slate-300 mb-1">标题</label>
-              <input x-model="draftEdit.title" class="form-control w-full rounded px-3 py-2 text-sm">
+              <label for="draft-title" class="block text-sm text-slate-300 mb-1">标题</label>
+              <input id="draft-title" x-model="draftEdit.title" class="form-control w-full rounded px-3 py-2 text-sm">
             </div>
             <div>
-              <label class="block text-sm text-slate-300 mb-1">标签</label>
-              <input x-model="draftEdit.tagsText" class="form-control w-full rounded px-3 py-2 text-sm">
+              <label for="draft-tags" class="block text-sm text-slate-300 mb-1">标签</label>
+              <input id="draft-tags" x-model="draftEdit.tagsText" class="form-control w-full rounded px-3 py-2 text-sm">
             </div>
             <div class="md:col-span-2">
-              <label class="block text-sm text-slate-300 mb-1">简介</label>
-              <textarea x-model="draftEdit.synopsis" rows="3"
+              <label for="draft-synopsis" class="block text-sm text-slate-300 mb-1">简介</label>
+              <textarea id="draft-synopsis" x-model="draftEdit.synopsis" rows="3"
                 class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
             </div>
             <div class="md:col-span-2">
-              <label class="block text-sm text-slate-300 mb-1">正文</label>
-              <textarea x-model="draftEdit.body" rows="14"
+              <label for="draft-body" class="block text-sm text-slate-300 mb-1">正文</label>
+              <textarea id="draft-body" x-model="draftEdit.body" rows="14"
                 class="form-control w-full rounded px-3 py-2 text-sm resize-y font-sans leading-relaxed"></textarea>
             </div>
             <div class="md:col-span-2">
-              <label class="block text-sm text-slate-300 mb-1">编辑备注</label>
-              <textarea x-model="draftEdit.editor_notes" rows="4"
+              <label for="draft-editor-notes" class="block text-sm text-slate-300 mb-1">编辑备注</label>
+              <textarea id="draft-editor-notes" x-model="draftEdit.editor_notes" rows="4"
                 class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
             </div>
           </div>
@@ -646,7 +652,8 @@
             <button @click="markDraftReady()"
               class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">就绪</button>
             <button @click="generatePackage(selectedDraft.task_id, 'zhihu')"
-              class="px-4 py-2 bg-gray-800 text-white rounded text-sm hover:bg-gray-900 transition">生成知乎包</button>
+              :disabled="selectedDraft?.status !== 'ready_for_package'"
+              class="px-4 py-2 bg-slate-100 text-slate-950 rounded text-sm hover:bg-white disabled:opacity-45 disabled:cursor-not-allowed transition">生成知乎包</button>
           </div>
         </div>
       </div>
@@ -667,14 +674,14 @@
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2 mb-1">
-                  <h3 class="font-medium text-sm text-slate-100" x-text="pkg.title"></h3>
+                  <h3 class="font-medium text-sm text-slate-100 break-words" x-text="pkg.title"></h3>
                   <span class="status-chip px-2 py-0.5 text-xs" x-text="pkg.status"></span>
                   <span class="status-chip px-2 py-0.5 text-xs text-cyan-200" x-text="pkg.platform"></span>
                 </div>
                 <p class="text-sm text-slate-400 line-clamp-2" x-text="pkg.synopsis"></p>
                 <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-slate-500">
-                  <div class="truncate">正文：<span x-text="pkg.content_path"></span></div>
-                  <div class="truncate">元数据：<span x-text="pkg.metadata_path"></span></div>
+                  <div class="truncate break-words">正文：<span x-text="pkg.content_path"></span></div>
+                  <div class="truncate break-words">元数据：<span x-text="pkg.metadata_path"></span></div>
                 </div>
               </div>
               <button @click="confirmPackage(pkg)" :disabled="pkg.status==='confirmed' || pkg.status==='exported'"
@@ -776,6 +783,7 @@ function app() {
     workspaceTasks: [],
     workspaceDrafts: [],
     workspacePackages: [],
+    workspaceError: '',
     materialForm: { title: '', content: '', excerpt: '', tagsText: '' },
     cardForm: { title: '', source_material_ids: [], genre: '', platform: 'zhihu', hook: '', angle: '', risk_notes: '', target_reader: '' },
     selectedDraft: null,
@@ -901,11 +909,21 @@ function app() {
         this.loadWorkspacePackages(),
       ]);
     },
-    async loadWorkspaceMaterials() { try { this.workspaceMaterials = await (await fetch('/api/workspace/materials')).json(); } catch(e) {} },
-    async loadWorkspaceCards() { try { this.workspaceCards = await (await fetch('/api/workspace/topic-cards')).json(); } catch(e) {} },
-    async loadWorkspaceTasks() { try { this.workspaceTasks = await (await fetch('/api/workspace/tasks')).json(); } catch(e) {} },
-    async loadWorkspaceDrafts() { try { this.workspaceDrafts = await (await fetch('/api/workspace/drafts')).json(); } catch(e) {} },
-    async loadWorkspacePackages() { try { this.workspacePackages = await (await fetch('/api/workspace/packages')).json(); } catch(e) {} },
+    async loadWorkspaceList(url, target, label) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this[target] = await res.json();
+        if (this.workspaceError.startsWith(label)) this.workspaceError = '';
+      } catch(e) {
+        this.workspaceError = label + '加载失败: ' + e.message;
+      }
+    },
+    async loadWorkspaceMaterials() { await this.loadWorkspaceList('/api/workspace/materials', 'workspaceMaterials', '素材'); },
+    async loadWorkspaceCards() { await this.loadWorkspaceList('/api/workspace/topic-cards', 'workspaceCards', '选题卡'); },
+    async loadWorkspaceTasks() { await this.loadWorkspaceList('/api/workspace/tasks', 'workspaceTasks', '任务'); },
+    async loadWorkspaceDrafts() { await this.loadWorkspaceList('/api/workspace/drafts', 'workspaceDrafts', '草稿'); },
+    async loadWorkspacePackages() { await this.loadWorkspaceList('/api/workspace/packages', 'workspacePackages', '发布包'); },
     async createWorkspaceMaterial() {
       try {
         const res = await fetch('/api/workspace/materials/manual', {

@@ -40,3 +40,32 @@ def test_dark_workbench_surface_classes_are_applied():
     assert 'class="w-full border rounded' not in html
     assert 'class="w-20 border rounded' not in html
     assert 'class="w-24 border rounded' not in html
+
+
+def test_workspace_ux_state_markers_exist():
+    html = _html()
+
+    assert "workspaceError" in html
+    assert "loadWorkspaceList(" in html
+    assert "selectedDraft?.status !== 'ready_for_package'" in html
+    for field_id in (
+        "material-title",
+        "material-tags",
+        "material-excerpt",
+        "material-content",
+        "card-title",
+        "card-genre",
+        "card-platform",
+        "card-target-reader",
+        "card-hook",
+        "card-angle",
+        "card-risk-notes",
+        "draft-title",
+        "draft-tags",
+        "draft-synopsis",
+        "draft-body",
+        "draft-editor-notes",
+    ):
+        assert f'for="{field_id}"' in html
+        assert f'id="{field_id}"' in html
+    assert "break-words" in html
