@@ -174,7 +174,13 @@ class DramaProject:
             raise DramaValidationError(
                 f"shot {shot.id} episode_index {shot.episode_index} does not match episode {episode.index}"
             )
-        if not 5 <= int(shot.duration_seconds) <= 8:
+        try:
+            duration_seconds = int(shot.duration_seconds)
+        except (TypeError, ValueError) as exc:
+            raise DramaValidationError(
+                f"shot {shot.id} duration_seconds must be an integer"
+            ) from exc
+        if not 5 <= duration_seconds <= 8:
             raise DramaValidationError(
                 f"shot {shot.id} duration_seconds must be between 5 and 8"
             )

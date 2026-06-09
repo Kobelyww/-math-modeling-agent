@@ -181,6 +181,14 @@ def test_from_dict_rejects_malformed_episode_count():
         DramaProject.from_dict(data)
 
 
+def test_from_dict_rejects_malformed_shot_duration():
+    data = make_project().to_dict()
+    data["episodes"][0]["shots"][0]["duration_seconds"] = "long"
+
+    with pytest.raises(DramaValidationError, match="duration_seconds"):
+        DramaProject.from_dict(data)
+
+
 def test_rejects_episode_with_too_few_shots():
     project = make_project()
     project.episodes[0].shots = project.episodes[0].shots[:5]
