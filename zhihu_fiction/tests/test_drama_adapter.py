@@ -5,7 +5,12 @@ import json
 
 import pytest
 
-from zhihu_fiction.drama.adapter import DramaAdapter, DramaAdapterError, extract_json_object
+from zhihu_fiction.drama.adapter import (
+    DramaAdapter,
+    DramaAdapterError,
+    extract_json_object,
+    message_content,
+)
 
 
 class FakeResponse:
@@ -95,6 +100,22 @@ def test_extract_json_object_from_markdown_fence():
     assert extract_json_object(text) == '{"a": 1, "b": {"c": 2}}'
 
 
+def test_extract_json_object_handles_braces_inside_quoted_string():
+    text = 'prefix { "a": "literal { brace } text", "b": 2 } trailing'
+
+    assert extract_json_object(text) == '{ "a": "literal { brace } text", "b": 2 }'
+
+
+def test_message_content_joins_list_items_and_text_dicts():
+    response = FakeResponse([
+        {"text": "第一段"},
+        "第二段",
+        {"text": "第三段"},
+    ])
+
+    assert message_content(response) == "第一段第二段第三段"
+
+
 def test_adapter_parses_valid_llm_json():
     blueprint = {"episode_count": 1, "notes": ["保留复仇主线"]}
     payload = valid_project_payload()
@@ -118,6 +139,31 @@ def test_adapter_parses_valid_llm_json():
     assert "保留复仇主线" in llm.prompts[1]
 
 
+def test_adapt_result_reads_workflow_result_fields():
+    class FakeResult:
+        topic = "结果主题"
+        genre = "悬疑"
+        final_story = "主角发现证据后反击。"
+        synthesis = "先悬念再反转"
+
+    blueprint = {"episode_count": 1, "notes": ["保留证据反转"]}
+    payload = valid_project_payload()
+    llm = FakeLLM([
+        json.dumps(blueprint, ensure_ascii=False),
+        json.dumps(payload, ensure_ascii=False),
+    ])
+
+    DramaAdapter(llm).adapt_result(FakeResult())
+
+    assert "结果主题" in llm.prompts[0]
+    assert "悬疑" in llm.prompts[0]
+    assert "主角发现证据后反击。" in llm.prompts[0]
+    assert "先悬念再反转" in llm.prompts[0]
+    assert "结果主题" in llm.prompts[1]
+    assert "悬疑" in llm.prompts[1]
+    assert "主角发现证据后反击。" in llm.prompts[1]
+
+
 def test_adapter_rejects_empty_story():
     llm = FakeLLM([])
 
@@ -128,6 +174,21 @@ def test_adapter_rejects_empty_story():
             story="",
             synthesis="",
         )
+
+
+def test_adapter_preserves_raw_output_for_invalid_blueprint_json():
+    llm = FakeLLM(["蓝图不是 JSON"])
+
+    with pytest.raises(DramaAdapterError) as exc_info:
+        DramaAdapter(llm).adapt(
+            source_title="测试主题",
+            genre="复仇",
+            story="女主被陷害后重生。",
+            synthesis="发布方案",
+        )
+
+    assert "Could not parse adaptation blueprint JSON" in str(exc_info.value)
+    assert exc_info.value.raw_output == "蓝图不是 JSON"
 
 
 def test_adapter_preserves_raw_output_for_invalid_json():
