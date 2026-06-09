@@ -34,6 +34,9 @@ def test_dark_workbench_surface_classes_are_applied():
     assert "bg-gray-300" not in html
     assert " bg-red-50 " not in html
     assert " border-red-100 " not in html
+    assert "border border-gray-300" not in html
+    assert 'class="border-t hover:bg-slate-800/55' not in html
+    assert 'class="border rounded' not in html
     assert 'class="w-full border rounded' not in html
     assert 'class="w-20 border rounded' not in html
     assert 'class="w-24 border rounded' not in html

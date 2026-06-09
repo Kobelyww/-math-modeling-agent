@@ -255,7 +255,7 @@
         发布地址：<span x-text="runResult.published_url"></span>
       </div>
       <button @click="tab='stories'; loadStories()"
-        class="px-4 py-1.5 text-sm border border-gray-300 rounded hover:bg-slate-800/55 transition">查看所有作品</button>
+        class="px-4 py-1.5 text-sm border border-slate-700 rounded hover:bg-slate-800/55 transition">查看所有作品</button>
     </div>
   </section>
 
@@ -283,7 +283,7 @@
           <tbody>
             <template x-for="r in runs" :key="r.run_id">
               <tr @click="selectedRun = selectedRun===r.run_id ? null : r.run_id"
-                class="border-t hover:bg-slate-800/55 cursor-pointer transition">
+                class="border-t border-slate-800/70 hover:bg-slate-800/55 cursor-pointer transition">
                 <td class="px-4 py-2 font-mono text-xs" x-text="r.run_id"></td>
                 <td class="px-4 py-2 max-w-40 truncate" x-text="r.topic"></td>
                 <td class="px-4 py-2"><span class="px-2 py-0.5 bg-slate-800/80 rounded text-xs" x-text="r.genre"></span></td>
@@ -306,7 +306,7 @@
           <h3 class="font-semibold mb-2" x-text="r.topic"></h3>
           <div class="grid grid-cols-3 gap-3 text-sm">
             <template x-for="(s, name) in r.stages" :key="name">
-              <div class="border rounded p-3">
+              <div class="border border-slate-800/70 rounded p-3 bg-slate-950/35">
                 <div class="text-slate-400 text-xs mb-1" x-text="name"></div>
                 <div :class="'stage-'+s.status" x-text="s.status"></div>
                 <template x-for="(v, k) in s" :key="k">
