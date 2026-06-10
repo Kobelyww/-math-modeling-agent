@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .config import APP_ROOT, load_settings
 from .distiller import Distiller
+from .drama import DramaAdapter, DramaAdapterError, DramaExporter
 from .exporter import DEFAULT_PLATFORMS, Exporter
 from .llm import create_llm
 from .orchestrator import OrchestratorCompat, WorkflowResult, create_orchestrator
@@ -56,6 +57,7 @@ HELP_TEXT = """
 ║  /stream <主题>  流式输出创作过程                     ║
 ║  /publish        导出最近创作到多平台发布包            ║
 ║  /publish <主题> 创作并导出多平台发布包                ║
+║  /drama         将最近/已加载小说转成短剧视频Prompt包   ║
 ║  /autopublish    浏览器自动化发布（需安装 playwright）  ║
 ║  /mode <模式>    设置创作模式 (fast/polish/full)      ║
 ║  /genre <题材>   设置目标题材 (如: 悬疑/言情/职场)    ║
@@ -476,6 +478,33 @@ class CLI:
         except Exception as exc:
             print(f"\n[错误] 发布导出失败: {exc}")
 
+    def cmd_drama(self) -> None:
+        """将最近或已加载的小说转成短剧视频 Prompt 包"""
+        if self.last_result is None:
+            print("没有可转换的小说。请先运行 /create <主题> 或 /load <文件名>。")
+            return
+
+        print(f"\n[短剧] 正在将「{self.last_result.topic}」转换为短剧视频 Prompt 包...")
+        exporter = DramaExporter()
+        try:
+            llm = create_llm(self.settings, temperature=0.3)
+            project = DramaAdapter(llm).adapt_result(self.last_result)
+            output_dir = exporter.export(project)
+            print(f"\n短剧 Prompt 包已生成：{output_dir}")
+            print(f"共 {project.episode_count} 集，{project.total_shots} 个镜头")
+        except DramaAdapterError as exc:
+            failure_dir = exporter.export_failure(
+                source_title=self.last_result.topic,
+                raw_output=exc.raw_output,
+                error=str(exc),
+            )
+            print(f"\n[错误] 短剧 Prompt 包生成失败: {exc}")
+            print(f"原始输出和错误信息已保存：{failure_dir}")
+            print(f"  raw_output: {failure_dir / 'raw_output.txt'}")
+            print(f"  error: {failure_dir / 'error.txt'}")
+        except Exception as exc:
+            print(f"\n[错误] 短剧 Prompt 包生成失败: {exc}")
+
     def cmd_autopublish(self) -> None:
         """通过浏览器自动化直接发布到各平台"""
         if self.last_result is None:
@@ -677,6 +706,8 @@ class CLI:
                     print("用法: /polish <主题描述>")
             elif cmd == "/publish":
                 self.cmd_publish(arg if arg else None)
+            elif cmd == "/drama":
+                self.cmd_drama()
             elif cmd == "/autopublish":
                 self.cmd_autopublish()
             elif cmd == "/auto":
