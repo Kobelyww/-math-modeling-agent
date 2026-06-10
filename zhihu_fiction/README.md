@@ -1,0 +1,225 @@
+# Zhihu Fiction Studio
+
+`zhihu_fiction` 是一个面向爆款故事创作的多智能体内容生产系统。它围绕“热点抓取 → 技能蒸馏 → 多 Agent 创作 → 评审改写 → 多平台发布包导出/辅助发布”构建，适合用来探索知乎短篇、网文开篇、平台化故事内容和 AI 写作工作流。
+
+## 功能概览
+
+- **热点采集**：抓取知乎热榜、搜索话题，支持手动录入兜底。
+- **技能蒸馏**：从热门内容中提炼题材、开篇钩子、反转节奏、互动引导等创作技能。
+- **多 Agent 创作**：由选题分析、大纲规划、正文创作、润色、评审、发布方案等角色协作完成作品。
+- **质量评审与改写**：按开篇钩子、节奏、人设、逻辑、情绪张力、金句密度等维度审稿，并可触发定向修改。
+- **多章节支持**：支持续写和多章节创作，自动携带前文上下文。
+- **多平台发布包**：可导出知乎盐选、起点、番茄等平台适配的标题、简介、标签和正文格式。
+- **短剧 Prompt 包**：可将已生成小说转换为 10 集以内的短剧分集剧本、角色/场景一致性设定、镜头表和视频生成提示词，为后续接入视频生成模型做准备。
+- **Web 工作台**：提供 FastAPI 服务、SSE 流式进度、运行历史、作品查看、技能库和定时任务接口。
+- **浏览器辅助发布**：支持基于 Playwright 的知乎辅助发布流程。
+
+## 项目结构
+
+```text
+zhihu_fiction/
+├── agents.py             # DeepAgent 工具函数、系统提示词、评审 Agent
+├── automator_zhihu.py    # 知乎浏览器辅助发布
+├── base.py               # 内容规范化、基础工具
+├── cli.py                # 交互式命令行入口
+├── config.py             # 环境变量和模型配置
+├── distiller.py          # 爆款内容技能蒸馏
+├── exporter.py           # 多平台发布包导出
+├── llm.py                # LLM 创建逻辑
+├── orchestrator.py       # Coordinator 调用和工作流兼容封装
+├── pipeline.py           # 自动化流水线、调度、检查点、内容安全
+├── scraper.py            # 知乎热榜/搜索/手动录入采集
+├── server.py             # FastAPI Web 服务和 SSE 接口
+├── skills_store.py       # 技能库存取
+├── tools.py              # 辅助工具
+├── publishers/           # 知乎、起点、番茄发布包适配器
+├── static/               # Web 前端静态资源
+├── tests/                # 单元测试
+├── data/                 # 抓取数据、技能库、认证状态等运行数据
+└── output/               # 生成作品、发布包、流水线记录
+```
+
+## 安装与准备
+
+建议从仓库根目录执行命令。
+
+```bash
+pip install -r zhihu_fiction/requirements.txt
+```
+
+如果需要使用浏览器辅助发布：
+
+```bash
+playwright install chromium
+```
+
+## 环境变量
+
+在仓库根目录或 `zhihu_fiction/` 下创建 `.env` 文件：
+
+```env
+DEEPSEEK_API_KEY=your_api_key
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_API_BASE=
+DEEPSEEK_TEMPERATURE=0.7
+DEEPSEEK_MAX_RETRIES=3
+```
+
+可选的 Agent 温度配置：
+
+```env
+DEEPSEEK_TOPIC_ANALYZER_TEMPERATURE=0.7
+DEEPSEEK_OUTLINE_PLANNER_TEMPERATURE=0.7
+DEEPSEEK_DRAFT_WRITER_TEMPERATURE=0.8
+DEEPSEEK_POLISHER_TEMPERATURE=0.7
+DEEPSEEK_REVIEWER_TEMPERATURE=0.3
+DEEPSEEK_SYNTHESIZER_TEMPERATURE=0.5
+```
+
+## 命令行使用
+
+启动交互式 CLI：
+
+```bash
+python -m zhihu_fiction.cli
+```
+
+常用命令：
+
+```text
+/scrape                 抓取知乎热榜
+/search <关键词>        搜索知乎话题
+/manual                 手动录入热门内容
+/files                  查看已抓取文件
+/distill                从已抓取内容蒸馏创作技能
+/distill_file <文件>    蒸馏指定文件
+/skills                 查看技能库题材
+/skill <题材>           查看指定题材技能卡
+/create <主题>          完整多 Agent 创作
+/fast <主题>            快速创作
+/polish <主题>          精打磨模式
+/stream <主题>          流式输出创作过程
+/outputs                查看已生成作品
+/load <文件名>          加载历史作品
+/continue               基于已加载作品续写下一章
+/publish                导出最近作品的多平台发布包
+/publish <主题>         创作并导出发布包
+/drama                  将最近/已加载小说转成短剧视频 Prompt 包
+/autopublish            浏览器辅助发布到知乎
+/mode <模式>            设置创作模式：fast、polish、full
+/genre <题材>           设置目标题材
+/help                   查看帮助
+/exit                   退出
+```
+
+推荐流程：
+
+```text
+/scrape
+/distill
+/genre 悬疑
+/create 一个密室逃脱中发现同伴是凶手的故事
+/publish
+```
+
+短剧 Prompt 包流程：
+
+```text
+/create 一个适合短剧改编的复仇爽文
+/drama
+```
+
+输出目录示例：
+
+```text
+zhihu_fiction/output/<story>/短剧视频Prompt包_<timestamp>/
+├── manifest.json
+├── 改编方案.md
+├── 角色一致性设定.md
+├── 分集剧本.md
+├── 镜头表.json
+└── 视频生成Prompts.md
+```
+
+第一版只生成视频模型 Prompt 包，不直接调用视频生成 API。
+
+## Web 服务使用
+
+启动 FastAPI 服务：
+
+```bash
+uvicorn zhihu_fiction.server:app --reload
+```
+
+浏览器打开本地服务首页即可使用 Web 工作台。
+
+主要接口：
+
+```text
+GET  /                         Web 首页
+POST /api/run                  启动一次创作任务
+GET  /api/stream/{run_id}      订阅 SSE 流式进度
+POST /api/run/continue         续写任务
+GET  /api/runs                 查看运行历史
+GET  /api/runs/{run_id}        查看单次运行详情
+GET  /api/stories              查看生成作品列表
+GET  /api/stories/{story_path} 查看作品内容
+GET  /api/skills/genres        查看技能库题材
+GET  /api/skills/{genre}       查看指定题材技能卡
+GET  /api/scheduler            查看调度状态
+POST /api/scheduler/start      启动定时创作
+POST /api/scheduler/stop       停止定时创作
+```
+
+## 数据与输出
+
+常见运行目录：
+
+```text
+zhihu_fiction/data/scraped/       抓取和手动录入的热门内容
+zhihu_fiction/data/auth/          浏览器发布登录状态
+zhihu_fiction/output/             生成的小说、发布包和中间结果
+zhihu_fiction/output/.pipeline/   自动流水线运行历史、检查点和调度文件
+```
+
+`data/auth/` 可能包含平台登录状态，提交代码或分享项目时需要避免泄露。
+
+## 发布与合规注意事项
+
+- 抓取逻辑优先使用公开热榜接口，失败时可用搜索或手动录入兜底。
+- 浏览器辅助发布依赖平台页面结构和账号状态，可能因平台改版或风控失效。
+- 自动发布前建议人工检查标题、正文、标签、版权来源和平台规则。
+- 短剧 Prompt 包是视频生成前的策划和分镜资产，接入视频模型前仍需要人工检查角色一致性、内容安全、版权来源和平台规则。
+- 生成内容已经包含基础内容安全润色，但不能替代人工审核。
+- 不建议把 Web 服务直接暴露到公网；如需部署，应增加认证、收紧 CORS、隐藏内部异常信息。
+
+## 测试
+
+运行当前项目测试：
+
+```bash
+pytest zhihu_fiction/tests
+```
+
+建议在修改以下模块后至少运行相关测试：
+
+- `agents.py`：Agent 工具、提示词、输出格式
+- `orchestrator.py`：Coordinator 输出解析和多章节上下文
+- `pipeline.py`：自动流水线、评审改写、检查点和调度
+- `exporter.py` / `publishers/`：发布包元数据和平台格式化
+- `server.py`：API、SSE、运行状态和调度接口
+
+## 当前适合继续改进的方向
+
+1. **补齐结构化评审输出**：让 Reviewer 输出 JSON，便于统计、自动重写和质量看板。
+2. **强化技能库版本管理**：按题材、平台、结构类型沉淀可复用创作技能。
+3. **完善 Web 生产闭环**：加入任务队列、作品编辑、发布前人工确认和运行失败重试。
+4. **加强测试覆盖**：增加 Fake LLM 端到端测试、发布器 mock 测试和 SSE API 测试。
+5. **收紧生产安全配置**：区分开发/生产环境，限制 CORS，隐藏异常细节，保护登录状态文件。
+6. **扩展业务边界**：从知乎短篇扩展到小红书故事、公众号故事、短剧脚本和网文开篇生成。
+
+## 推荐业务定位
+
+短期建议定位为：**AI 爆款故事生产与分发工作台**。
+
+知乎可以作为第一个验证渠道，但系统能力更适合沉淀为跨平台内容生产工具：用热点和爆款样本做选题决策，用技能库复用创作方法，用多 Agent 工作流完成生产、评审、改写和发布包生成。
