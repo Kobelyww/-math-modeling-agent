@@ -10,6 +10,12 @@ from agent_app.services.run_store import RunStore
 
 
 CoordinatorFactory = Callable[..., Any]
+ARTIFACT_KIND_BY_SUFFIX = {
+    ".md": "markdown",
+    ".py": "python",
+    ".tex": "latex",
+    ".json": "json",
+}
 
 
 class CompetitionPaperRunner:
@@ -50,9 +56,11 @@ class CompetitionPaperRunner:
                     "reference_files": [str(path) for path in spec.reference_files],
                 }
             )
+            state = self.run_store.load_state(state.run_id)
             state.status = RunStatus.COMPLETED
             summary = self._summarize_response(response)
         except Exception as exc:
+            state = self._load_latest_state(state)
             state.status = RunStatus.FAILED
             summary = str(exc)
 
@@ -83,11 +91,21 @@ class CompetitionPaperRunner:
             ArtifactRef(
                 name=path.name,
                 path=path.relative_to(run_dir),
-                kind=path.suffix.lower().lstrip("."),
+                kind=self._artifact_kind(path),
             )
-            for path in sorted(run_dir.iterdir())
+            for path in sorted(run_dir.rglob("*"))
             if path.is_file()
         ]
+
+    def _artifact_kind(self, path: Path) -> str:
+        suffix = path.suffix.lower()
+        return ARTIFACT_KIND_BY_SUFFIX.get(suffix, suffix.lstrip("."))
+
+    def _load_latest_state(self, state: Any) -> Any:
+        try:
+            return self.run_store.load_state(state.run_id)
+        except Exception:
+            return state
 
     def _summarize_response(self, response: Any) -> str:
         if isinstance(response, dict):
