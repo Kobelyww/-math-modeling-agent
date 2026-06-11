@@ -39,7 +39,3 @@ dev = [
     "streamlit",
     "redis[hiredis]",
 ]
-
-[tool.pytest.ini_options]
-testpaths = ["agent_app/tests"]
-pythonpath = ["."]

@@ -9,8 +9,10 @@ def test_deepagent_dependency_declared_in_project_files():
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     requirements = (root / "agent_app" / "requirements.txt").read_text(encoding="utf-8")
 
-    assert "deepagents" in pyproject
-    assert "deepagents" in requirements
+    assert '"deepagents>=0.5.0"' in pyproject
+    assert "deepagents>=0.5.0" in {
+        line.strip() for line in requirements.splitlines()
+    }
 
 
 def test_tools_package_keeps_legacy_exports():

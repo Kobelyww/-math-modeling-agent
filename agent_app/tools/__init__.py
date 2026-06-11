@@ -3,6 +3,7 @@ from __future__ import annotations
 from .legacy import (
     TOOLS,
     TOOLS_FULL,
+    EXPLORATION_TOOLS,
     _SAFETY_PREAMBLE,
     calculator,
     current_time,
@@ -21,12 +22,15 @@ from .legacy import (
     search_arxiv,
     search_crossref,
     search_semantic_scholar,
+    spawn_subagent,
+    write_file,
     writing_rules,
 )
 
 __all__ = [
     "TOOLS",
     "TOOLS_FULL",
+    "EXPLORATION_TOOLS",
     "_SAFETY_PREAMBLE",
     "calculator",
     "current_time",
@@ -45,5 +49,7 @@ __all__ = [
     "search_arxiv",
     "search_crossref",
     "search_semantic_scholar",
+    "spawn_subagent",
+    "write_file",
     "writing_rules",
 ]
