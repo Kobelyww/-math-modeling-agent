@@ -1,23 +1,27 @@
-let ws = null, taskId = null;
+let paperWs = null;
+let paperTaskId = null;
+let chatMessages = [];
+let artifactRecords = [];
 
-const ROLE_META = {
-  modeling: { label: '建模智能体', progressStart: 0.05, progressEnd: 0.3 },
-  programming: { label: '编程智能体', progressStart: 0.3, progressEnd: 0.55 },
-  writing: { label: '写作智能体', progressStart: 0.55, progressEnd: 0.8 },
-  synthesis: { label: '总控整合', progressStart: 0.8, progressEnd: 1.0 },
+const STAGE_LABELS = {
+  ingest_inputs: '整理输入',
+  understand_problem: '理解赛题',
+  audit_data: '审计数据',
+  retrieve_evidence: '检索证据',
+  plan_modeling: '规划模型',
+  run_experiments: '生成实验',
+  draft_paper: '起草论文',
+  review_and_revise: '质量评审',
+  package_submission: '打包提交',
 };
-const agents = Object.keys(ROLE_META);
-const buffers = {};
-agents.forEach(a => { buffers[a] = ''; });
 
 function simpleMarkdown(text) {
-  return text
+  return String(text || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\n\n/g, '</p><p>')
     .replace(/\n/g, '<br>');
@@ -30,55 +34,6 @@ function setStatus(msg, color) {
   el.style.color = color || '';
 }
 
-function showSpinner(agent) {
-  const spinner = document.getElementById('spin-' + agent);
-  const output = document.getElementById('out-' + agent);
-  if (spinner) spinner.classList.remove('hidden');
-  if (output) output.classList.add('cursor');
-}
-
-function hideSpinner(agent) {
-  const spinner = document.getElementById('spin-' + agent);
-  const output = document.getElementById('out-' + agent);
-  if (spinner) spinner.classList.add('hidden');
-  if (output) output.classList.remove('cursor');
-}
-
-function setProgress(agent, pct) {
-  const bar = document.getElementById('bar-' + agent);
-  if (bar) bar.style.width = pct + '%';
-}
-
-function resetOutputState() {
-  const timeline = document.getElementById('loop-timeline');
-  if (timeline) {
-    timeline.innerHTML =
-      '<div class="timeline-empty">协调者会根据上下文动态选择探索、建模、编程、调试、写作、评审或总结。</div>';
-  }
-  agents.forEach(a => {
-    buffers[a] = '';
-    const out = document.getElementById('out-' + a);
-    if (out) out.innerHTML = '等待协调者调用。';
-    setProgress(a, 0);
-    showSpinner(a);
-  });
-  updateArtifactState();
-}
-
-function appendTimelineEvent(agent, status) {
-  const timeline = document.getElementById('loop-timeline');
-  if (!timeline) return;
-  const empty = timeline.querySelector('.timeline-empty');
-  if (empty) empty.remove();
-  const item = document.createElement('div');
-  item.className = 'timeline-item' + (status === 'running' ? ' active' : '');
-  item.innerHTML =
-    '<div class="timeline-role">' + (ROLE_META[agent]?.label || agent) + '</div>' +
-    '<div class="timeline-status">' + status + '</div>';
-  timeline.appendChild(item);
-  timeline.scrollLeft = timeline.scrollWidth;
-}
-
 function setRunState(text, color) {
   const el = document.getElementById('run-state');
   if (!el) return;
@@ -86,110 +41,207 @@ function setRunState(text, color) {
   el.style.color = color || '';
 }
 
-function updateArtifactState() {
-  const hasCode = Boolean(extractCodeFromOutput(buffers.programming));
-  const hasLatex = Boolean(extractLatexFromOutput(buffers.writing));
-  const hasAny = agents.some(a => buffers[a] && buffers[a].trim());
-  const codeButton = document.getElementById('btn-export-code');
-  const latexButton = document.getElementById('btn-export-latex');
-  const allButton = document.getElementById('btn-download-all');
-  if (codeButton) codeButton.disabled = !hasCode;
-  if (latexButton) latexButton.disabled = !hasLatex;
-  if (allButton) allButton.disabled = !hasAny;
+function parsePathLines(id) {
+  const el = document.getElementById(id);
+  if (!el) return [];
+  return el.value
+    .split('\n')
+    .map(v => v.trim())
+    .filter(Boolean);
 }
 
-async function startSolve() {
-  if (!isQuestionReady()) return;
-  const question = document.getElementById('question').value.trim();
+function clearChat() {
+  const log = document.getElementById('chat-log');
+  if (log) log.innerHTML = '';
+  chatMessages = [];
+  artifactRecords = [];
+  renderStages({});
+  renderArtifacts();
+  document.getElementById('btn-followup').disabled = true;
+  document.getElementById('btn-download-all').disabled = true;
+}
 
-  const strategy = document.getElementById('strategy').value;
-  resetOutputState();
-  setRunState('Running');
-  setStatus('启动中...');
-
-  try {
-    const resp = await fetch('/api/solve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, strategy }),
-    });
-    const data = await resp.json();
-    if (data.error) { setStatus(data.error, 'var(--red)'); return; }
-
-    taskId = data.task_id;
-    connectWS(taskId);
-    setStatus('协作中...');
-  } catch (e) {
-    setStatus('请求失败: ' + e.message, 'var(--red)');
+function appendChat(role, content, meta) {
+  const log = document.getElementById('chat-log');
+  if (!log) return;
+  const empty = log.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  const item = document.createElement('article');
+  item.className = 'chat-message ' + role;
+  const label = role === 'user' ? '你' : role === 'assistant' ? 'DeepAgent' : '系统';
+  item.innerHTML =
+    '<div class="chat-meta">' + label + (meta ? ' · ' + meta : '') + '</div>' +
+    '<div class="chat-body"><p>' + simpleMarkdown(content) + '</p></div>';
+  log.appendChild(item);
+  log.scrollTop = log.scrollHeight;
+  if (role === 'user' || role === 'assistant') {
+    chatMessages.push({ role, content: String(content || '') });
   }
 }
 
-function connectWS(tid) {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = proto + '//' + location.host + '/ws/solve/' + tid;
-  ws = new WebSocket(url);
+function appendEvent(content, stage) {
+  appendChat('system', content, stage ? (STAGE_LABELS[stage] || stage) : 'event');
+}
 
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    switch (msg.type) {
-      case 'token':
-        appendTimelineEvent(msg.agent, 'running');
-        buffers[msg.agent] += msg.content;
-        const out = document.getElementById('out-' + msg.agent);
-        if (out) {
-          out.innerHTML = '<p>' + simpleMarkdown(buffers[msg.agent]) + '</p>';
-          out.scrollTop = out.scrollHeight;
-        }
-        const mid = (msg.progress_start + msg.progress_end) / 2 * 100;
-        setProgress(msg.agent, Math.min(mid, 95));
-        updateArtifactState();
-        break;
-      case 'phase':
-        if (msg.status === 'completed') {
-          if (msg.result) {
-            buffers[msg.agent] = msg.result;
-            const phaseOut = document.getElementById('out-' + msg.agent);
-            if (phaseOut) phaseOut.innerHTML = '<p>' + simpleMarkdown(msg.result) + '</p>';
-          }
-          appendTimelineEvent(msg.agent, 'completed');
-          hideSpinner(msg.agent);
-          setProgress(msg.agent, 100);
-          updateArtifactState();
-        }
-        break;
-      case 'done':
-        if (msg.result) {
-          const resultMap = {
-            modeling: msg.result.modeling || '',
-            programming: msg.result.programming || '',
-            writing: msg.result.writing || '',
-            synthesis: msg.result.synthesis || '',
-          };
-          agents.forEach(a => {
-            if (resultMap[a]) {
-              buffers[a] = resultMap[a];
-              const doneOut = document.getElementById('out-' + a);
-              if (doneOut) doneOut.innerHTML = '<p>' + simpleMarkdown(resultMap[a]) + '</p>';
-            }
-          });
-        }
-        setStatus('✓ 协作完成', 'var(--green)');
-        setRunState('Complete', 'var(--green)');
-        agents.forEach(a => { hideSpinner(a); setProgress(a, 100); });
-        updateArtifactState();
-        const closing = ws;
-        ws = null;
-        if (closing) closing.close();
-        break;
-      case 'error':
-        setStatus('✗ ' + msg.message, 'var(--red)');
-        setRunState('Error', 'var(--red)');
-        break;
+function renderStages(stageStatus) {
+  const el = document.getElementById('stage-list');
+  if (!el) return;
+  el.innerHTML = Object.keys(STAGE_LABELS).map(stage => {
+    const status = stageStatus[stage] || 'pending';
+    return '<div class="stage-row ' + status + '">' +
+      '<span>' + STAGE_LABELS[stage] + '</span>' +
+      '<strong>' + status + '</strong>' +
+      '</div>';
+  }).join('');
+}
+
+const stageStatus = {};
+renderStages(stageStatus);
+
+function updateStage(stage, status) {
+  stageStatus[stage] = status;
+  renderStages(stageStatus);
+}
+
+function renderArtifacts() {
+  const list = document.getElementById('artifact-list');
+  if (!list) return;
+  if (!artifactRecords.length) {
+    list.innerHTML = '<div class="artifact-note">完成后会显示论文、代码、报告和 run.json。</div>';
+    return;
+  }
+  const seen = new Set();
+  list.innerHTML = artifactRecords
+    .filter(item => {
+      const key = item.path || item.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(item => '<div class="artifact-item"><strong>' + (item.name || 'artifact') + '</strong><span>' +
+      (item.kind || 'file') + '</span><small>' + (item.path || '') + '</small></div>')
+    .join('');
+}
+
+function addArtifact(event) {
+  artifactRecords.push({
+    name: event.name || (event.path ? event.path.split('/').pop() : 'artifact'),
+    path: event.path || '',
+    kind: event.kind || '',
+  });
+  renderArtifacts();
+  document.getElementById('btn-download-all').disabled = false;
+}
+
+async function startPaperRun() {
+  const question = document.getElementById('question').value.trim();
+  if (!question) {
+    setStatus('请先输入赛题或研究任务', 'var(--red)');
+    return;
+  }
+  clearChat();
+  Object.keys(stageStatus).forEach(k => delete stageStatus[k]);
+  renderStages(stageStatus);
+  appendChat('user', question);
+  await startPaperTask(question);
+}
+
+async function sendFollowup() {
+  const input = document.getElementById('followup-input');
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = '';
+  appendChat('user', question);
+  await startPaperTask(question);
+}
+
+async function startPaperTask(question) {
+  setRunState('Starting');
+  setStatus('启动论文工作流...');
+  document.getElementById('btn-paper').disabled = true;
+  document.getElementById('btn-followup').disabled = true;
+
+  try {
+    const resp = await fetch('/api/paper/chat/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        data_files: parsePathLines('data-files'),
+        reference_files: parsePathLines('reference-files'),
+        messages: chatMessages.slice(-10),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      throw new Error(data.error || 'HTTP ' + resp.status);
     }
-  };
+    paperTaskId = data.task_id;
+    connectPaperWS(paperTaskId);
+    setStatus('论文工作流运行中...');
+  } catch (e) {
+    setStatus('启动失败: ' + e.message, 'var(--red)');
+    setRunState('Error', 'var(--red)');
+    document.getElementById('btn-paper').disabled = false;
+    document.getElementById('btn-followup').disabled = false;
+  }
+}
 
-  ws.onerror = () => setStatus('WebSocket 连接失败', 'var(--red)');
-  ws.onclose = () => { if (ws) setStatus('连接已关闭'); };
+function connectPaperWS(taskId) {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  paperWs = new WebSocket(proto + '//' + location.host + '/ws/paper/' + taskId);
+
+  paperWs.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    handlePaperEvent(msg);
+  };
+  paperWs.onerror = () => {
+    setStatus('论文流连接失败', 'var(--red)');
+    setRunState('Error', 'var(--red)');
+  };
+  paperWs.onclose = () => {
+    paperWs = null;
+    document.getElementById('btn-paper').disabled = false;
+  };
+}
+
+function handlePaperEvent(msg) {
+  switch (msg.type) {
+    case 'start':
+      setRunState('Running');
+      appendEvent('已创建论文生产任务。');
+      break;
+    case 'stage':
+      updateStage(msg.stage, msg.status);
+      appendEvent((msg.label || msg.stage) + '：' + msg.status, msg.stage);
+      break;
+    case 'tool':
+      appendEvent('工具 ' + msg.name + '：' + msg.status, msg.stage);
+      break;
+    case 'artifact':
+      addArtifact(msg);
+      appendEvent('生成产物：' + (msg.name || msg.path), msg.stage);
+      break;
+    case 'quality_gate':
+      appendEvent('质量门 ' + msg.gate_name + '：' + (msg.passed ? '通过' : '未通过') + '，得分 ' + msg.score, msg.stage);
+      break;
+    case 'message':
+      appendChat(msg.role || 'assistant', msg.content || '');
+      break;
+    case 'done':
+      setRunState('Complete', 'var(--green)');
+      setStatus('✓ 论文提交包已生成', 'var(--green)');
+      appendChat('assistant', '运行完成：' + (msg.summary || msg.run_id || 'done'));
+      (msg.artifacts || []).forEach(addArtifact);
+      document.getElementById('btn-followup').disabled = false;
+      break;
+    case 'error':
+      setRunState('Error', 'var(--red)');
+      setStatus('✗ ' + msg.message, 'var(--red)');
+      appendChat('system', msg.message || '运行失败');
+      document.getElementById('btn-followup').disabled = false;
+      break;
+  }
 }
 
 async function searchRAG() {
@@ -233,83 +285,10 @@ async function loadSkills() {
   }
 }
 
-function runCode() {
-  const code = extractCodeFromOutput(buffers['programming']);
-  if (!code) { setStatus('未找到可执行代码', 'var(--red)'); return; }
-  setStatus('沙箱执行中...');
-  fetch('/api/tool/python_exec', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: code }),
-  })
-    .then(r => r.json())
-    .then(data => {
-      const el = document.getElementById('code-result');
-      el.classList.remove('hidden');
-      el.textContent = data.result || data.error || '执行完成（无输出）';
-      setStatus(data.error ? '执行出错' : '执行完成', data.error ? 'var(--red)' : 'var(--green)');
-    })
-    .catch(e => { setStatus('沙箱请求失败: ' + e.message, 'var(--red)'); });
-}
-
-function exportCode() {
-  const code = extractCodeFromOutput(buffers['programming']);
-  downloadBlob(code || buffers['programming'], 'model_solution.py', 'text/x-python');
-}
-
-function compileLatex() {
-  const latex = extractLatexFromOutput(buffers['writing']);
-  if (!latex) { setStatus('未找到 LaTeX 源码', 'var(--red)'); return; }
-  setStatus('LaTeX 编译中...');
-  fetch('/api/tool/latex_compile', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tex_content: latex }),
-  })
-    .then(r => r.json())
-    .then(data => {
-      const el = document.getElementById('latex-result');
-      el.classList.remove('hidden');
-      if (data.pdf_url) {
-        el.innerHTML = '<a href="' + data.pdf_url + '" target="_blank">📄 查看 PDF</a>';
-        setStatus('编译成功', 'var(--green)');
-      } else {
-        el.textContent = data.error || '编译失败';
-        setStatus('编译失败', 'var(--red)');
-      }
-    })
-    .catch(e => { setStatus('编译请求失败: ' + e.message, 'var(--red)'); });
-}
-
-function exportLatex() {
-  const latex = extractLatexFromOutput(buffers['writing']);
-  downloadBlob(latex || buffers['writing'], 'paper.tex', 'text/x-latex');
-}
-
 function downloadAll() {
-  const zipContent = [
-    { name: 'model_solution.py', content: extractCodeFromOutput(buffers['programming']) || buffers['programming'] },
-    { name: 'paper.tex', content: extractLatexFromOutput(buffers['writing']) || buffers['writing'] },
-    { name: 'synthesis.md', content: buffers['synthesis'] },
-    { name: 'modeling_output.md', content: buffers['modeling'] },
-  ].filter(f => f.content);
-
-  zipContent.forEach(f => downloadBlob(f.content, f.name));
-  setStatus('已导出 ' + zipContent.length + ' 个文件', 'var(--green)');
-}
-
-function extractCodeFromOutput(text) {
-  if (!text) return '';
-  const pyMatch = text.match(/```python\n?([\s\S]*?)```/);
-  if (pyMatch) return pyMatch[1].trim();
-  const defMatch = text.match(/(?:^|\n)(import\s[\s\S]*?(?:return|print)[\s\S]*?)(?:\n\n|$)/);
-  return defMatch ? defMatch[1].trim() : '';
-}
-
-function extractLatexFromOutput(text) {
-  if (!text) return '';
-  const match = text.match(/```latex\n?([\s\S]*?)```/) || text.match(/\\documentclass[\s\S]*?\\end{document}/);
-  return match ? (match[1] || match[0]).trim() : '';
+  const content = chatMessages.map(msg => msg.role + ': ' + msg.content).join('\n\n');
+  downloadBlob(content, 'paper-chat-transcript.md', 'text/markdown');
+  setStatus('已导出当前对话', 'var(--green)');
 }
 
 function downloadBlob(content, filename, mimeType) {
@@ -352,30 +331,16 @@ function onPDFSelected() {
         return;
       }
       questionEl.value = data.text;
-      questionEl.style.border = '2px solid var(--green)';
-      setTimeout(function() { questionEl.style.border = ''; }, 2000);
-      var details = '✓ ' + data.pages + ' 页, ' + data.full_length + ' 字符';
-      if (data.table_count) details += ', ' + data.table_count + ' 个表格';
-      if (data.image_count) details += ', ' + data.image_count + ' 张图片';
-      if (data.image_described) details += '(' + data.image_described + '张已识别)';
-      details += data.truncated ? ' (已截取前12000字)' : '';
-      statusEl.textContent = details;
+      statusEl.textContent = '✓ ' + data.pages + ' 页, ' + data.full_length + ' 字符';
       statusEl.style.color = 'var(--green)';
-      setStatus('题目已从PDF提取，点击下方按钮开始分析', 'var(--green)');
+      setStatus('题目已从 PDF 提取，可开始论文生产', 'var(--green)');
     })
     .catch(function(e) {
       statusEl.textContent = '✗ ' + e.message;
       statusEl.style.color = 'var(--red)';
-      setStatus('PDF上传失败，请确认服务器已重启且PyMuPDF已安装', 'var(--red)');
+      setStatus('PDF 上传失败', 'var(--red)');
     });
-  // Reset so same file re-select works
   fileInput.value = '';
-}
-
-function isQuestionReady() {
-  var q = document.getElementById('question').value.trim();
-  if (!q) { setStatus('请先输入问题或上传PDF提取题目', 'var(--red)'); return false; }
-  return true;
 }
 
 loadSkills();

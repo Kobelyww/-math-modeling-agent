@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>数模多智能体协作系统</title>
+<title>数模 DeepAgent 论文生产系统</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -11,26 +11,24 @@
 <div id="app">
   <header>
     <div>
-      <h1>数模多智能体协作系统</h1>
-      <p>Agent Loop Console</p>
+      <h1>数模 DeepAgent 论文生产系统</h1>
+      <p>Paper Chat Console</p>
     </div>
-    <span class="badge">DeepSeek · Dynamic Agent Loop</span>
+    <span class="badge">DeepAgent · Streaming Workflow</span>
   </header>
 
-  <div class="console-shell">
+  <div class="console-shell paper-shell">
     <aside class="control-rail">
       <div class="panel">
-        <div class="panel-label">Control</div>
-        <label for="strategy">协作策略</label>
-        <select id="strategy">
-          <option value="agent_loop" selected>Agent Loop（动态对话驱动）</option>
-          <option value="sequential">串行流水线</option>
-          <option value="review">深度反思</option>
-          <option value="parallel">快速并行</option>
-        </select>
+        <div class="panel-label">Paper Run</div>
+        <label for="question">赛题 / 研究任务</label>
+        <textarea id="question" rows="8" placeholder="例如：根据交通流量数据建立预测模型，并完成竞赛论文提交包"></textarea>
 
-        <label for="question">任务输入</label>
-        <textarea id="question" rows="7" placeholder="例如：建立新能源车充电站布局优化模型，并给出可实现方案与论文写作框架"></textarea>
+        <label for="data-files">数据文件路径（位于 agent_app/data/paper_inputs 下，每行一个）</label>
+        <textarea id="data-files" rows="3" placeholder="data/traffic.csv"></textarea>
+
+        <label for="reference-files">参考文件路径（每行一个）</label>
+        <textarea id="reference-files" rows="3" placeholder="references/modeling-paper.pdf"></textarea>
 
         <div class="upload-row">
           <label for="pdf-file" class="btn-secondary">上传 PDF 题目</label>
@@ -39,7 +37,7 @@
         </div>
         <div id="upload-status" class="status-text"></div>
 
-        <button id="btn-solve" onclick="startSolve()">开始协作分析</button>
+        <button id="btn-paper" onclick="startPaperRun()">开始论文生产</button>
         <div id="status" class="status-text">等待任务输入</div>
       </div>
 
@@ -60,75 +58,36 @@
       </div>
     </aside>
 
-    <main class="loop-workspace">
+    <main class="chat-workspace">
       <section class="loop-overview">
         <div>
-          <div class="panel-label">Loop Timeline</div>
-          <h2>动态执行轨迹</h2>
+          <div class="panel-label">Conversation</div>
+          <h2>论文智能体对话流</h2>
         </div>
         <div id="run-state" class="run-state">Idle</div>
       </section>
 
-      <div id="loop-timeline" class="loop-timeline">
-        <div class="timeline-empty">协调者会根据上下文动态选择探索、建模、编程、调试、写作、评审或总结。</div>
-      </div>
+      <section id="chat-log" class="chat-log">
+        <div class="chat-empty">输入赛题后，DeepAgent 会以阶段事件、工具调用、质量门和产物列表持续更新。</div>
+      </section>
 
-      <section class="agent-grid">
-        <div class="agent-panel" id="panel-modeling" data-role="modeling">
-          <div class="agent-header">
-            <span>建模智能体</span>
-            <span class="spinner hidden" id="spin-modeling"></span>
-          </div>
-          <div class="agent-output" id="out-modeling">等待协调者调用。</div>
-          <div class="progress"><div class="progress-bar" id="bar-modeling"></div></div>
-        </div>
-
-        <div class="agent-panel" id="panel-programming" data-role="programming">
-          <div class="agent-header">
-            <span>编程智能体</span>
-            <span class="spinner hidden" id="spin-programming"></span>
-            <span class="btn-group">
-              <button class="btn-sm" onclick="runCode()">运行</button>
-              <button class="btn-sm" onclick="exportCode()">导出.py</button>
-            </span>
-          </div>
-          <div class="agent-output code-output" id="out-programming">等待协调者调用。</div>
-          <div id="code-result" class="code-result hidden"></div>
-          <div class="progress"><div class="progress-bar" id="bar-programming"></div></div>
-        </div>
-
-        <div class="agent-panel" id="panel-writing" data-role="writing">
-          <div class="agent-header">
-            <span>写作智能体</span>
-            <span class="spinner hidden" id="spin-writing"></span>
-            <span class="btn-group">
-              <button class="btn-sm" onclick="compileLatex()">编译PDF</button>
-              <button class="btn-sm" onclick="exportLatex()">导出.tex</button>
-            </span>
-          </div>
-          <div class="agent-output latex-output" id="out-writing">等待协调者调用。</div>
-          <div id="latex-result" class="code-result hidden"></div>
-          <div class="progress"><div class="progress-bar" id="bar-writing"></div></div>
-        </div>
-
-        <div class="agent-panel wide" id="panel-synthesis" data-role="synthesis">
-          <div class="agent-header">
-            <span>总控整合</span>
-            <span class="spinner hidden" id="spin-synthesis"></span>
-          </div>
-          <div class="agent-output" id="out-synthesis">最终整合会在这里显示。</div>
-          <div class="progress"><div class="progress-bar" id="bar-synthesis"></div></div>
-        </div>
+      <section class="followup-bar">
+        <input id="followup-input" placeholder="继续对话：例如 补充灵敏度分析，并把摘要改成国赛风格">
+        <button id="btn-followup" onclick="sendFollowup()" disabled>发送后续指令</button>
       </section>
     </main>
 
     <aside class="artifact-rail" id="artifact-rail">
       <div class="panel">
+        <div class="panel-label">Stages</div>
+        <div id="stage-list" class="stage-list"></div>
+      </div>
+      <div class="panel">
         <div class="panel-label">Artifacts</div>
-        <button class="btn-secondary" id="btn-export-code" onclick="exportCode()" disabled>导出代码</button>
-        <button class="btn-secondary" id="btn-export-latex" onclick="exportLatex()" disabled>导出 LaTeX</button>
-        <button class="btn-secondary" id="btn-download-all" onclick="downloadAll()" disabled>打包下载</button>
-        <div class="artifact-note">完成后可导出代码、论文和整合报告。</div>
+        <div id="artifact-list" class="artifact-list">
+          <div class="artifact-note">完成后会显示论文、代码、报告和 run.json。</div>
+        </div>
+        <button class="btn-secondary" id="btn-download-all" onclick="downloadAll()" disabled>导出当前对话</button>
       </div>
     </aside>
   </div>
