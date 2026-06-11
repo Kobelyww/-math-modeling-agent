@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_app.config import APP_ROOT
 from agent_app.deepagent.runner import CompetitionPaperRunner
 from agent_app.domain.models import RunSpec, RunStatus
 
@@ -33,6 +34,12 @@ def test_runner_creates_run_and_returns_result(tmp_path):
     assert result.status == RunStatus.COMPLETED
     assert any(artifact.path.name == "paper.tex" for artifact in result.artifacts)
     assert "completed" in result.summary
+
+
+def test_runner_default_output_root_uses_existing_output_directory_name():
+    runner = CompetitionPaperRunner(coordinator_factory=lambda **kwargs: FakeCoordinator())
+
+    assert runner.output_root == APP_ROOT / "output" / "runs"
 
 
 def test_runner_records_failure_as_partial_result(tmp_path):

@@ -20,7 +20,7 @@ class CompetitionPaperRunner:
         coordinator_factory: CoordinatorFactory | None = None,
     ) -> None:
         self.settings = settings
-        self.output_root = Path(output_root) if output_root is not None else APP_ROOT / "outputs" / "runs"
+        self.output_root = Path(output_root) if output_root is not None else APP_ROOT / "output" / "runs"
         self.run_store = RunStore(self.output_root)
         self.coordinator_factory = coordinator_factory
 
