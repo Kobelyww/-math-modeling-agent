@@ -79,6 +79,42 @@ def test_fallback_exec_blocks_prefix_collision_sibling_write(tmp_path):
     assert not (sibling / "escape.txt").exists()
 
 
+def test_fallback_exec_hides_path_helper_from_user_code(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+
+    result = _fallback_exec(
+        "print(__Path('../outside.txt').read_text(encoding='utf-8'))",
+        timeout=10,
+        cwd=cwd,
+    )
+
+    assert result.success is False
+    assert "secret" not in result.stdout
+    assert "__Path" in result.stderr
+
+
+def test_fallback_exec_hides_os_helper_from_user_code(tmp_path):
+    cwd = tmp_path / "work"
+    sibling = tmp_path / "work_escape"
+    cwd.mkdir()
+    sibling.mkdir()
+
+    result = _fallback_exec(
+        "fd = __os.open('../work_escape/escape.txt', __os.O_WRONLY | __os.O_CREAT, 0o644)\n"
+        "__os.write(fd, b'escaped')\n"
+        "__os.close(fd)",
+        timeout=10,
+        cwd=cwd,
+    )
+
+    assert result.success is False
+    assert "__os" in result.stderr
+    assert not (sibling / "escape.txt").exists()
+
+
 def test_safe_execute_does_not_fallback_for_docker_user_exit_code(monkeypatch, tmp_path):
     class FakeDockerSandbox:
         @property
@@ -179,6 +215,21 @@ def test_docker_sandbox_keeps_code_file_outside_writable_work_dir(monkeypatch, t
     host_code_path = Path(code_mount.split(":", 1)[0]).resolve()
     with pytest.raises(ValueError):
         host_code_path.relative_to(tmp_path.resolve())
+
+
+def test_docker_sandbox_timeout_reports_caller_timeout(monkeypatch, tmp_path):
+    def fake_run(cmd, capture_output, text, timeout, cwd=None):
+        if cmd[:2] == ["docker", "info"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+    monkeypatch.setattr(sandbox_mod.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(sandbox_mod.subprocess, "run", fake_run)
+
+    result = sandbox_mod.DockerSandbox().run("print('slow')", timeout=7, cwd=tmp_path)
+
+    assert result.timed_out is True
+    assert result.error == "Timed out after 7s"
 
 
 def test_code_execution_service_writes_code_file(tmp_path):

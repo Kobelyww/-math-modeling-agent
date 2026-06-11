@@ -158,43 +158,50 @@ def _is_docker_infrastructure_failure(result: SandboxResult) -> bool:
 
 def _fallback_preamble(work_dir: Path) -> str:
     return f'''# --- safety preamble (auto-injected) ---
-import sys as __sys
-import os as __os
-import builtins as __builtins
-import resource as __resource
-from pathlib import Path as __Path
+def __agent_install_safety():
+    import builtins
+    import resource
+    from pathlib import Path
 
-# 内存限制：512 MB
-_MEM_LIMIT = 512 * 1024 * 1024
-try:
-    __resource.setrlimit(__resource.RLIMIT_AS, (_MEM_LIMIT, _MEM_LIMIT))
-except (ValueError, AttributeError):
-    pass
-
-# 限制危险操作
-__dangerous = {{"os.system", "subprocess.call", "subprocess.run", "subprocess.Popen",
-               "eval", "exec", "__import__", "compile"}}
-__originals = {{}}
-for __name in __dangerous:
-    if hasattr(__builtins, __name):
-        __originals[__name] = getattr(__builtins, __name)
-        setattr(__builtins, __name,
-                lambda *a, __n=__name, **kw: (_ for _ in ()).throw(
-                    PermissionError(f"Operation blocked for safety: {{__n}}")))
-
-# 限制文件读写范围
-__orig_open = __builtins.open
-__allowed_dir = __Path({str(work_dir)!r}).resolve()
-def __safe_open(file, mode="r", *args, **kwargs):
-    if isinstance(file, int):
-        raise PermissionError("File descriptor access blocked for safety")
-    __resolved = __Path(file).resolve()
+    # 内存限制：512 MB
+    mem_limit = 512 * 1024 * 1024
     try:
-        __resolved.relative_to(__allowed_dir)
-    except ValueError:
-        raise PermissionError(f"File access outside sandbox blocked: {{file}}")
-    return __orig_open(__resolved, mode, *args, **kwargs)
-__builtins.open = __safe_open
+        resource.setrlimit(resource.RLIMIT_AS, (mem_limit, mem_limit))
+    except (ValueError, AttributeError):
+        pass
+
+    def blocked_operation(*args, __operation="operation", **kwargs):
+        raise PermissionError(f"Operation blocked for safety: {{__operation}}")
+
+    dangerous = {{"os.system", "subprocess.call", "subprocess.run", "subprocess.Popen",
+                 "eval", "exec", "__import__", "compile"}}
+    for name in dangerous:
+        if hasattr(builtins, name):
+            setattr(
+                builtins,
+                name,
+                lambda *args, __name=name, **kwargs: blocked_operation(
+                    *args, __operation=__name, **kwargs
+                ),
+            )
+
+    original_open = builtins.open
+    allowed_dir = Path({str(work_dir)!r}).resolve()
+
+    def safe_open(file, mode="r", *args, **kwargs):
+        if isinstance(file, int):
+            raise PermissionError("File descriptor access blocked for safety")
+        resolved = Path(file).resolve()
+        try:
+            resolved.relative_to(allowed_dir)
+        except ValueError:
+            raise PermissionError(f"File access outside sandbox blocked: {{file}}")
+        return original_open(resolved, mode, *args, **kwargs)
+
+    builtins.open = safe_open
+
+__agent_install_safety()
+del __agent_install_safety
 # --- end safety preamble ---
 
 '''
