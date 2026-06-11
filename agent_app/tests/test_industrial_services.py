@@ -338,6 +338,7 @@ def test_docker_sandbox_keeps_code_file_outside_writable_work_dir(monkeypatch, t
     result = sandbox_mod.DockerSandbox().run("print('ok')", timeout=10, cwd=tmp_path)
 
     assert result.success is True
+    assert "--read-only" in captured["cmd"]
     code_mount = next(part for part in captured["cmd"] if part.endswith(":/workspace/code.py:ro"))
     host_code_path = Path(code_mount.split(":", 1)[0]).resolve()
     with pytest.raises(ValueError):

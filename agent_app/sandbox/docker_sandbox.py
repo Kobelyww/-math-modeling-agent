@@ -1,7 +1,7 @@
 """Docker 安全沙箱——容器隔离执行 Python 代码。
 
 隔离级别：
-- Filesystem: read-only root + tmpfs /tmp + 只挂载 output 目录可写
+- Filesystem: read-only root + tmpfs /tmp + 只挂载工作目录可写
 - Network: --network=none（完全断网）
 - Memory: 512MB 硬限制
 - CPU: 单核限制
@@ -127,6 +127,8 @@ class DockerSandbox:
                     self.config.image,
                     "python", "/workspace/code.py",
                 ]
+                if self.config.read_only:
+                    cmd.insert(3, "--read-only")
                 result = subprocess.run(
                     cmd,
                     capture_output=True,

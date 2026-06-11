@@ -142,8 +142,8 @@ def python_exec(code: str) -> str:
     verify a code snippet. Prints to stdout/stderr are captured.
 
     Safety: Docker container isolation (--network=none, --memory=512m,
-    --read-only, non-root user) when Docker available. Falls back to
-    subprocess with safety preamble (memory limit + blocked builtins).
+    --read-only, non-root user). Unsafe host fallback is disabled by
+    default and is only for explicitly trusted development contexts.
     """
     from ..sandbox import safe_execute
 
