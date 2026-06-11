@@ -51,7 +51,8 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
     def analyze_problem(run_id: str, question: str) -> dict[str, Any]:
         """Create a deterministic problem brief from the competition question."""
         brief = {
-            "background": question.strip(),
+            "background": question[:200],
+            "questions": [question],
             "objectives": ["建立可解释、可复现实证模型"],
             "constraints": ["使用本地输入文件", "记录假设与局限"],
             "deliverables": ["modeling_report.md", "solve.py", "paper.tex"],
@@ -64,14 +65,14 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             "## Objectives\n- 建立可解释、可复现实证模型\n\n"
             "## Constraints\n- 使用本地输入文件\n- 记录假设与局限\n",
         )
-        return {"problem_brief": brief, "path": str(path)}
+        return {"problem_brief": brief, "problem_brief_path": str(path)}
 
     @tool("audit_data")
     def audit_data(run_id: str, file_paths: list[str]) -> dict[str, Any]:
         """Audit local data files and write a markdown data report."""
         report = data_service.audit_files([Path(path) for path in file_paths])
         path = _write(run_id, "data_audit.md", data_service.to_markdown(report))
-        return {"data_audit": to_json_dict(report), "path": str(path)}
+        return {"data_audit": to_json_dict(report), "data_audit_path": str(path)}
 
     @tool("retrieve_evidence")
     def retrieve_evidence(
@@ -83,30 +84,18 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
     ) -> dict[str, Any]:
         """Collect local evidence notes from reference file names only."""
         selected = [Path(path).name for path in reference_files[:top_k]]
-        evidence_notes = [
-            {
-                "source_id": f"ref_{index}",
-                "title": name,
-                "summary": f"Local reference considered for query: {query}",
-                "relevance": "local_reference",
-                "citation_key": "",
-            }
-            for index, name in enumerate(selected, start=1)
-        ]
-        search_note = "disabled" if not allow_online_search else "not_performed"
         lines = [
             "# Evidence Notes",
             "",
             f"Query: {query}",
-            f"Online search: {search_note}",
             "",
         ]
         lines.extend(f"- {name}" for name in selected)
         path = _write(run_id, "evidence_notes.md", "\n".join(lines) + "\n")
         return {
-            "evidence_notes": evidence_notes,
+            "evidence_notes": lines,
             "bibliography": [],
-            "path": str(path),
+            "evidence_notes_path": str(path),
         }
 
     @tool("plan_model")
@@ -114,11 +103,11 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         run_id: str,
         problem_brief: dict[str, Any],
         data_audit: dict[str, Any],
-        evidence_notes: list[dict[str, Any]],
+        evidence_notes: list[str],
     ) -> dict[str, Any]:
         """Draft a modeling plan artifact from problem, data, and evidence context."""
         modeling_plan = {
-            "selected_model": "baseline deterministic modeling workflow",
+            "selected_model": "DeepAgent generated model",
             "candidate_models": ["descriptive analysis", "baseline optimization"],
             "algorithm_plan": "Audit inputs, build a transparent baseline, report assumptions.",
             "evaluation_metrics": ["reproducibility", "data coverage", "interpretability"],
@@ -130,7 +119,7 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             "## Selected Model\nbaseline deterministic modeling workflow\n\n"
             "## Algorithm Plan\nAudit inputs, build a transparent baseline, report assumptions.\n",
         )
-        return {"modeling_plan": modeling_plan, "path": str(path)}
+        return {"modeling_plan": modeling_plan, "modeling_report_path": str(path)}
 
     @tool("run_experiment")
     def run_experiment(
@@ -151,6 +140,7 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         results_dir = artifact_service.mkdir("results")
         experiment_result = {
             "success": True,
+            "execution_status": "success",
             "code_path": str(code_path),
             "data_files": data_files,
             "result_paths": [str(results_dir)],
@@ -171,7 +161,7 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         data_audit: dict[str, Any],
         modeling_plan: dict[str, Any],
         experiment_result: dict[str, Any],
-        evidence_notes: list[dict[str, Any]],
+        evidence_notes: list[str],
     ) -> dict[str, Any]:
         """Draft markdown and LaTeX competition paper artifacts."""
         markdown_path = _write(
@@ -200,8 +190,8 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         }
         return {
             "paper_draft": paper_draft,
-            "markdown_path": str(markdown_path),
-            "latex_path": str(latex_path),
+            "paper_markdown_path": str(markdown_path),
+            "paper_tex_path": str(latex_path),
         }
 
     @tool("review_submission")
@@ -213,7 +203,7 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
     ) -> dict[str, Any]:
         """Review generated artifacts and write a lightweight quality report."""
         quality_report = {
-            "gate_name": "structured_tool_review",
+            "gate_name": "review",
             "passed": True,
             "score": 1.0,
             "findings": ["Required draft and experiment artifacts are present for packaging."],
@@ -225,7 +215,7 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             "# Review Report\n\n"
             "- Required draft and experiment artifacts are present for packaging.\n",
         )
-        return {"quality_report": quality_report, "path": str(path)}
+        return {"quality_report": quality_report, "review_report_path": str(path)}
 
     @tool("package_submission")
     def package_submission(run_id: str) -> dict[str, Any]:
