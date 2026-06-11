@@ -38,6 +38,21 @@ def test_run_store_persists_stage_status_and_artifacts(tmp_path):
     assert restored.artifacts[0].path == Path("data_audit.md")
 
 
+def test_run_store_rejects_unsafe_run_ids(tmp_path):
+    store = RunStore(output_root=tmp_path)
+
+    for run_id in ["..", ".", "../escape", "run/escape", ""]:
+        with pytest.raises(ValueError):
+            store.run_dir(run_id)
+
+
+def test_validate_run_id_accepts_generated_shape(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="分析"))
+
+    assert store.run_dir(state.run_id).parent == tmp_path.resolve()
+
+
 def test_artifact_service_writes_inside_run_directory(tmp_path):
     store = RunStore(output_root=tmp_path)
     state = store.create_run(RunSpec(question="分析"))

@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 
-_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def ensure_within(path: Path, root: Path) -> Path:
@@ -18,6 +18,6 @@ def ensure_within(path: Path, root: Path) -> Path:
 
 
 def validate_run_id(run_id: str) -> str:
-    if not _SAFE_RUN_ID.match(run_id):
+    if run_id in {"", ".", ".."} or not _SAFE_RUN_ID.match(run_id):
         raise ValueError(f"unsafe run_id: {run_id}")
     return run_id
