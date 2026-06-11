@@ -24,6 +24,27 @@ logging.basicConfig(
 )
 
 from .config import Settings, load_settings
-from .orchestrator import Orchestrator, WorkflowResult
+from .deepagent.runner import CompetitionPaperRunner
+from .domain.models import RunResult, RunSpec
 
-__all__ = ["Settings", "load_settings", "Orchestrator", "WorkflowResult"]
+__all__ = [
+    "Settings",
+    "load_settings",
+    "CompetitionPaperRunner",
+    "RunSpec",
+    "RunResult",
+    "Orchestrator",
+    "WorkflowResult",
+]
+
+
+def __getattr__(name: str):
+    if name in {"Orchestrator", "WorkflowResult"}:
+        from .orchestrator import Orchestrator, WorkflowResult
+
+        legacy_exports = {
+            "Orchestrator": Orchestrator,
+            "WorkflowResult": WorkflowResult,
+        }
+        return legacy_exports[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
