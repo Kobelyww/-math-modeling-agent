@@ -14,8 +14,8 @@ class LiteratureService:
             literature._search_arxiv_raw,
         ]:
             raw = fn(query, max_results=max_results)
-            if raw and "error" not in raw[0]:
-                results.extend(raw)
+            if raw:
+                results.extend(row for row in raw if "error" not in row)
         return results[:max_results]
 
     def format_results(self, papers: list[dict[str, Any]]) -> str:

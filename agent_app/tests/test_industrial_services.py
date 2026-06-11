@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_app import literature
 from agent_app.services.code_execution import CodeExecutionService
 from agent_app.services.latex_service import LatexService
 from agent_app.services.literature_service import LiteratureService
@@ -52,6 +53,24 @@ def test_literature_service_can_format_raw_results():
 
     assert "Traffic flow model" in formatted
     assert "2024" in formatted
+
+
+def test_literature_service_filters_error_rows_after_valid_rows(monkeypatch):
+    def mixed_results(query: str, max_results: int = 5):
+        return [
+            {"source": "crossref", "title": "Valid first"},
+            {"error": "late source failure"},
+            {"source": "crossref", "title": "Valid second"},
+        ]
+
+    monkeypatch.setattr(literature, "_search_crossref_raw", mixed_results)
+    monkeypatch.setattr(literature, "_search_s2_raw", lambda query, max_results=5: [])
+    monkeypatch.setattr(literature, "_search_arxiv_raw", lambda query, max_results=5: [{"source": "arxiv", "title": "Valid third"}])
+
+    results = LiteratureService().search("traffic", max_results=2)
+
+    assert [paper["title"] for paper in results] == ["Valid first", "Valid second"]
+    assert all("error" not in paper for paper in results)
 
 
 def test_rag_service_indexes_run_references(tmp_path):
