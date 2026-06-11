@@ -25,9 +25,7 @@ def build_run_spec(question: str, attachments: AttachmentBuffer) -> RunSpec:
     reference_files: list[Path] = []
     for path in attachments.paths:
         suffix = path.suffix.lower()
-        if suffix in {".md", ".txt", ".bib"}:
-            reference_files.append(path)
-        elif suffix == ".pdf":
+        if suffix in REFERENCE_SUFFIXES:
             reference_files.append(path)
         elif suffix in DATA_SUFFIXES:
             data_files.append(path)

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from ..config import APP_ROOT, Settings, load_settings
 from ..deepagent.runner import CompetitionPaperRunner
 from ..domain.models import RunSpec
-from ..interfaces.web import serialize_run_result
+from ..interfaces.web import resolve_paper_input_paths, serialize_run_result
 from ..nature_skills import list_available_skills
 from ..orchestrator import Orchestrator, WorkflowResult
 from ..memory import MemoryManager
@@ -51,6 +51,7 @@ def _load_settings_for_routes() -> Settings:
 _settings = _load_settings_for_routes()
 DATA_DIR = APP_ROOT / "data"
 KNOWLEDGE_DIR = APP_ROOT.parent / "knowledge_base"
+PAPER_INPUT_DIR = DATA_DIR / "paper_inputs"
 
 _rag = PaperRAG(
     knowledge_dir=KNOWLEDGE_DIR,
@@ -104,10 +105,13 @@ async def solve(data: dict):
 @router.post("/api/paper/run")
 async def create_paper_run(data: dict):
     question = data.get("question", "").strip()
-    data_files = [Path(path) for path in data.get("data_files", [])]
-    reference_files = [Path(path) for path in data.get("reference_files", [])]
     if not question:
         return JSONResponse({"error": "问题不能为空"}, status_code=400)
+    try:
+        data_files = resolve_paper_input_paths(data.get("data_files", []), PAPER_INPUT_DIR)
+        reference_files = resolve_paper_input_paths(data.get("reference_files", []), PAPER_INPUT_DIR)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
     runner = CompetitionPaperRunner.from_settings(_settings)
     result = await asyncio.to_thread(
         runner.run,
