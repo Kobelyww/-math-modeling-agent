@@ -16,6 +16,9 @@ from fastapi.templating import Jinja2Templates
 logger = logging.getLogger(__name__)
 
 from ..config import APP_ROOT, Settings, load_settings
+from ..deepagent.runner import CompetitionPaperRunner
+from ..domain.models import RunSpec
+from ..interfaces.web import serialize_run_result
 from ..nature_skills import list_available_skills
 from ..orchestrator import Orchestrator, WorkflowResult
 from ..memory import MemoryManager
@@ -96,6 +99,21 @@ async def solve(data: dict):
 
     asyncio.create_task(_run_solve(task_id, question, strategy, top_k))
     return {"task_id": task_id, "status": "started"}
+
+
+@router.post("/api/paper/run")
+async def create_paper_run(data: dict):
+    question = data.get("question", "").strip()
+    data_files = [Path(path) for path in data.get("data_files", [])]
+    reference_files = [Path(path) for path in data.get("reference_files", [])]
+    if not question:
+        return JSONResponse({"error": "问题不能为空"}, status_code=400)
+    runner = CompetitionPaperRunner.from_settings(_settings)
+    result = await asyncio.to_thread(
+        runner.run,
+        RunSpec(question=question, data_files=data_files, reference_files=reference_files),
+    )
+    return serialize_run_result(result)
 
 
 def _select_solver_for_strategy(orch: Orchestrator, strategy: str):

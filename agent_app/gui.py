@@ -23,6 +23,7 @@ from pathlib import Path
 import streamlit as st
 
 from .config import APP_ROOT, load_settings
+from .interfaces.gui import AttachmentBuffer, build_run_spec
 from .llm import create_llm
 from .memory import MemoryManager
 from .orchestrator import Orchestrator, StageResult, WorkflowResult

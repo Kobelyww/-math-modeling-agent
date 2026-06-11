@@ -23,6 +23,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from .base import normalize_llm_content
 from .config import APP_ROOT, load_settings
+from .deepagent.runner import CompetitionPaperRunner
+from .interfaces.cli import AttachmentBuffer, build_run_spec
 from .llm import create_llm
 from .memory import MemoryManager
 from .orchestrator import Orchestrator
@@ -143,6 +145,7 @@ class CLI:
 
         self.orchestrator = Orchestrator(self.settings, rag=self.rag, memory_manager=self.memory_manager)
         self.mode: str = DEFAULT_ORCHESTRATOR_MODE
+        self.paper_attachments = AttachmentBuffer()
 
         # 设置默认流式回调 — 所有模式自动流式输出 + 思考内容
         self._current_role: str = ""
@@ -357,6 +360,19 @@ class CLI:
                 continue
             if raw.lower() == "/help":
                 print(ORCHESTRATOR_HELP)
+                continue
+            if raw.startswith("/attach "):
+                path = raw[len("/attach "):].strip()
+                self.paper_attachments.attach(Path(path))
+                print(f"[paper] 已添加附件: {path}")
+                continue
+            if raw.startswith("/paper "):
+                question = raw[len("/paper "):].strip()
+                spec = build_run_spec(question, self.paper_attachments)
+                runner = CompetitionPaperRunner.from_settings(self.settings)
+                result = runner.run(spec)
+                print(f"[paper] run_id={result.run_id} status={result.status.value}")
+                print(result.summary)
                 continue
             if raw.lower().startswith("/mode"):
                 parts = raw.split(maxsplit=1)
