@@ -76,13 +76,14 @@ class DockerSandbox:
         logger.error("[Sandbox] Image build failed: %s", result.stderr[:500])
         return False
 
-    def run(self, code: str, timeout: int | None = None) -> SandboxResult:
+    def run(self, code: str, timeout: int | None = None, cwd: Path | None = None) -> SandboxResult:
         """在 Docker 容器中执行 Python 代码。"""
         if not self.available:
             return SandboxResult(success=False, stdout="", stderr="Docker not available", exit_code=-1)
 
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        code_path = OUTPUT_DIR / "_sandbox_code.py"
+        work_dir = Path(cwd or OUTPUT_DIR).resolve()
+        work_dir.mkdir(parents=True, exist_ok=True)
+        code_path = work_dir / "_sandbox_code.py"
         code_path.write_text(code, encoding="utf-8")
 
         cmd = [
@@ -91,11 +92,11 @@ class DockerSandbox:
             f"--cpus={self.config.cpus}",
             f"--network={self.config.network}",
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-            "-v", f"{OUTPUT_DIR}:/workspace/output:rw",
+            "-v", f"{work_dir}:/workspace/output:rw",
             "-v", f"{code_path}:/workspace/code.py:ro",
-            "-w", "/workspace",
+            "-w", "/workspace/output",
             self.config.image,
-            "python", "code.py",
+            "python", "/workspace/code.py",
         ]
 
         try:
@@ -104,7 +105,7 @@ class DockerSandbox:
                 capture_output=True,
                 text=True,
                 timeout=timeout or self.config.timeout,
-                cwd=str(OUTPUT_DIR),
+                cwd=str(work_dir),
             )
             out = result.stdout
             err = result.stderr
@@ -120,18 +121,19 @@ class DockerSandbox:
             return SandboxResult(success=False, stdout="", stderr=str(exc), exit_code=-1, error=str(exc))
 
 
-def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT) -> SandboxResult:
+def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = None) -> SandboxResult:
     """宿主机降级执行（保留安全前导）。"""
     from ..tools import _SAFETY_PREAMBLE
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = OUTPUT_DIR / "_tmp_exec.py"
+    work_dir = Path(cwd or OUTPUT_DIR).resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = work_dir / "_tmp_exec.py"
     tmp_path.write_text(_SAFETY_PREAMBLE + code, encoding="utf-8")
 
     try:
         result = subprocess.run(
             [sys.executable, str(tmp_path)],
-            capture_output=True, text=True, timeout=timeout, cwd=str(OUTPUT_DIR),
+            capture_output=True, text=True, timeout=timeout, cwd=str(work_dir),
         )
         return SandboxResult(
             success=result.returncode == 0,
@@ -145,12 +147,21 @@ def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT) -> SandboxResult:
         return SandboxResult(success=False, stdout="", stderr=str(exc), exit_code=-1)
 
 
-def safe_execute(code: str, timeout: int = PYTHON_TIMEOUT) -> SandboxResult:
+def safe_execute(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = None) -> SandboxResult:
     """自动选择沙箱执行：Docker 优先，宿主机降级。"""
     sandbox = DockerSandbox()
     if sandbox.available:
         try:
-            return sandbox.run(code, timeout)
+            result = sandbox.run(code, timeout, cwd=cwd)
+            docker_error = (result.stderr or result.error).lower()
+            if not (
+                result.exit_code in (-1, 125, 126, 127)
+                or "docker api" in docker_error
+                or "docker daemon" in docker_error
+                or "cannot connect" in docker_error
+                or "permission denied while trying to connect" in docker_error
+            ):
+                return result
         except Exception:
             pass
-    return _fallback_exec(code, timeout)
+    return _fallback_exec(code, timeout, cwd=cwd)
