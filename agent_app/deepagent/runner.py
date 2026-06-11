@@ -10,7 +10,7 @@ from agent_app.services.run_store import RunStore
 
 
 CoordinatorFactory = Callable[..., Any]
-ARTIFACT_KIND_BY_SUFFIX = {
+ARTIFACT_KIND_BY_EXTENSION = {
     ".md": "markdown",
     ".py": "python",
     ".tex": "latex",
@@ -98,8 +98,8 @@ class CompetitionPaperRunner:
         ]
 
     def _artifact_kind(self, path: Path) -> str:
-        suffix = path.suffix.lower()
-        return ARTIFACT_KIND_BY_SUFFIX.get(suffix, suffix.lstrip("."))
+        extension = path.suffix.lower()
+        return ARTIFACT_KIND_BY_EXTENSION.get(extension, extension.lstrip("."))
 
     def _load_latest_state(self, state: Any) -> Any:
         try:

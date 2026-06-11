@@ -6,8 +6,8 @@ from pathlib import Path
 from agent_app.domain.models import RunSpec
 
 
-DATA_SUFFIXES = {".csv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".pdf"}
-REFERENCE_SUFFIXES = {".md", ".txt", ".pdf", ".bib"}
+DATA_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".pdf"}
+REFERENCE_EXTENSIONS = {".md", ".txt", ".pdf", ".bib"}
 
 
 @dataclass
@@ -24,9 +24,9 @@ def build_run_spec(question: str, attachments: AttachmentBuffer) -> RunSpec:
     data_files: list[Path] = []
     reference_files: list[Path] = []
     for path in attachments.paths:
-        suffix = path.suffix.lower()
-        if suffix in REFERENCE_SUFFIXES:
+        extension = path.suffix.lower()
+        if extension in REFERENCE_EXTENSIONS:
             reference_files.append(path)
-        elif suffix in DATA_SUFFIXES:
+        elif extension in DATA_EXTENSIONS:
             data_files.append(path)
     return RunSpec(question=question, data_files=data_files, reference_files=reference_files)
