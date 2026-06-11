@@ -129,8 +129,6 @@ python -m agent_app.cli
 |------|------|
 | `/attach <路径>` | 添加数据文件、参考文献或 PDF |
 | `/paper <赛题>` | 生成 run 级竞赛论文提交包 |
-| `/status` | 查看当前附件与运行状态 |
-| `/runs` | 列出历史 run |
 | `/help` | 显示帮助 |
 | `/exit` | 退出 |
 
