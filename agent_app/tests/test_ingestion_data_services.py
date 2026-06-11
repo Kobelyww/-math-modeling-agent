@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pandas as pd
 import pytest
 
@@ -84,6 +82,21 @@ def test_ingestion_prevalidates_missing_files_before_writing(tmp_path):
     assert not (store.run_dir(state.run_id) / "question.md").exists()
     assert not (store.run_dir(state.run_id) / "inputs_manifest.json").exists()
     assert not (store.run_dir(state.run_id) / "inputs" / "data" / "source.csv").exists()
+
+
+def test_ingestion_rejects_directory_input_before_writing(tmp_path):
+    directory = tmp_path / "not_a_file.csv"
+    directory.mkdir()
+
+    store = RunStore(output_root=tmp_path / "runs")
+    state = store.create_run(RunSpec(question="分析", data_files=[directory]))
+    service = InputIngestionService(ArtifactService(store.run_dir(state.run_id)))
+
+    with pytest.raises(FileNotFoundError):
+        service.ingest(state.spec)
+
+    assert not (store.run_dir(state.run_id) / "question.md").exists()
+    assert not (store.run_dir(state.run_id) / "inputs_manifest.json").exists()
 
 
 def test_data_analysis_audits_csv(tmp_path):

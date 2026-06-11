@@ -43,7 +43,7 @@ class InputIngestionService:
         resolved = []
         for source in files:
             path = Path(source).expanduser().resolve()
-            if not path.exists():
+            if not path.exists() or not path.is_file():
                 raise FileNotFoundError(str(path))
             resolved.append(path)
         return resolved
