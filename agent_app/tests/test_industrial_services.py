@@ -15,7 +15,7 @@ from agent_app.services.rag_service import RagService
 
 
 def test_code_execution_service_runs_in_working_directory(tmp_path):
-    service = CodeExecutionService(timeout=10)
+    service = CodeExecutionService(timeout=10, allow_unsafe_host_fallback=True)
     result = service.execute_code(
         "with open('relative.txt', 'w', encoding='utf-8') as fp:\n"
         "    fp.write('hello paper')\n"
@@ -216,7 +216,80 @@ def test_safe_execute_does_not_fallback_for_user_docker_like_stderr(monkeypatch,
     assert "docker daemon" in result.stderr
 
 
-def test_safe_execute_fallbacks_for_docker_infrastructure_failure(monkeypatch, tmp_path):
+def test_safe_execute_blocks_host_fallback_when_docker_unavailable(monkeypatch, tmp_path):
+    class FakeDockerSandbox:
+        @property
+        def available(self):
+            return False
+
+    def forbidden_fallback(code, timeout=sandbox_mod.PYTHON_TIMEOUT, cwd=None):
+        raise AssertionError("host fallback must be explicit")
+
+    monkeypatch.setattr(sandbox_mod, "DockerSandbox", FakeDockerSandbox)
+    monkeypatch.setattr(sandbox_mod, "_fallback_exec", forbidden_fallback)
+
+    result = sandbox_mod.safe_execute("print('ok')", timeout=10, cwd=tmp_path)
+
+    assert result.success is False
+    assert result.exit_code == -1
+    assert "unsafe host fallback disabled" in result.error
+
+
+def test_safe_execute_opt_in_fallback_runs_when_docker_unavailable(monkeypatch, tmp_path):
+    class FakeDockerSandbox:
+        @property
+        def available(self):
+            return False
+
+    called = {}
+
+    def fake_fallback(code, timeout=sandbox_mod.PYTHON_TIMEOUT, cwd=None):
+        called["cwd"] = cwd
+        return sandbox_mod.SandboxResult(success=True, stdout="fallback", stderr="", exit_code=0)
+
+    monkeypatch.setattr(sandbox_mod, "DockerSandbox", FakeDockerSandbox)
+    monkeypatch.setattr(sandbox_mod, "_fallback_exec", fake_fallback)
+
+    result = sandbox_mod.safe_execute(
+        "print('ok')",
+        timeout=10,
+        cwd=tmp_path,
+        allow_unsafe_host_fallback=True,
+    )
+
+    assert result.success is True
+    assert result.stdout == "fallback"
+    assert called["cwd"] == tmp_path
+
+
+def test_safe_execute_blocks_host_fallback_for_docker_infrastructure_failure(monkeypatch, tmp_path):
+    class FakeDockerSandbox:
+        @property
+        def available(self):
+            return True
+
+        def run(self, code, timeout=None, cwd=None):
+            return sandbox_mod.SandboxResult(
+                success=False,
+                stdout="",
+                stderr="docker: Error response from daemon: no such image",
+                exit_code=125,
+            )
+
+    def forbidden_fallback(code, timeout=sandbox_mod.PYTHON_TIMEOUT, cwd=None):
+        raise AssertionError("host fallback must be explicit")
+
+    monkeypatch.setattr(sandbox_mod, "DockerSandbox", FakeDockerSandbox)
+    monkeypatch.setattr(sandbox_mod, "_fallback_exec", forbidden_fallback)
+
+    result = sandbox_mod.safe_execute("print('ok')", timeout=10, cwd=tmp_path)
+
+    assert result.success is False
+    assert result.exit_code == -1
+    assert "unsafe host fallback disabled" in result.error
+
+
+def test_safe_execute_opt_in_fallback_runs_for_docker_infrastructure_failure(monkeypatch, tmp_path):
     class FakeDockerSandbox:
         @property
         def available(self):
@@ -239,7 +312,12 @@ def test_safe_execute_fallbacks_for_docker_infrastructure_failure(monkeypatch, t
     monkeypatch.setattr(sandbox_mod, "DockerSandbox", FakeDockerSandbox)
     monkeypatch.setattr(sandbox_mod, "_fallback_exec", fake_fallback)
 
-    result = sandbox_mod.safe_execute("print('ok')", timeout=10, cwd=tmp_path)
+    result = sandbox_mod.safe_execute(
+        "print('ok')",
+        timeout=10,
+        cwd=tmp_path,
+        allow_unsafe_host_fallback=True,
+    )
 
     assert result.success is True
     assert result.stdout == "fallback"

@@ -214,7 +214,7 @@ del __agent_install_safety
 
 
 def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = None) -> SandboxResult:
-    """宿主机降级执行（保留安全前导）。"""
+    """Unsafe trusted/dev host fallback. Not a security boundary for untrusted code."""
     work_dir = Path(cwd or OUTPUT_DIR).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = work_dir / "_tmp_exec.py"
@@ -237,8 +237,23 @@ def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = 
         return SandboxResult(success=False, stdout="", stderr=str(exc), exit_code=-1)
 
 
-def safe_execute(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = None) -> SandboxResult:
-    """自动选择沙箱执行：Docker 优先，宿主机降级。"""
+def _host_fallback_disabled_result() -> SandboxResult:
+    return SandboxResult(
+        success=False,
+        stdout="",
+        stderr="Docker sandbox unavailable; unsafe host fallback disabled",
+        exit_code=-1,
+        error="Docker sandbox unavailable; unsafe host fallback disabled",
+    )
+
+
+def safe_execute(
+    code: str,
+    timeout: int = PYTHON_TIMEOUT,
+    cwd: Path | None = None,
+    allow_unsafe_host_fallback: bool = False,
+) -> SandboxResult:
+    """Execute in Docker; host execution requires explicit unsafe opt-in."""
     sandbox = DockerSandbox()
     if sandbox.available:
         try:
@@ -247,4 +262,6 @@ def safe_execute(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = No
                 return result
         except Exception:
             pass
-    return _fallback_exec(code, timeout, cwd=cwd)
+    if allow_unsafe_host_fallback:
+        return _fallback_exec(code, timeout, cwd=cwd)
+    return _host_fallback_disabled_result()
