@@ -19,6 +19,13 @@ from agent_app.domain.models import (
 from agent_app.domain.serialization import from_json_dict, to_json_dict
 
 
+def test_domain_package_exports_serialization_helpers():
+    import agent_app.domain as domain
+
+    assert domain.to_json_dict is to_json_dict
+    assert domain.from_json_dict is from_json_dict
+
+
 def test_run_spec_defaults_to_competition_paper():
     spec = RunSpec(question="建立交通流优化模型")
 

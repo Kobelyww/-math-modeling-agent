@@ -18,6 +18,7 @@ from .models import (
     RunState,
     RunStatus,
 )
+from .serialization import from_json_dict, to_json_dict
 
 __all__ = [
     "ArtifactRef",
@@ -36,4 +37,6 @@ __all__ = [
     "RunStage",
     "RunState",
     "RunStatus",
+    "from_json_dict",
+    "to_json_dict",
 ]
