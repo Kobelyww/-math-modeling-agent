@@ -241,8 +241,11 @@ class CLI:
             print(f"未知模式: {self.mode}")
             return
 
-        # Persist all outputs to disk
-        self.orchestrator._save_outputs(result)
+        # Persist outputs when running with the real orchestrator. Some tests
+        # provide a small fake that only implements the selected solve method.
+        save_outputs = getattr(self.orchestrator, "_save_outputs", None)
+        if save_outputs is not None:
+            save_outputs(result)
         self._print_result(result)
 
     def solve_stream(self, question: str) -> None:
