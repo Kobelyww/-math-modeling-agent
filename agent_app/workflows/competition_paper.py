@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from .runner import CompetitionPaperRunner
+from agent_app.deepagent.runner import CompetitionPaperRunner
 
 __all__ = ["CompetitionPaperRunner"]
