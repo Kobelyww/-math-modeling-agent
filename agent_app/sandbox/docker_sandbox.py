@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import tempfile
 
 logger = logging.getLogger(__name__)
 import sys
@@ -26,6 +27,19 @@ SANDBOX_DIR = APP_ROOT / "sandbox"
 OUTPUT_DIR = APP_ROOT / "output"
 IMAGE_NAME = "agent-app-sandbox:latest"
 PYTHON_TIMEOUT = 30
+
+_DOCKER_INFRASTRUCTURE_ERRORS = (
+    "docker api",
+    "docker daemon",
+    "cannot connect",
+    "permission denied while trying to connect",
+    "error response from daemon",
+    "no such image",
+    "pull access denied",
+    "container create failed",
+    "oci runtime create failed",
+    "failed to create task",
+)
 
 
 @dataclass
@@ -83,30 +97,31 @@ class DockerSandbox:
 
         work_dir = Path(cwd or OUTPUT_DIR).resolve()
         work_dir.mkdir(parents=True, exist_ok=True)
-        code_path = work_dir / "_sandbox_code.py"
-        code_path.write_text(code, encoding="utf-8")
-
-        cmd = [
-            "docker", "run", "--rm",
-            f"--memory={self.config.memory}",
-            f"--cpus={self.config.cpus}",
-            f"--network={self.config.network}",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-            "-v", f"{work_dir}:/workspace/output:rw",
-            "-v", f"{code_path}:/workspace/code.py:ro",
-            "-w", "/workspace/output",
-            self.config.image,
-            "python", "/workspace/code.py",
-        ]
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout or self.config.timeout,
-                cwd=str(work_dir),
-            )
+            with tempfile.TemporaryDirectory(prefix="agent_sandbox_") as tmp_dir:
+                code_path = Path(tmp_dir) / "code.py"
+                code_path.write_text(code, encoding="utf-8")
+
+                cmd = [
+                    "docker", "run", "--rm",
+                    f"--memory={self.config.memory}",
+                    f"--cpus={self.config.cpus}",
+                    f"--network={self.config.network}",
+                    "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+                    "-v", f"{work_dir}:/workspace/output:rw",
+                    "-v", f"{code_path}:/workspace/code.py:ro",
+                    "-w", "/workspace/output",
+                    self.config.image,
+                    "python", "/workspace/code.py",
+                ]
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout or self.config.timeout,
+                    cwd=str(work_dir),
+                )
             out = result.stdout
             err = result.stderr
             return SandboxResult(
@@ -121,6 +136,11 @@ class DockerSandbox:
             return SandboxResult(success=False, stdout="", stderr=str(exc), exit_code=-1, error=str(exc))
 
 
+def _is_docker_infrastructure_failure(result: SandboxResult) -> bool:
+    message = f"{result.stderr}\n{result.error}".lower()
+    return any(marker in message for marker in _DOCKER_INFRASTRUCTURE_ERRORS)
+
+
 def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = None) -> SandboxResult:
     """宿主机降级执行（保留安全前导）。"""
     from ..tools import _SAFETY_PREAMBLE
@@ -128,7 +148,10 @@ def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = 
     work_dir = Path(cwd or OUTPUT_DIR).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = work_dir / "_tmp_exec.py"
-    tmp_path.write_text(_SAFETY_PREAMBLE + code, encoding="utf-8")
+    # Let the preamble's __safe_open wrapper handle file IO; blocking open earlier
+    # would prevent legitimate relative reads/writes inside the selected cwd.
+    preamble = _SAFETY_PREAMBLE.replace('"eval", "exec", "__import__", "compile", "open"}', '"eval", "exec", "__import__", "compile"}')
+    tmp_path.write_text(preamble + code, encoding="utf-8")
 
     try:
         result = subprocess.run(
@@ -153,14 +176,7 @@ def safe_execute(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = No
     if sandbox.available:
         try:
             result = sandbox.run(code, timeout, cwd=cwd)
-            docker_error = (result.stderr or result.error).lower()
-            if not (
-                result.exit_code in (-1, 125, 126, 127)
-                or "docker api" in docker_error
-                or "docker daemon" in docker_error
-                or "cannot connect" in docker_error
-                or "permission denied while trying to connect" in docker_error
-            ):
+            if not _is_docker_infrastructure_failure(result):
                 return result
         except Exception:
             pass

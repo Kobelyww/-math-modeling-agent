@@ -13,7 +13,10 @@ class LiteratureService:
             literature._search_s2_raw,
             literature._search_arxiv_raw,
         ]:
-            raw = fn(query, max_results=max_results)
+            try:
+                raw = fn(query, max_results=max_results)
+            except Exception:
+                continue
             if raw:
                 results.extend(row for row in raw if "error" not in row)
         return results[:max_results]
