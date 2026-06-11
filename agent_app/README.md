@@ -54,7 +54,7 @@ agent_app/
 ├── agents.py                # 7 个专业 Agent + 工厂函数
 ├── orchestrator.py          # 编排器（4 策略 + 6 终止条件 + 检查点 + 费用估算）
 ├── conditions.py            # 6 种可组合终止条件（Token/超时/轮次/质量/外部）
-├── tools.py                 # 工具集（18 个工具）
+├── tools/                   # 工具包（18 个工具）
 ├── rag.py                   # 论文知识库（TF-IDF + Embedding 混合检索）
 ├── literature.py            # 学术文献检索（arXiv / Semantic Scholar / Crossref）
 ├── cli.py                   # 命令行入口
@@ -132,7 +132,7 @@ python -m agent_app.cli
 | `/help` | 显示帮助 |
 | `/exit` | 退出 |
 
-Legacy commands:
+兼容命令：
 
 | 命令 | 说明 |
 |------|------|
@@ -144,36 +144,17 @@ Legacy commands:
 ### 编程调用
 
 ```python
-from agent_app import load_settings, Orchestrator
-from agent_app.rag import PaperRAG
+from agent_app import CompetitionPaperRunner, RunSpec, load_settings
 
 settings = load_settings()
-rag = PaperRAG(knowledge_dir="knowledge_base", index_path="data/rag_index.pkl")
-rag.load_index()
-
-orch = Orchestrator(settings, rag=rag)
-
-# 默认 Agent Loop：动态决定下一步，而不是固定流水线
-result = orch.solve_agent_loop("建立交通流优化模型")
-
-# 串行模式
-result = orch.solve_sequential("建立交通流优化模型")
-
-# 评审反射模式
-result = orch.solve_with_review("建立交通流优化模型", max_review_rounds=2)
-
-# 流式模式（实时输出每个 token）
-result = orch.solve_stream(
-    "建立交通流优化模型",
-    on_modeling_token=lambda t: print(t, end=""),
-    on_programming_token=lambda t: print(t, end=""),
-    on_writing_token=lambda t: print(t, end=""),
-    on_synthesis_token=lambda t: print(t, end=""),
-)
-
-# 查看结果
-print(result.format_overview())
+runner = CompetitionPaperRunner.from_settings(settings)
+result = runner.run(RunSpec(question="建立交通流优化模型"))
+print(result.run_id, result.status.value)
 ```
+
+#### Legacy Orchestrator compatibility
+
+`Orchestrator` is still available for the old `/solve` multi-strategy flow during migration, but new programmatic integrations should use `CompetitionPaperRunner` and `RunSpec`.
 
 ## 配置说明
 
