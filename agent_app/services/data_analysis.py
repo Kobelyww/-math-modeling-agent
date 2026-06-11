@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,10 @@ class DataAnalysisService:
             report.files.append(path.name)
             suffix = path.suffix.lower()
             if suffix == ".csv":
-                self._audit_frame(pd.read_csv(path), report)
+                try:
+                    self._audit_frame(pd.read_csv(path), report)
+                except Exception as exc:
+                    report.data_limitations.append(f"{path.name}: CSV 读取失败: {exc}")
             elif suffix in {".xlsx", ".xls"}:
                 try:
                     self._audit_frame(pd.read_excel(path), report)
@@ -60,5 +64,7 @@ class DataAnalysisService:
 
 def _jsonable(value: Any) -> Any:
     if hasattr(value, "item"):
-        return value.item()
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     return value
