@@ -1,0 +1,45 @@
+[project]
+name = "llm-study-agent-app"
+version = "0.1.0"
+description = "Math modeling multi-agent study project."
+requires-python = ">=3.11"
+dependencies = [
+    "langchain",
+    "langchain-core",
+    "langchain-deepseek",
+    "deepagents>=0.5.0",
+    "python-dotenv",
+    "scikit-learn",
+    "pypdf",
+    "jieba",
+    "numpy",
+    "pandas",
+    "PyMuPDF",
+    "dashscope",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "streamlit",
+]
+memory = [
+    "redis[hiredis]",
+]
+test = [
+    "pytest",
+]
+dev = [
+    "pytest",
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "streamlit",
+    "redis[hiredis]",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["agent_app/tests"]
+pythonpath = ["."]
