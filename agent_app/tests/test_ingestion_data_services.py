@@ -131,6 +131,21 @@ def test_data_analysis_writes_markdown_summary(tmp_path):
     assert "缺失值" in markdown
 
 
+def test_data_analysis_preserves_same_columns_across_multiple_files(tmp_path):
+    first = tmp_path / "first.csv"
+    second = tmp_path / "second.csv"
+    first.write_text("value\n1\n2\n", encoding="utf-8")
+    second.write_text("value\n10\n20\n", encoding="utf-8")
+
+    report = DataAnalysisService().audit_files([first, second])
+
+    assert "first.csv:value" in report.field_dictionary
+    assert "second.csv:value" in report.field_dictionary
+    assert "first.csv:value" in report.missing_values
+    assert "second.csv:value" in report.descriptive_statistics
+    assert "first.csv:value" in report.usable_features
+
+
 def test_data_analysis_normalizes_non_finite_numeric_stats(tmp_path):
     csv_path = tmp_path / "bad_stats.csv"
     pd.DataFrame({"x": [float("inf"), float("inf")]}).to_csv(csv_path, index=False)

@@ -12,34 +12,55 @@ from agent_app.domain.models import DataAuditReport
 class DataAnalysisService:
     def audit_files(self, files: list[Path]) -> DataAuditReport:
         report = DataAuditReport()
+        tabular_files = [
+            Path(path) for path in files if Path(path).suffix.lower() in {".csv", ".xlsx", ".xls"}
+        ]
+        use_file_prefix = len(tabular_files) > 1
         for path in files:
             path = Path(path)
             report.files.append(path.name)
             suffix = path.suffix.lower()
             if suffix == ".csv":
                 try:
-                    self._audit_frame(pd.read_csv(path), report)
+                    self._audit_frame(
+                        pd.read_csv(path),
+                        report,
+                        source_name=path.name,
+                        use_file_prefix=use_file_prefix,
+                    )
                 except Exception as exc:
                     report.data_limitations.append(f"{path.name}: CSV 读取失败: {exc}")
             elif suffix in {".xlsx", ".xls"}:
                 try:
-                    self._audit_frame(pd.read_excel(path), report)
+                    self._audit_frame(
+                        pd.read_excel(path),
+                        report,
+                        source_name=path.name,
+                        use_file_prefix=use_file_prefix,
+                    )
                 except Exception as exc:
                     report.data_limitations.append(f"{path.name}: Excel 读取失败: {exc}")
             else:
                 report.data_limitations.append(f"{path.name}: 当前仅记录文件，未做表格审计")
         return report
 
-    def _audit_frame(self, df: pd.DataFrame, report: DataAuditReport) -> None:
+    def _audit_frame(
+        self,
+        df: pd.DataFrame,
+        report: DataAuditReport,
+        source_name: str = "",
+        use_file_prefix: bool = False,
+    ) -> None:
         for column in df.columns:
             series = df[column]
-            report.field_dictionary[str(column)] = str(series.dtype)
-            report.missing_values[str(column)] = int(series.isna().sum())
-            if str(column) not in report.usable_features:
-                report.usable_features.append(str(column))
+            field_name = f"{source_name}:{column}" if use_file_prefix else str(column)
+            report.field_dictionary[field_name] = str(series.dtype)
+            report.missing_values[field_name] = int(series.isna().sum())
+            if field_name not in report.usable_features:
+                report.usable_features.append(field_name)
             if pd.api.types.is_numeric_dtype(series):
                 stats = series.describe().to_dict()
-                report.descriptive_statistics[str(column)] = {
+                report.descriptive_statistics[field_name] = {
                     key: _jsonable(value) for key, value in stats.items()
                 }
 
