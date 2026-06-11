@@ -115,6 +115,55 @@ def test_fallback_exec_hides_os_helper_from_user_code(tmp_path):
     assert not (sibling / "escape.txt").exists()
 
 
+def test_fallback_exec_blocks_open_closure_read_escape(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+
+    result = _fallback_exec(
+        "orig = None\n"
+        "Path = None\n"
+        "for cell in open.__closure__:\n"
+        "    obj = cell.cell_contents\n"
+        "    if getattr(obj, '__name__', None) == 'open':\n"
+        "        orig = obj\n"
+        "    if getattr(obj, '__name__', None) == 'Path':\n"
+        "        Path = obj\n"
+        "print(orig(Path('../outside.txt').resolve(), 'r', encoding='utf-8').read())",
+        timeout=10,
+        cwd=cwd,
+    )
+
+    assert result.success is False
+    assert "secret" not in result.stdout
+
+
+def test_fallback_exec_blocks_open_closure_write_escape(tmp_path):
+    cwd = tmp_path / "work"
+    sibling = tmp_path / "work_escape"
+    cwd.mkdir()
+    sibling.mkdir()
+
+    result = _fallback_exec(
+        "orig = None\n"
+        "Path = None\n"
+        "for cell in open.__closure__:\n"
+        "    obj = cell.cell_contents\n"
+        "    if getattr(obj, '__name__', None) == 'open':\n"
+        "        orig = obj\n"
+        "    if getattr(obj, '__name__', None) == 'Path':\n"
+        "        Path = obj\n"
+        "with orig(Path('../work_escape/escape.txt').resolve(), 'w', encoding='utf-8') as fp:\n"
+        "    fp.write('escaped')",
+        timeout=10,
+        cwd=cwd,
+    )
+
+    assert result.success is False
+    assert not (sibling / "escape.txt").exists()
+
+
 def test_safe_execute_does_not_fallback_for_docker_user_exit_code(monkeypatch, tmp_path):
     class FakeDockerSandbox:
         @property

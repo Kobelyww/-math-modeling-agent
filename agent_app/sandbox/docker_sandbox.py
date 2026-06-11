@@ -161,6 +161,7 @@ def _fallback_preamble(work_dir: Path) -> str:
 def __agent_install_safety():
     import builtins
     import resource
+    import sys
     from pathlib import Path
 
     # 内存限制：512 MB
@@ -173,8 +174,7 @@ def __agent_install_safety():
     def blocked_operation(*args, __operation="operation", **kwargs):
         raise PermissionError(f"Operation blocked for safety: {{__operation}}")
 
-    dangerous = {{"os.system", "subprocess.call", "subprocess.run", "subprocess.Popen",
-                 "eval", "exec", "__import__", "compile"}}
+    dangerous = {{"eval", "exec", "__import__", "compile"}}
     for name in dangerous:
         if hasattr(builtins, name):
             setattr(
@@ -185,20 +185,26 @@ def __agent_install_safety():
                 ),
             )
 
-    original_open = builtins.open
+    # Host fallback is not Docker isolation. Use an audit hook rather than a
+    # Python open wrapper, so user code cannot recover raw file APIs from
+    # open.__closure__ or wrapper attributes.
     allowed_dir = Path({str(work_dir)!r}).resolve()
 
-    def safe_open(file, mode="r", *args, **kwargs):
+    def audit_file_access(event, args):
+        if event != "open":
+            return
+        file = args[0] if args else None
         if isinstance(file, int):
             raise PermissionError("File descriptor access blocked for safety")
+        if file is None:
+            return
         resolved = Path(file).resolve()
         try:
             resolved.relative_to(allowed_dir)
         except ValueError:
             raise PermissionError(f"File access outside sandbox blocked: {{file}}")
-        return original_open(resolved, mode, *args, **kwargs)
 
-    builtins.open = safe_open
+    sys.addaudithook(audit_file_access)
 
 __agent_install_safety()
 del __agent_install_safety
