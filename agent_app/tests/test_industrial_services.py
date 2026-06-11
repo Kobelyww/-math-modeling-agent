@@ -44,6 +44,41 @@ def test_fallback_exec_respects_working_directory(tmp_path):
     assert (tmp_path / "fallback.txt").exists()
 
 
+def test_fallback_exec_blocks_reading_outside_working_directory(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+
+    result = _fallback_exec(
+        "with open('../outside.txt', 'r', encoding='utf-8') as fp:\n"
+        "    print(fp.read())",
+        timeout=10,
+        cwd=cwd,
+    )
+
+    assert result.success is False
+    assert "outside sandbox blocked" in result.stderr.lower()
+
+
+def test_fallback_exec_blocks_prefix_collision_sibling_write(tmp_path):
+    cwd = tmp_path / "work"
+    sibling = tmp_path / "work_escape"
+    cwd.mkdir()
+    sibling.mkdir()
+
+    result = _fallback_exec(
+        "with open('../work_escape/escape.txt', 'w', encoding='utf-8') as fp:\n"
+        "    fp.write('escaped')",
+        timeout=10,
+        cwd=cwd,
+    )
+
+    assert result.success is False
+    assert "outside sandbox blocked" in result.stderr.lower()
+    assert not (sibling / "escape.txt").exists()
+
+
 def test_safe_execute_does_not_fallback_for_docker_user_exit_code(monkeypatch, tmp_path):
     class FakeDockerSandbox:
         @property
@@ -70,11 +105,68 @@ def test_safe_execute_does_not_fallback_for_docker_user_exit_code(monkeypatch, t
     assert result.stderr == "user exited"
 
 
+def test_safe_execute_does_not_fallback_for_user_docker_like_stderr(monkeypatch, tmp_path):
+    class FakeDockerSandbox:
+        @property
+        def available(self):
+            return True
+
+        def run(self, code, timeout=None, cwd=None):
+            return sandbox_mod.SandboxResult(
+                success=False,
+                stdout="",
+                stderr="cannot connect to docker daemon",
+                exit_code=1,
+            )
+
+    def forbidden_fallback(code, timeout=sandbox_mod.PYTHON_TIMEOUT, cwd=None):
+        raise AssertionError("host fallback must not run for user stderr")
+
+    monkeypatch.setattr(sandbox_mod, "DockerSandbox", FakeDockerSandbox)
+    monkeypatch.setattr(sandbox_mod, "_fallback_exec", forbidden_fallback)
+
+    result = sandbox_mod.safe_execute("raise SystemExit(1)", timeout=10, cwd=tmp_path)
+
+    assert result.exit_code == 1
+    assert "docker daemon" in result.stderr
+
+
+def test_safe_execute_fallbacks_for_docker_infrastructure_failure(monkeypatch, tmp_path):
+    class FakeDockerSandbox:
+        @property
+        def available(self):
+            return True
+
+        def run(self, code, timeout=None, cwd=None):
+            return sandbox_mod.SandboxResult(
+                success=False,
+                stdout="",
+                stderr="docker: Error response from daemon: no such image",
+                exit_code=125,
+            )
+
+    called = {}
+
+    def fake_fallback(code, timeout=sandbox_mod.PYTHON_TIMEOUT, cwd=None):
+        called["cwd"] = cwd
+        return sandbox_mod.SandboxResult(success=True, stdout="fallback", stderr="", exit_code=0)
+
+    monkeypatch.setattr(sandbox_mod, "DockerSandbox", FakeDockerSandbox)
+    monkeypatch.setattr(sandbox_mod, "_fallback_exec", fake_fallback)
+
+    result = sandbox_mod.safe_execute("print('ok')", timeout=10, cwd=tmp_path)
+
+    assert result.success is True
+    assert result.stdout == "fallback"
+    assert called["cwd"] == tmp_path
+
+
 def test_docker_sandbox_keeps_code_file_outside_writable_work_dir(monkeypatch, tmp_path):
     captured: dict[str, list[str]] = {}
 
-    def fake_run(cmd, capture_output, text, timeout, cwd):
-        captured["cmd"] = cmd
+    def fake_run(cmd, capture_output, text, timeout, cwd=None):
+        if cmd[:2] == ["docker", "run"]:
+            captured["cmd"] = cmd
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(sandbox_mod.shutil, "which", lambda name: "/usr/bin/docker")

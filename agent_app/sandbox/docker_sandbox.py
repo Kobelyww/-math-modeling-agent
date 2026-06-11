@@ -31,6 +31,7 @@ PYTHON_TIMEOUT = 30
 _DOCKER_INFRASTRUCTURE_ERRORS = (
     "docker api",
     "docker daemon",
+    "docker not available",
     "cannot connect",
     "permission denied while trying to connect",
     "error response from daemon",
@@ -71,7 +72,18 @@ class DockerSandbox:
 
     @property
     def available(self) -> bool:
-        return shutil.which("docker") is not None
+        if shutil.which("docker") is None:
+            return False
+        try:
+            result = subprocess.run(
+                ["docker", "info"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0
 
     def build_image(self, force: bool = False) -> bool:
         """构建沙箱 Docker 镜像。"""
@@ -131,27 +143,69 @@ class DockerSandbox:
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired:
-            return SandboxResult(success=False, stdout="", stderr="", exit_code=-1, timed_out=True, error=f"Timed out after {self.config.timeout}s")
+            effective_timeout = timeout or self.config.timeout
+            return SandboxResult(success=False, stdout="", stderr="", exit_code=-1, timed_out=True, error=f"Timed out after {effective_timeout}s")
         except Exception as exc:
             return SandboxResult(success=False, stdout="", stderr=str(exc), exit_code=-1, error=str(exc))
 
 
 def _is_docker_infrastructure_failure(result: SandboxResult) -> bool:
+    if result.timed_out or result.exit_code not in (-1, 125):
+        return False
     message = f"{result.stderr}\n{result.error}".lower()
     return any(marker in message for marker in _DOCKER_INFRASTRUCTURE_ERRORS)
 
 
+def _fallback_preamble(work_dir: Path) -> str:
+    return f'''# --- safety preamble (auto-injected) ---
+import sys as __sys
+import os as __os
+import builtins as __builtins
+import resource as __resource
+from pathlib import Path as __Path
+
+# 内存限制：512 MB
+_MEM_LIMIT = 512 * 1024 * 1024
+try:
+    __resource.setrlimit(__resource.RLIMIT_AS, (_MEM_LIMIT, _MEM_LIMIT))
+except (ValueError, AttributeError):
+    pass
+
+# 限制危险操作
+__dangerous = {{"os.system", "subprocess.call", "subprocess.run", "subprocess.Popen",
+               "eval", "exec", "__import__", "compile"}}
+__originals = {{}}
+for __name in __dangerous:
+    if hasattr(__builtins, __name):
+        __originals[__name] = getattr(__builtins, __name)
+        setattr(__builtins, __name,
+                lambda *a, __n=__name, **kw: (_ for _ in ()).throw(
+                    PermissionError(f"Operation blocked for safety: {{__n}}")))
+
+# 限制文件读写范围
+__orig_open = __builtins.open
+__allowed_dir = __Path({str(work_dir)!r}).resolve()
+def __safe_open(file, mode="r", *args, **kwargs):
+    if isinstance(file, int):
+        raise PermissionError("File descriptor access blocked for safety")
+    __resolved = __Path(file).resolve()
+    try:
+        __resolved.relative_to(__allowed_dir)
+    except ValueError:
+        raise PermissionError(f"File access outside sandbox blocked: {{file}}")
+    return __orig_open(__resolved, mode, *args, **kwargs)
+__builtins.open = __safe_open
+# --- end safety preamble ---
+
+'''
+
+
 def _fallback_exec(code: str, timeout: int = PYTHON_TIMEOUT, cwd: Path | None = None) -> SandboxResult:
     """宿主机降级执行（保留安全前导）。"""
-    from ..tools import _SAFETY_PREAMBLE
-
     work_dir = Path(cwd or OUTPUT_DIR).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = work_dir / "_tmp_exec.py"
-    # Let the preamble's __safe_open wrapper handle file IO; blocking open earlier
-    # would prevent legitimate relative reads/writes inside the selected cwd.
-    preamble = _SAFETY_PREAMBLE.replace('"eval", "exec", "__import__", "compile", "open"}', '"eval", "exec", "__import__", "compile"}')
-    tmp_path.write_text(preamble + code, encoding="utf-8")
+    tmp_path.write_text(_fallback_preamble(work_dir) + code, encoding="utf-8")
 
     try:
         result = subprocess.run(
