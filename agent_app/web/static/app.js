@@ -4,6 +4,7 @@ let chatMessages = [];
 let artifactRecords = [];
 
 const STAGE_LABELS = {
+  deepagent_reasoning: 'DeepAgent 编排',
   ingest_inputs: '整理输入',
   understand_problem: '理解赛题',
   audit_data: '审计数据',
@@ -86,10 +87,11 @@ function appendEvent(content, stage) {
 function renderStages(stageStatus) {
   const el = document.getElementById('stage-list');
   if (!el) return;
-  el.innerHTML = Object.keys(STAGE_LABELS).map(stage => {
+  const stages = Array.from(new Set([...Object.keys(STAGE_LABELS), ...Object.keys(stageStatus)]));
+  el.innerHTML = stages.map(stage => {
     const status = stageStatus[stage] || 'pending';
     return '<div class="stage-row ' + status + '">' +
-      '<span>' + STAGE_LABELS[stage] + '</span>' +
+      '<span>' + (STAGE_LABELS[stage] || stage) + '</span>' +
       '<strong>' + status + '</strong>' +
       '</div>';
   }).join('');
@@ -229,9 +231,19 @@ function handlePaperEvent(msg) {
       appendChat(msg.role || 'assistant', msg.content || '');
       break;
     case 'done':
-      setRunState('Complete', 'var(--green)');
-      setStatus('✓ 论文提交包已生成', 'var(--green)');
-      appendChat('assistant', '运行完成：' + (msg.summary || msg.run_id || 'done'));
+      if (msg.status === 'completed') {
+        setRunState('Complete', 'var(--green)');
+        setStatus('✓ 论文提交包已生成', 'var(--green)');
+        appendChat('assistant', '运行完成：' + (msg.summary || msg.run_id || 'done'));
+      } else if (msg.status === 'partial') {
+        setRunState('Needs input', 'var(--orange)');
+        setStatus('需要继续补充信息或修正指令', 'var(--orange)');
+        appendChat('assistant', '当前尚未形成完整提交包：' + (msg.summary || '请继续补充赛题、数据或约束。'));
+      } else {
+        setRunState(msg.status || 'Done');
+        setStatus('运行结束：' + (msg.status || 'done'));
+        appendChat('assistant', '运行结束：' + (msg.summary || msg.run_id || 'done'));
+      }
       (msg.artifacts || []).forEach(addArtifact);
       document.getElementById('btn-followup').disabled = false;
       break;

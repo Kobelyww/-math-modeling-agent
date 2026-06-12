@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from agent_app.config import Settings
 from agent_app.deepagent.runner import CompetitionPaperRunner
 from agent_app.domain.models import RunSpec, RunStatus
 from agent_app.domain.serialization import to_json_dict
@@ -188,16 +189,51 @@ class EventDrivingCoordinator:
 
 
 class PaperChatStreamer:
-    def __init__(self, output_root: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        output_root: Path | str | None = None,
+        settings: Settings | None = None,
+        coordinator_factory: Callable[..., Any] | None = None,
+    ) -> None:
         self.output_root = output_root
+        self.settings = settings
+        self.coordinator_factory = coordinator_factory
 
     def run(self, spec: RunSpec, emit: PaperEventHandler) -> Any:
+        emit({"type": "start", "question": spec.question})
+        coordinator_factory = self.coordinator_factory
+        if coordinator_factory is not None:
+            emit({"type": "stage", "stage": "tool_driven_smoke", "label": "测试工具驱动流程", "status": "running"})
+        else:
+            emit(
+                {
+                    "type": "stage",
+                    "stage": "deepagent_reasoning",
+                    "label": "DeepAgent 推理与工具编排",
+                    "status": "running",
+                }
+            )
+            emit(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "DeepAgent 已接管任务，正在进行论文生产编排。阶段和产物会在真实工具写入后返回。",
+                }
+            )
         runner = CompetitionPaperRunner(
             output_root=self.output_root,
-            coordinator_factory=lambda run_store, **_: EventDrivingCoordinator(run_store, emit),
+            settings=self.settings,
+            coordinator_factory=coordinator_factory,
         )
-        emit({"type": "start", "question": spec.question})
         result = runner.run(spec)
+        emit(
+            {
+                "type": "stage",
+                "stage": "deepagent_reasoning" if coordinator_factory is None else "tool_driven_smoke",
+                "label": "DeepAgent 推理与工具编排" if coordinator_factory is None else "测试工具驱动流程",
+                "status": "completed" if result.status != RunStatus.FAILED else "failed",
+            }
+        )
         for artifact in result.artifacts:
             emit({"type": "artifact", **to_json_dict(artifact)})
         emit(

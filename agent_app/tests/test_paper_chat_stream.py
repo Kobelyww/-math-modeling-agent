@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_app.config import Settings
 from agent_app.domain.models import RunSpec, RunStatus
-from agent_app.web.paper_stream import PaperChatRequest, PaperChatStreamer, build_followup_question
+from agent_app.web.paper_stream import (
+    EventDrivingCoordinator,
+    PaperChatRequest,
+    PaperChatStreamer,
+    build_followup_question,
+)
 
 
 class EventCollector:
@@ -21,7 +27,10 @@ def test_paper_chat_stream_emits_stage_tool_artifact_and_done_events(tmp_path):
     reference_file.write_text("层次分析法可用于评价问题。", encoding="utf-8")
     collector = EventCollector()
 
-    streamer = PaperChatStreamer(output_root=tmp_path / "runs")
+    streamer = PaperChatStreamer(
+        output_root=tmp_path / "runs",
+        coordinator_factory=lambda run_store, **_: EventDrivingCoordinator(run_store, collector),
+    )
     result = streamer.run(
         RunSpec(
             question="建立交通流预测模型",
@@ -40,6 +49,39 @@ def test_paper_chat_stream_emits_stage_tool_artifact_and_done_events(tmp_path):
     assert result.status == RunStatus.COMPLETED
     assert any(event.get("stage") == "draft_paper" for event in collector.events)
     assert any(event.get("name") == "paper.tex" for event in collector.events)
+
+
+def test_paper_chat_streamer_default_uses_real_runner_path(tmp_path, monkeypatch):
+    collector = EventCollector()
+    captured = {}
+
+    class RecordingRunner:
+        def __init__(self, output_root=None, settings=None, coordinator_factory=None):
+            captured["settings"] = settings
+            captured["coordinator_factory"] = coordinator_factory
+            captured["output_root"] = output_root
+
+        def run(self, spec):
+            from agent_app.domain.models import RunResult, RunStage
+
+            captured["question"] = spec.question
+            return RunResult(
+                run_id="run_real",
+                status=RunStatus.COMPLETED,
+                stage=RunStage.PACKAGE_SUBMISSION,
+                summary="real runner completed",
+            )
+
+    monkeypatch.setattr("agent_app.web.paper_stream.CompetitionPaperRunner", RecordingRunner)
+    settings = Settings(api_key="key", api_base=None, model="deepseek-v4-pro", temperature=0.3)
+
+    streamer = PaperChatStreamer(output_root=tmp_path / "runs", settings=settings)
+    result = streamer.run(RunSpec(question="建立真实模型"), emit=collector)
+
+    assert result.run_id == "run_real"
+    assert captured["settings"] is settings
+    assert captured["coordinator_factory"] is None
+    assert not any(event.get("type") == "tool" for event in collector.events)
 
 
 def test_build_followup_question_includes_recent_assistant_context():

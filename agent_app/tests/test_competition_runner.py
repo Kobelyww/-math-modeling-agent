@@ -60,6 +60,21 @@ def test_runner_records_failure_as_partial_result(tmp_path):
     assert "model unavailable" in result.summary
 
 
+def test_runner_marks_run_partial_when_core_submission_artifacts_are_missing(tmp_path):
+    class ClarifyingCoordinator:
+        def invoke(self, payload):
+            return {"messages": [{"content": "请提供完整赛题和数据文件。"}]}
+
+    runner = CompetitionPaperRunner(output_root=tmp_path, coordinator_factory=lambda **kwargs: ClarifyingCoordinator())
+
+    result = runner.run(RunSpec(question="建立预测模型"))
+    persisted = runner.run_store.load_state(result.run_id)
+
+    assert result.status == RunStatus.PARTIAL
+    assert persisted.status == RunStatus.PARTIAL
+    assert "请提供完整赛题和数据文件" in result.summary
+
+
 def test_runner_preserves_tool_saved_state_and_nested_artifacts(tmp_path):
     class StateMutatingCoordinator:
         def __init__(self, run_store):
@@ -70,6 +85,8 @@ def test_runner_preserves_tool_saved_state_and_nested_artifacts(tmp_path):
             run_dir = Path(payload["run_dir"])
             (run_dir / "results").mkdir()
             (run_dir / "results" / "output.csv").write_text("x,y\n1,2\n", encoding="utf-8")
+            (run_dir / "modeling_report.md").write_text("# Model\n", encoding="utf-8")
+            (run_dir / "solve.py").write_text("print('ok')\n", encoding="utf-8")
             (run_dir / "paper.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
             state = self.run_store.load_state(run_id)
             state.quality_reports.append(QualityReport(gate_name="tool_gate", passed=True, score=0.9))

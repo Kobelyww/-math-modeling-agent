@@ -21,6 +21,6 @@ def create_competition_paper_agent(
     return create_deep_agent(
         model=llm,
         tools=tools,
-        instructions=COMPETITION_COORDINATOR_PROMPT,
+        system_prompt=COMPETITION_COORDINATOR_PROMPT,
         middleware=active_middleware,
     )

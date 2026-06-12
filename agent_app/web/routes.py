@@ -298,7 +298,7 @@ async def ws_paper(websocket: WebSocket, task_id: str):
         reference_files=request.reference_files,
     )
     try:
-        streamer = PaperChatStreamer(output_root=APP_ROOT / "output" / "runs")
+        streamer = PaperChatStreamer(output_root=APP_ROOT / "output" / "runs", settings=_settings)
         await asyncio.wait_for(asyncio.to_thread(streamer.run, spec, emit), timeout=SOLVE_TASK_TIMEOUT)
     except asyncio.TimeoutError:
         await websocket.send_json({"type": "error", "message": f"任务超时（{SOLVE_TASK_TIMEOUT}s），请简化问题"})

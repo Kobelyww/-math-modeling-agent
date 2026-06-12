@@ -65,6 +65,8 @@ class CompetitionPaperRunner:
             summary = str(exc)
 
         state.artifacts = self._collect_artifacts(run_dir)
+        if state.status == RunStatus.COMPLETED and not self._has_core_submission_artifacts(state.artifacts):
+            state.status = RunStatus.PARTIAL
         self.run_store.save_state(state)
         return RunResult(
             run_id=state.run_id,
@@ -100,6 +102,10 @@ class CompetitionPaperRunner:
     def _artifact_kind(self, path: Path) -> str:
         extension = path.suffix.lower()
         return ARTIFACT_KIND_BY_EXTENSION.get(extension, extension.lstrip("."))
+
+    def _has_core_submission_artifacts(self, artifacts: list[ArtifactRef]) -> bool:
+        names = {artifact.path.name for artifact in artifacts}
+        return {"modeling_report.md", "solve.py", "paper.tex"}.issubset(names)
 
     def _load_latest_state(self, state: Any) -> Any:
         try:
