@@ -1,8 +1,76 @@
 from __future__ import annotations
 
 import pytest
+from langchain_core.messages import ToolMessage
+from langgraph.prebuilt.tool_node import ToolCallRequest
 
 from agent_app.deepagent.middleware import CompetitionStageMiddleware, StageDefinition
+
+
+def test_stage_middleware_wraps_tool_call_with_lifecycle_events():
+    events = []
+    middleware = CompetitionStageMiddleware(event_handler=events.append)
+    request = ToolCallRequest(
+        tool_call={"name": "ingest_inputs", "args": {}, "id": "call_1", "type": "tool_call"},
+        tool=None,
+        state={},
+        runtime=None,
+    )
+
+    def handler(_request):
+        return ToolMessage(
+            content='{"inputs_manifest": {}, "inputs_manifest_path": "/tmp/run/inputs_manifest.json"}',
+            tool_call_id="call_1",
+            name="ingest_inputs",
+        )
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert result.content.startswith("{")
+    assert middleware.current_stage == "understand_problem"
+    assert events == [
+        {"type": "stage", "stage": "ingest_inputs", "label": "整理输入", "status": "running"},
+        {"type": "tool", "stage": "ingest_inputs", "name": "ingest_inputs", "status": "running"},
+        {
+            "type": "tool",
+            "stage": "ingest_inputs",
+            "name": "ingest_inputs",
+            "status": "completed",
+            "result": {
+                "inputs_manifest": {},
+                "inputs_manifest_path": "/tmp/run/inputs_manifest.json",
+            },
+        },
+        {
+            "type": "artifact",
+            "stage": "ingest_inputs",
+            "name": "inputs_manifest.json",
+            "path": "/tmp/run/inputs_manifest.json",
+            "kind": "json",
+        },
+        {"type": "stage", "stage": "ingest_inputs", "label": "整理输入", "status": "completed"},
+    ]
+
+
+def test_stage_middleware_allows_uncontrolled_deepagent_helper_tools_without_stage_events():
+    events = []
+    middleware = CompetitionStageMiddleware(event_handler=events.append)
+    request = ToolCallRequest(
+        tool_call={"name": "ls", "args": {}, "id": "call_ls", "type": "tool_call"},
+        tool=None,
+        state={},
+        runtime=None,
+    )
+
+    def handler(_request):
+        return ToolMessage(content="[]", tool_call_id="call_ls", name="ls")
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert result.content == "[]"
+    assert middleware.current_stage == "ingest_inputs"
+    assert middleware.tool_history == []
+    assert events == []
 
 
 def test_stage_middleware_exposes_initial_tools():

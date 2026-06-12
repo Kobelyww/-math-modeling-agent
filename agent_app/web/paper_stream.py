@@ -224,6 +224,7 @@ class PaperChatStreamer:
             output_root=self.output_root,
             settings=self.settings,
             coordinator_factory=coordinator_factory,
+            event_handler=emit,
         )
         result = runner.run(spec)
         emit(
@@ -231,7 +232,7 @@ class PaperChatStreamer:
                 "type": "stage",
                 "stage": "deepagent_reasoning" if coordinator_factory is None else "tool_driven_smoke",
                 "label": "DeepAgent 推理与工具编排" if coordinator_factory is None else "测试工具驱动流程",
-                "status": "completed" if result.status != RunStatus.FAILED else "failed",
+                "status": self._stage_status_for_result(result.status),
             }
         )
         for artifact in result.artifacts:
@@ -250,3 +251,12 @@ class PaperChatStreamer:
         if result.status == RunStatus.FAILED:
             emit({"type": "error", "message": result.summary})
         return result
+
+    def _stage_status_for_result(self, status: RunStatus) -> str:
+        if status == RunStatus.COMPLETED:
+            return "completed"
+        if status == RunStatus.PARTIAL:
+            return "partial"
+        if status == RunStatus.FAILED:
+            return "failed"
+        return status.value

@@ -41,6 +41,34 @@ def test_runner_creates_run_and_returns_result(tmp_path):
     assert artifact_kinds["run.json"] == "json"
 
 
+def test_runner_invokes_deepagent_with_standard_messages_payload(tmp_path):
+    captured = {}
+
+    class CapturingCoordinator:
+        def invoke(self, payload):
+            captured.update(payload)
+            run_dir = Path(payload["run_dir"])
+            (run_dir / "modeling_report.md").write_text("# Model\n", encoding="utf-8")
+            (run_dir / "solve.py").write_text("print('ok')\n", encoding="utf-8")
+            (run_dir / "paper.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+            return {"messages": [{"content": "done"}]}
+
+    runner = CompetitionPaperRunner(
+        output_root=tmp_path,
+        coordinator_factory=lambda **kwargs: CapturingCoordinator(),
+    )
+
+    result = runner.run(RunSpec(question="建立预测模型"))
+
+    assert result.status == RunStatus.COMPLETED
+    assert captured["messages"] == [{"role": "user", "content": captured["question"]}]
+    assert "run_id" in captured["question"]
+    assert captured["run_id"] in captured["question"]
+    assert "ingest_inputs" in captured["question"]
+    assert captured["data_files"] == []
+    assert captured["reference_files"] == []
+
+
 def test_runner_default_output_root_uses_existing_output_directory_name():
     runner = CompetitionPaperRunner(coordinator_factory=lambda **kwargs: FakeCoordinator())
 

@@ -1,13 +1,30 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 try:
     from langchain.agents.middleware import AgentMiddleware
 except Exception:  # pragma: no cover
     class AgentMiddleware:  # type: ignore[no-redef]
         pass
+
+EventHandler = Callable[[dict[str, Any]], None]
+
+
+STAGE_LABELS = {
+    "ingest_inputs": "整理输入",
+    "understand_problem": "理解赛题",
+    "audit_data": "审计数据",
+    "retrieve_evidence": "检索证据",
+    "plan_modeling": "规划模型",
+    "run_experiments": "生成实验",
+    "draft_paper": "起草论文",
+    "review_and_revise": "质量评审",
+    "package_submission": "打包提交",
+}
 
 
 @dataclass(frozen=True)
@@ -36,10 +53,12 @@ DEFAULT_STAGES = (
 
 
 class CompetitionStageMiddleware(AgentMiddleware):
-    def __init__(self, stages: list[StageDefinition] | None = None) -> None:
+    def __init__(self, stages: list[StageDefinition] | None = None, event_handler: EventHandler | None = None) -> None:
         super().__init__()
         self.stages = self._normalize_stages(DEFAULT_STAGES if stages is None else stages)
         self.stage_index = 0
+        self.event_handler = event_handler
+        self.managed_tools = {tool_name for stage in self.stages for tool_name in stage.tools}
         self.tool_history: list[dict[str, Any]] = []
         self.completed_required_tools: dict[str, set[str]] = {stage.name: set() for stage in self.stages}
         self.stage_results: dict[str, dict[str, Any]] = {stage.name: {} for stage in self.stages}
@@ -101,6 +120,36 @@ class CompetitionStageMiddleware(AgentMiddleware):
             self.completed_required_tools[stage.name].add(tool_name)
         self._advance_if_ready()
 
+    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+        tool_name = request.tool_call["name"]
+        if tool_name not in self.managed_tools:
+            return handler(request)
+        stage = self.stages[self.stage_index]
+        self.validate_tool(tool_name)
+        self._emit({"type": "stage", "stage": stage.name, "label": self._stage_label(stage.name), "status": "running"})
+        self._emit({"type": "tool", "stage": stage.name, "name": tool_name, "status": "running"})
+        try:
+            result = handler(request)
+        except Exception as exc:
+            self._emit({"type": "tool", "stage": stage.name, "name": tool_name, "status": "failed", "message": str(exc)})
+            self._emit({"type": "stage", "stage": stage.name, "label": self._stage_label(stage.name), "status": "failed"})
+            raise
+
+        parsed_result = self._parse_tool_result(result)
+        self._emit(
+            {
+                "type": "tool",
+                "stage": stage.name,
+                "name": tool_name,
+                "status": "completed",
+                "result": self._preview(parsed_result),
+            }
+        )
+        self._emit_artifact_paths(stage.name, parsed_result)
+        self.record_tool_result(tool_name, parsed_result)
+        self._emit({"type": "stage", "stage": stage.name, "label": self._stage_label(stage.name), "status": "completed"})
+        return result
+
     def record_gate_result(self, gate_name: str, passed: bool, required_fixes: list[str] | None = None) -> None:
         stage_name = self.current_stage
         if not passed:
@@ -123,3 +172,55 @@ class CompetitionStageMiddleware(AgentMiddleware):
             return
         if all(name in self.completed_required_tools[stage.name] for name in stage.required_tools):
             self.stage_index = min(self.stage_index + 1, len(self.stages) - 1)
+
+    def _emit(self, event: dict[str, Any]) -> None:
+        if self.event_handler is not None:
+            self.event_handler(event)
+
+    def _emit_artifact_paths(self, stage: str, result: Any) -> None:
+        if not isinstance(result, dict):
+            return
+        for value in result.values():
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                if isinstance(item, str) and self._looks_like_artifact_path(item):
+                    path = Path(item)
+                    self._emit(
+                        {
+                            "type": "artifact",
+                            "stage": stage,
+                            "name": path.name,
+                            "path": item,
+                            "kind": path.suffix.lstrip(".") or "file",
+                        }
+                    )
+
+    def _parse_tool_result(self, result: Any) -> Any:
+        content = getattr(result, "content", result)
+        if isinstance(content, str):
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                return content
+        return content
+
+    def _preview(self, result: Any) -> Any:
+        if not isinstance(result, dict):
+            return result
+        preview: dict[str, Any] = {}
+        for key, value in result.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                preview[key] = value
+            elif isinstance(value, list):
+                preview[key] = value[:3]
+            elif isinstance(value, dict):
+                preview[key] = {k: value[k] for k in list(value)[:5]}
+        return preview
+
+    @staticmethod
+    def _looks_like_artifact_path(value: str) -> bool:
+        return bool(Path(value).suffix) or "/" in value
+
+    @staticmethod
+    def _stage_label(stage_name: str) -> str:
+        return STAGE_LABELS.get(stage_name, stage_name)

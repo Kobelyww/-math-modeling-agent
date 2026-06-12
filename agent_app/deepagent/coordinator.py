@@ -12,12 +12,13 @@ def create_competition_paper_agent(
     llm: Any,
     run_store: RunStore,
     middleware: CompetitionStageMiddleware | None = None,
+    event_handler: Any | None = None,
     **services: Any,
 ):
     from deepagents import create_deep_agent
 
     tools = make_competition_tools(run_store=run_store, **services)
-    active_middleware = [middleware or CompetitionStageMiddleware()]
+    active_middleware = [middleware or CompetitionStageMiddleware(event_handler=event_handler)]
     return create_deep_agent(
         model=llm,
         tools=tools,

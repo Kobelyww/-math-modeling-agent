@@ -56,10 +56,11 @@ def test_paper_chat_streamer_default_uses_real_runner_path(tmp_path, monkeypatch
     captured = {}
 
     class RecordingRunner:
-        def __init__(self, output_root=None, settings=None, coordinator_factory=None):
+        def __init__(self, output_root=None, settings=None, coordinator_factory=None, event_handler=None):
             captured["settings"] = settings
             captured["coordinator_factory"] = coordinator_factory
             captured["output_root"] = output_root
+            captured["event_handler"] = event_handler
 
         def run(self, spec):
             from agent_app.domain.models import RunResult, RunStage
@@ -81,7 +82,69 @@ def test_paper_chat_streamer_default_uses_real_runner_path(tmp_path, monkeypatch
     assert result.run_id == "run_real"
     assert captured["settings"] is settings
     assert captured["coordinator_factory"] is None
+    assert captured["event_handler"] is collector
     assert not any(event.get("type") == "tool" for event in collector.events)
+
+
+def test_paper_chat_streamer_passes_event_handler_to_real_runner(tmp_path, monkeypatch):
+    collector = EventCollector()
+    captured = {}
+
+    class RecordingRunner:
+        def __init__(self, output_root=None, settings=None, coordinator_factory=None, event_handler=None):
+            captured["event_handler"] = event_handler
+
+        def run(self, spec):
+            from agent_app.domain.models import RunResult, RunStage
+
+            captured["event_handler"]({"type": "tool", "stage": "ingest_inputs", "name": "ingest_inputs", "status": "running"})
+            return RunResult(
+                run_id="run_real",
+                status=RunStatus.PARTIAL,
+                stage=RunStage.INGEST_INPUTS,
+                summary="needs input",
+            )
+
+    monkeypatch.setattr("agent_app.web.paper_stream.CompetitionPaperRunner", RecordingRunner)
+    settings = Settings(api_key="key", api_base=None, model="deepseek-v4-pro", temperature=0.3)
+
+    streamer = PaperChatStreamer(output_root=tmp_path / "runs", settings=settings)
+    streamer.run(RunSpec(question="建立真实模型"), emit=collector)
+
+    assert captured["event_handler"] is collector
+    assert any(event.get("type") == "tool" and event.get("stage") == "ingest_inputs" for event in collector.events)
+
+
+def test_paper_chat_streamer_does_not_mark_deepagent_stage_complete_for_partial_result(tmp_path, monkeypatch):
+    collector = EventCollector()
+
+    class PartialRunner:
+        def __init__(self, output_root=None, settings=None, coordinator_factory=None, event_handler=None):
+            pass
+
+        def run(self, spec):
+            from agent_app.domain.models import RunResult, RunStage
+
+            return RunResult(
+                run_id="run_partial",
+                status=RunStatus.PARTIAL,
+                stage=RunStage.CREATED,
+                summary="请补充完整赛题和数据文件。",
+            )
+
+    monkeypatch.setattr("agent_app.web.paper_stream.CompetitionPaperRunner", PartialRunner)
+    settings = Settings(api_key="key", api_base=None, model="deepseek-v4-pro", temperature=0.3)
+
+    streamer = PaperChatStreamer(output_root=tmp_path / "runs", settings=settings)
+    result = streamer.run(RunSpec(question="建立真实模型"), emit=collector)
+
+    assert result.status == RunStatus.PARTIAL
+    deepagent_events = [
+        event
+        for event in collector.events
+        if event.get("type") == "stage" and event.get("stage") == "deepagent_reasoning"
+    ]
+    assert [event["status"] for event in deepagent_events] == ["running", "partial"]
 
 
 def test_build_followup_question_includes_recent_assistant_context():

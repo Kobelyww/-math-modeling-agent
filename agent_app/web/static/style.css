@@ -207,6 +207,16 @@ header p {
   background: #eefbf3;
 }
 
+.stage-row.partial {
+  border-color: #d4a72c;
+  background: #fff8c5;
+}
+
+.stage-row.failed {
+  border-color: #ffb3ba;
+  background: #ffebe9;
+}
+
 .artifact-item strong,
 .artifact-item span,
 .artifact-item small {
