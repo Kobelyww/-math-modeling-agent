@@ -97,3 +97,29 @@ def test_run_result_is_small_interface_payload():
 
     assert result.artifacts[0].name == "paper_tex"
     assert result.summary.startswith("已生成")
+
+
+def test_input_asset_round_trips_through_json():
+    from pathlib import Path
+
+    from agent_app.domain.models import AssetKind, AssetStatus, InputAsset
+    from agent_app.domain.serialization import from_json_dict, to_json_dict
+
+    asset = InputAsset(
+        asset_id="asset_abc123",
+        original_name="traffic.csv",
+        stored_path=Path("assets/asset_abc123/traffic.csv"),
+        kind=AssetKind.DATA,
+        status=AssetStatus.VALIDATED,
+        size=18,
+        suffix=".csv",
+        content_type="text/csv",
+        created_at="2026-06-12T12:00:00",
+    )
+
+    payload = to_json_dict(asset)
+    restored = from_json_dict(InputAsset, payload)
+
+    assert payload["kind"] == "data"
+    assert payload["status"] == "validated"
+    assert restored == asset

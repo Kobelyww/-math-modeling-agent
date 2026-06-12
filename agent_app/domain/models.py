@@ -28,12 +28,49 @@ class RunStage(str, Enum):
     PACKAGE_SUBMISSION = "package_submission"
 
 
+class AssetKind(str, Enum):
+    QUESTION = "question"
+    DATA = "data"
+    REFERENCE = "reference"
+    IMAGE = "image"
+    OTHER = "other"
+
+
+class AssetStatus(str, Enum):
+    UPLOADED = "uploaded"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+    DELETED = "deleted"
+
+
 @dataclass
 class RunOptions:
     top_k: int = 6
     max_repair_attempts: int = 2
     compile_pdf: bool = True
     allow_online_search: bool = False
+
+
+@dataclass
+class InputAsset:
+    asset_id: str
+    original_name: str
+    stored_path: Path
+    kind: AssetKind
+    status: AssetStatus
+    size: int
+    suffix: str
+    content_type: str = ""
+    created_at: str = ""
+    deleted_at: str = ""
+    validation_error: str = ""
+
+
+@dataclass
+class AssetManifest:
+    asset_ids: list[str] = field(default_factory=list)
+    data_files: list[Path] = field(default_factory=list)
+    reference_files: list[Path] = field(default_factory=list)
 
 
 @dataclass
