@@ -169,6 +169,50 @@ GET  /api/skills/{genre}       查看指定题材技能卡
 GET  /api/scheduler            查看调度状态
 POST /api/scheduler/start      启动定时创作
 POST /api/scheduler/stop       停止定时创作
+GET  /api/workspace/materials  查看 Workspace 素材库
+```
+
+## Workspace 业务工作台
+
+Workspace 将一次性创作流程扩展为本地内容生产闭环：
+
+```text
+素材库 → 选题卡 → 任务队列 → 审核草稿 → 发布包
+```
+
+核心页面：
+
+- **素材**：录入、导入、筛选创作素材。
+- **选题卡**：把一条或多条素材整理成可批准的创作 brief。
+- **任务**：查看排队、运行、失败和待审核任务。
+- **审核**：轻量编辑标题、简介、标签和正文。
+- **发布包**：从审核后的草稿生成平台发布包并确认导出。
+
+Workspace API 位于 `/api/workspace/*`。默认使用 `zhihu_fiction/data/workspace/` 下的 JSONL/JSON 文件存储，不需要额外数据库。
+
+主要接口：
+
+```text
+GET  /api/workspace/materials
+POST /api/workspace/materials/import-scraped
+POST /api/workspace/materials/manual
+PATCH /api/workspace/materials/{material_id}
+GET  /api/workspace/topic-cards
+POST /api/workspace/topic-cards
+PATCH /api/workspace/topic-cards/{card_id}
+POST /api/workspace/topic-cards/{card_id}/approve
+POST /api/workspace/topic-cards/{card_id}/create-task
+GET  /api/workspace/tasks
+POST /api/workspace/tasks/{task_id}/retry
+POST /api/workspace/tasks/{task_id}/cancel
+GET  /api/workspace/drafts
+GET  /api/workspace/drafts/{task_id}
+PATCH /api/workspace/drafts/{task_id}
+POST /api/workspace/drafts/{task_id}/ready
+GET  /api/workspace/packages
+POST /api/workspace/packages/generate
+POST /api/workspace/packages/{package_id}/confirm
+GET  /api/workspace/packages/{package_id}/files
 ```
 
 ## 数据与输出

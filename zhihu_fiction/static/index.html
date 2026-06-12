@@ -7,56 +7,163 @@
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js" defer></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  .tab-active { border-bottom: 2px solid #6366f1; color: #6366f1; }
+  :root {
+    --bg-0: #0b1117;
+    --bg-1: #111a22;
+    --surface: rgba(15, 23, 31, 0.82);
+    --surface-strong: rgba(18, 27, 37, 0.94);
+    --surface-muted: rgba(148, 163, 184, 0.08);
+    --border-soft: rgba(148, 163, 184, 0.18);
+    --text-main: #e5edf5;
+    --text-muted: #93a4b8;
+    --accent: #2dd4bf;
+    --accent-cyan: #67e8f9;
+    --danger: #fb7185;
+    --warning: #fbbf24;
+  }
+  [x-cloak] { display: none !important; }
+  .app-shell {
+    position: relative;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 12% 8%, rgba(45, 212, 191, 0.16), transparent 24%),
+      radial-gradient(circle at 86% 2%, rgba(103, 232, 249, 0.1), transparent 26%),
+      linear-gradient(145deg, var(--bg-0), var(--bg-1) 56%, #0d1218);
+    color: var(--text-main);
+  }
+  .particle-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .app-content {
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+  }
+  .surface {
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.24);
+    backdrop-filter: blur(14px);
+  }
+  .surface-strong {
+    background: var(--surface-strong);
+    border: 1px solid var(--border-soft);
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(14px);
+  }
+  .surface-muted {
+    background: var(--surface-muted);
+    border: 1px solid var(--border-soft);
+  }
+  .tab-active {
+    border-bottom: 2px solid var(--accent-cyan);
+    color: var(--accent-cyan);
+  }
+  .nav-tab {
+    color: var(--text-muted);
+  }
+  .nav-tab:hover {
+    color: var(--text-main);
+  }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.375rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-soft);
+    background: rgba(148, 163, 184, 0.12);
+    color: #cbd5e1;
+  }
+  .form-control {
+    background: rgba(2, 6, 12, 0.42);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    color: var(--text-main);
+  }
+  .form-control::placeholder {
+    color: #64748b;
+  }
+  .form-control:focus {
+    outline: none;
+    border-color: rgba(103, 232, 249, 0.72);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.16);
+  }
   .progress-bar { transition: width 0.5s ease; }
   .stage-ok { color: #22c55e; } .stage-running { color: #f59e0b; }
   .stage-failed { color: #ef4444; } .stage-skipped { color: #9ca3af; }
   .log-line { font-family: 'SF Mono', monospace; font-size: 13px; }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+  @media (prefers-reduced-motion: reduce) {
+    .progress-bar {
+      transition: none;
+    }
+  }
 </style>
 </head>
-<body class="bg-gray-50 min-h-screen" x-data="app()" x-init="init()">
+<body class="app-shell min-h-screen" x-data="app()" x-init="init()">
+<canvas id="particleNetwork" class="particle-canvas" aria-hidden="true"></canvas>
+<div class="app-content">
 
 <!-- Header -->
-<header class="bg-white shadow-sm border-b">
+<header class="surface-strong border-b border-slate-800/70">
   <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-    <h1 class="text-lg font-bold text-gray-800">Zhihu Fiction Studio</h1>
-    <span class="text-xs text-gray-400">知乎爆款小说自动创作系统</span>
+    <h1 class="text-lg font-bold text-slate-100">Zhihu Fiction Studio</h1>
+    <span class="text-xs text-slate-400">知乎爆款小说自动创作系统</span>
   </div>
 </header>
 
 <!-- Tabs -->
-<nav class="bg-white border-b">
-  <div class="max-w-5xl mx-auto px-4 flex gap-0">
+<nav class="surface-strong border-b border-slate-800/70">
+  <div class="max-w-5xl mx-auto px-4 flex gap-0 overflow-x-auto whitespace-nowrap">
     <button @click="tab='run'" :class="tab==='run'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">运行</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">运行</button>
     <button @click="tab='history'; loadHistory()" :class="tab==='history'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">历史</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">历史</button>
     <button @click="tab='skills'; loadSkills()" :class="tab==='skills'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">技能</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">技能</button>
     <button @click="tab='scheduler'; loadScheduler()" :class="tab==='scheduler'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">调度</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">调度</button>
     <button @click="tab='stories'; loadStories()" :class="tab==='stories'?'tab-active':''"
-      class="px-5 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 transition">作品</button>
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">作品</button>
+    <button @click="tab='workspace_materials'; loadWorkspace()" :class="tab==='workspace_materials'?'tab-active':''"
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">素材</button>
+    <button @click="tab='workspace_cards'; loadWorkspace()" :class="tab==='workspace_cards'?'tab-active':''"
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">选题卡</button>
+    <button @click="tab='workspace_tasks'; loadWorkspace()" :class="tab==='workspace_tasks'?'tab-active':''"
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">任务</button>
+    <button @click="tab='workspace_review'; loadWorkspace()" :class="tab==='workspace_review'?'tab-active':''"
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">审核</button>
+    <button @click="tab='workspace_packages'; loadWorkspace()" :class="tab==='workspace_packages'?'tab-active':''"
+      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">发布包</button>
   </div>
 </nav>
 
 <main class="max-w-5xl mx-auto px-4 py-6">
+  <div x-show="workspaceError" x-cloak class="surface-muted rounded-lg px-4 py-3 mb-4 text-sm text-amber-200">
+    <div class="flex items-start justify-between gap-3">
+      <span x-text="workspaceError"></span>
+      <button type="button" @click="workspaceError=''" class="text-amber-100 hover:text-white">关闭</button>
+    </div>
+  </div>
 
   <!-- ====== RUN TAB ====== -->
   <section x-show="tab==='run'" x-cloak>
-    <div class="bg-white rounded-lg shadow p-6 mb-4">
+    <div class="surface rounded-lg p-6 mb-4">
       <h2 class="text-base font-semibold mb-4">创作配置</h2>
       <div class="grid grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="block text-sm text-gray-600 mb-1">主题（留空则 AI 自选热榜话题）</label>
+          <label class="block text-sm text-slate-300 mb-1">主题（留空则 AI 自选热榜话题）</label>
           <input x-model="runForm.topic" placeholder="如：穿越古代用现代医学救人"
-            class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            class="form-control w-full rounded px-3 py-2 text-sm">
         </div>
         <div>
-          <label class="block text-sm text-gray-600 mb-1">目标流派</label>
-          <select x-model="runForm.genre" class="w-full border rounded px-3 py-2 text-sm">
+          <label class="block text-sm text-slate-300 mb-1">目标流派</label>
+          <select x-model="runForm.genre" class="form-control w-full rounded px-3 py-2 text-sm">
             <option value="">自动识别</option>
             <template x-for="g in genres" :key="g">
               <option :value="g" x-text="g"></option>
@@ -65,14 +172,14 @@
         </div>
       </div>
       <div class="flex items-center gap-3 mb-4">
-        <label class="text-sm text-gray-600">章节数:</label>
+        <label class="text-sm text-slate-300">章节数:</label>
         <input x-model.number="runForm.chapters" type="number" min="1" max="100"
-          class="w-20 border rounded px-2 py-1.5 text-sm text-center">
-        <button @click="runForm.chapters=1" :class="runForm.chapters===1?'bg-indigo-600 text-white':'bg-gray-100'"
+          class="form-control w-20 rounded px-2 py-1.5 text-sm text-center">
+        <button @click="runForm.chapters=1" :class="runForm.chapters===1?'bg-indigo-600 text-white':'bg-slate-800/80'"
           class="px-3 py-1.5 rounded text-xs transition">短篇</button>
-        <button @click="runForm.chapters=5" :class="runForm.chapters===5?'bg-indigo-600 text-white':'bg-gray-100'"
+        <button @click="runForm.chapters=5" :class="runForm.chapters===5?'bg-indigo-600 text-white':'bg-slate-800/80'"
           class="px-3 py-1.5 rounded text-xs transition">中篇 5章</button>
-        <button @click="runForm.chapters=20" :class="runForm.chapters===20?'bg-indigo-600 text-white':'bg-gray-100'"
+        <button @click="runForm.chapters=20" :class="runForm.chapters===20?'bg-indigo-600 text-white':'bg-slate-800/80'"
           class="px-3 py-1.5 rounded text-xs transition">长篇 20章</button>
       </div>
       <button @click="startRun()" :disabled="running"
@@ -86,22 +193,22 @@
     </div>
 
     <!-- Progress -->
-    <div x-show="running" class="bg-white rounded-lg shadow p-6 mb-4" x-transition>
+    <div x-show="running" class="surface rounded-lg p-6 mb-4" x-transition>
       <div class="flex items-center justify-between mb-2">
-        <span class="text-sm text-gray-600 font-medium" x-text="progress.message"></span>
-        <span class="text-sm font-mono text-gray-400" x-text="progress.progress + '%'"></span>
+        <span class="text-sm text-slate-300 font-medium" x-text="progress.message"></span>
+        <span class="text-sm font-mono text-slate-500" x-text="progress.progress + '%'"></span>
       </div>
-      <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
+      <div class="w-full bg-slate-800/80 rounded-full h-2 mb-3">
         <div class="bg-indigo-600 h-2 rounded-full progress-bar" :style="'width:'+progress.progress+'%'"></div>
       </div>
-      <div class="text-xs text-gray-400 mb-2">智能体实时日志 — 点击展开查看完整内容</div>
+      <div class="text-xs text-slate-500 mb-2">智能体实时日志 — 点击展开查看完整内容</div>
       <div class="h-96 overflow-y-auto space-y-2 bg-gray-900 rounded-lg p-3 font-mono text-xs" x-ref="logContainer"
            x-effect="if($refs.logContainer) $refs.logContainer.scrollTop=$refs.logContainer.scrollHeight">
         <template x-for="log in stageLog" :key="log.id">
           <div>
             <!-- Stage update -->
             <div x-show="log.type==='stage'" class="flex gap-2 text-gray-300 py-0.5">
-              <span class="text-gray-500 w-16 shrink-0" x-text="log.time"></span>
+              <span class="text-slate-400 w-16 shrink-0" x-text="log.time"></span>
               <span :class="log.status==='running'?'text-yellow-400':log.status==='failed'?'text-red-400':'text-green-400'" x-text="'['+log.stage+']'"></span>
               <span x-text="log.message"></span>
             </div>
@@ -110,9 +217,9 @@
                  @click="log._open=!log._open">
               <div class="flex items-center gap-1 text-indigo-400 cursor-pointer">
                 <span>🔧</span><span x-text="log.name"></span>
-                <span class="text-gray-500" x-text="log._open?'收起':'展开参数...'"></span>
+                <span class="text-slate-400" x-text="log._open?'收起':'展开参数...'"></span>
               </div>
-              <pre x-show="log._open" class="text-gray-400 mt-1 whitespace-pre-wrap break-all text-xs"
+              <pre x-show="log._open" class="text-slate-500 mt-1 whitespace-pre-wrap break-all text-xs"
                    x-text="JSON.stringify(log.args, null, 2)"></pre>
             </div>
             <!-- Tool result -->
@@ -120,7 +227,7 @@
                  @click="log._open=!log._open">
               <div class="flex items-center gap-1 text-green-400 cursor-pointer">
                 <span>✓</span><span x-text="log.name + ' 完成'"></span>
-                <span class="text-gray-500" x-text="log._open?'收起':'展开内容 ('+log.content.length+'字)...'"></span>
+                <span class="text-slate-400" x-text="log._open?'收起':'展开内容 ('+log.content.length+'字)...'"></span>
               </div>
               <pre x-show="log._open" class="text-gray-300 mt-1 whitespace-pre-wrap break-all max-h-64 overflow-y-auto text-xs leading-relaxed"
                    x-text="log.content"></pre>
@@ -128,9 +235,9 @@
             <!-- AI text -->
             <div x-show="log.type==='ai_text'" class="border-l-2 border-gray-600 pl-2 my-1"
                  @click="log._open=!log._open">
-              <div class="flex items-center gap-1 text-gray-400 cursor-pointer">
+              <div class="flex items-center gap-1 text-slate-500 cursor-pointer">
                 <span>💬</span><span>AI 思考</span>
-                <span class="text-gray-600" x-text="log._open?'收起':'展开 ('+log.content.length+'字)...'"></span>
+                <span class="text-slate-300" x-text="log._open?'收起':'展开 ('+log.content.length+'字)...'"></span>
               </div>
               <pre x-show="log._open" class="text-gray-300 mt-1 whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-xs leading-relaxed"
                    x-text="log.content"></pre>
@@ -141,34 +248,34 @@
     </div>
 
     <!-- Result -->
-    <div x-show="runResult" class="bg-white rounded-lg shadow p-6" x-transition>
+    <div x-show="runResult" class="surface rounded-lg p-6" x-transition>
       <h2 class="text-base font-semibold mb-3">创作结果</h2>
       <div class="grid grid-cols-2 gap-3 text-sm mb-4">
-        <div><span class="text-gray-500">主题：</span><span x-text="runResult.topic"></span></div>
-        <div><span class="text-gray-500">流派：</span><span x-text="runResult.genre"></span></div>
-        <div v-if="runResult.stages?.create"><span class="text-gray-500">字数：</span><span x-text="runResult.stages.create.words"></span></div>
-        <div v-if="runResult.stages?.review"><span class="text-gray-500">评分：</span><span x-text="runResult.stages.review.score?.toFixed(1)"></span></div>
-        <div><span class="text-gray-500">耗时：</span><span x-text="(runResult.total_duration_s/60).toFixed(1)+' 分钟'"></span></div>
+        <div><span class="text-slate-400">主题：</span><span x-text="runResult.topic"></span></div>
+        <div><span class="text-slate-400">流派：</span><span x-text="runResult.genre"></span></div>
+        <div v-if="runResult.stages?.create"><span class="text-slate-400">字数：</span><span x-text="runResult.stages.create.words"></span></div>
+        <div v-if="runResult.stages?.review"><span class="text-slate-400">评分：</span><span x-text="runResult.stages.review.score?.toFixed(1)"></span></div>
+        <div><span class="text-slate-400">耗时：</span><span x-text="(runResult.total_duration_s/60).toFixed(1)+' 分钟'"></span></div>
       </div>
       <div v-if="runResult.published_url && !runResult.published_url.endsWith('.md')" class="text-sm text-blue-600 mb-2">
         发布地址：<span x-text="runResult.published_url"></span>
       </div>
       <button @click="tab='stories'; loadStories()"
-        class="px-4 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50 transition">查看所有作品</button>
+        class="px-4 py-1.5 text-sm border border-slate-700 rounded hover:bg-slate-800/55 transition">查看所有作品</button>
     </div>
   </section>
 
   <!-- ====== HISTORY TAB ====== -->
   <section x-show="tab==='history'" x-cloak>
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-      <div class="p-4 border-b flex justify-between items-center">
-        <h2 class="text-base font-semibold">运行历史 <span class="text-gray-400 text-sm ml-2" x-text="runs.length+' 条'"></span></h2>
-        <button @click="loadHistory()" class="text-sm text-indigo-600 hover:underline">刷新</button>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex justify-between items-center">
+        <h2 class="text-base font-semibold">运行历史 <span class="text-slate-500 text-sm ml-2" x-text="runs.length+' 条'"></span></h2>
+        <button @click="loadHistory()" class="text-sm text-cyan-300 hover:underline">刷新</button>
       </div>
-      <div x-show="runs.length===0" class="p-8 text-center text-gray-400 text-sm">暂无运行记录，先去「运行」标签创作一篇吧</div>
+      <div x-show="runs.length===0" class="p-8 text-center text-slate-500 text-sm">暂无运行记录，先去「运行」标签创作一篇吧</div>
       <div class="overflow-x-auto" x-show="runs.length>0">
         <table class="w-full text-sm">
-          <thead class="bg-gray-50 text-left text-gray-500">
+          <thead class="bg-slate-800/55 text-left text-slate-400">
             <tr>
               <th class="px-4 py-2 font-medium">运行 ID</th>
               <th class="px-4 py-2 font-medium">主题</th>
@@ -182,16 +289,16 @@
           <tbody>
             <template x-for="r in runs" :key="r.run_id">
               <tr @click="selectedRun = selectedRun===r.run_id ? null : r.run_id"
-                class="border-t hover:bg-gray-50 cursor-pointer transition">
+                class="border-t border-slate-800/70 hover:bg-slate-800/55 cursor-pointer transition">
                 <td class="px-4 py-2 font-mono text-xs" x-text="r.run_id"></td>
                 <td class="px-4 py-2 max-w-40 truncate" x-text="r.topic"></td>
-                <td class="px-4 py-2"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs" x-text="r.genre"></span></td>
+                <td class="px-4 py-2"><span class="px-2 py-0.5 bg-slate-800/80 rounded text-xs" x-text="r.genre"></span></td>
                 <td class="px-4 py-2">
                   <span :class="r.error?'text-red-500':'text-green-500'" x-text="r.error?'失败':'完成'"></span>
                 </td>
                 <td class="px-4 py-2" x-text="r.stages?.create?.words || '-'"></td>
                 <td class="px-4 py-2" x-text="r.stages?.review?.score?.toFixed?.(1) || '-'"></td>
-                <td class="px-4 py-2 text-gray-400 text-xs" x-text="r.timestamp?.slice(11,16)"></td>
+                <td class="px-4 py-2 text-slate-500 text-xs" x-text="r.timestamp?.slice(11,16)"></td>
               </tr>
             </template>
           </tbody>
@@ -199,17 +306,17 @@
       </div>
     </div>
     <!-- Expanded detail -->
-    <div x-show="selectedRun" class="bg-white rounded-lg shadow p-6 mt-4" x-transition>
+    <div x-show="selectedRun" class="surface rounded-lg p-6 mt-4" x-transition>
       <template x-for="r in runs.filter(x=>x.run_id===selectedRun)" :key="r.run_id">
         <div>
           <h3 class="font-semibold mb-2" x-text="r.topic"></h3>
           <div class="grid grid-cols-3 gap-3 text-sm">
             <template x-for="(s, name) in r.stages" :key="name">
-              <div class="border rounded p-3">
-                <div class="text-gray-500 text-xs mb-1" x-text="name"></div>
+              <div class="border border-slate-800/70 rounded p-3 bg-slate-950/35">
+                <div class="text-slate-400 text-xs mb-1" x-text="name"></div>
                 <div :class="'stage-'+s.status" x-text="s.status"></div>
                 <template x-for="(v, k) in s" :key="k">
-                  <div v-if="k!=='status'" class="text-gray-500 text-xs" x-text="k+': '+v"></div>
+                  <div v-if="k!=='status'" class="text-slate-400 text-xs" x-text="k+': '+v"></div>
                 </template>
               </div>
             </template>
@@ -223,41 +330,41 @@
   <section x-show="tab==='skills'" x-cloak>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <template x-for="g in genres" :key="g">
-        <div @click="viewSkill(g)" class="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition text-center">
+        <div @click="viewSkill(g)" class="surface rounded-lg p-4 cursor-pointer hover:shadow-md transition text-center">
           <div class="text-2xl mb-2" x-text="skillIcons[g] || '📚'"></div>
           <div class="font-medium text-sm" x-text="g"></div>
         </div>
       </template>
     </div>
-    <div x-show="genres.length===0" class="text-center text-gray-400 text-sm py-12">技能库为空，请先蒸馏数据</div>
+    <div x-show="genres.length===0" class="text-center text-slate-500 text-sm py-12">技能库为空，请先蒸馏数据</div>
 
     <!-- Skill Modal -->
     <div x-show="skillModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" @click.self="skillModal=null" x-transition>
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6 m-4">
+      <div class="surface rounded-lg w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6 m-4">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-semibold text-lg" x-text="skillGenre"></h3>
-          <button @click="skillModal=null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+          <button @click="skillModal=null" class="text-slate-500 hover:text-slate-300 text-xl">&times;</button>
         </div>
-        <pre class="text-sm text-gray-700 whitespace-pre-wrap font-sans" x-text="skillContent"></pre>
+        <pre class="text-sm text-slate-200 whitespace-pre-wrap font-sans" x-text="skillContent"></pre>
       </div>
     </div>
   </section>
 
   <!-- ====== SCHEDULER TAB ====== -->
   <section x-show="tab==='scheduler'" x-cloak>
-    <div class="bg-white rounded-lg shadow p-6">
+    <div class="surface rounded-lg p-6">
       <div class="flex items-center gap-3 mb-4">
-        <div :class="scheduler.active?'bg-green-500':'bg-gray-300'" class="w-3 h-3 rounded-full"></div>
+        <div :class="scheduler.active?'bg-green-500':'bg-slate-600'" class="w-3 h-3 rounded-full"></div>
         <span class="font-semibold" x-text="scheduler.active?'调度运行中':'调度未启动'"></span>
       </div>
-      <div x-show="scheduler.active" class="text-sm text-gray-500 mb-4">
+      <div x-show="scheduler.active" class="text-sm text-slate-400 mb-4">
         <div>间隔：每 <span x-text="scheduler.interval_minutes"></span> 分钟</div>
         <div>启动时间：<span x-text="scheduler.started_at"></span></div>
       </div>
       <div class="flex gap-3">
         <div x-show="scheduler.active" class="flex gap-3 items-center">
-          <span class="text-sm text-gray-500">间隔(分钟)：</span>
-          <input x-model="schedulerInterval" type="number" min="10" class="w-24 border rounded px-2 py-1 text-sm">
+          <span class="text-sm text-slate-400">间隔(分钟)：</span>
+          <input x-model="schedulerInterval" type="number" min="10" class="form-control w-24 rounded px-2 py-1 text-sm">
         </div>
         <button v-if="!scheduler.active" @click="startScheduler()"
           class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">启动调度</button>
@@ -271,25 +378,317 @@
   <section x-show="tab==='stories'" x-cloak>
     <div class="space-y-4">
       <template x-for="s in stories" :key="s.path">
-        <div class="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition" @click="viewStory(s)">
+        <div class="surface rounded-lg p-4 cursor-pointer hover:shadow-md transition" @click="viewStory(s)">
           <div class="flex justify-between items-start mb-2">
             <h3 class="font-medium text-sm" x-text="s.name"></h3>
-            <span class="text-xs text-gray-400" x-text="s.created_at?.slice(0,10)"></span>
+            <span class="text-xs text-slate-500" x-text="s.created_at?.slice(0,10)"></span>
           </div>
-          <p class="text-sm text-gray-500 line-clamp-2" x-text="s.excerpt"></p>
+          <p class="text-sm text-slate-400 line-clamp-2" x-text="s.excerpt"></p>
         </div>
       </template>
-      <div x-show="stories.length===0" class="text-center text-gray-400 text-sm py-12">暂无作品</div>
+      <div x-show="stories.length===0" class="text-center text-slate-500 text-sm py-12">暂无作品</div>
     </div>
 
     <!-- Story Viewer Modal -->
     <div x-show="storyViewer" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" @click.self="storyViewer=null" x-transition>
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 m-4">
-        <div class="flex justify-between items-center mb-4 sticky top-0 bg-white pb-2 border-b">
+      <div class="surface rounded-lg w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 m-4">
+        <div class="flex justify-between items-center mb-4 sticky top-0 bg-slate-950/95 pb-2 border-b border-slate-800/70">
           <h3 class="font-semibold text-lg" x-text="viewingStory?.name"></h3>
-          <button @click="storyViewer=null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+          <button @click="storyViewer=null" class="text-slate-500 hover:text-slate-300 text-xl">&times;</button>
         </div>
-        <div class="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap font-sans leading-relaxed" x-text="storyContent"></div>
+        <div class="prose prose-sm max-w-none text-slate-200 whitespace-pre-wrap font-sans leading-relaxed" x-text="storyContent"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE MATERIALS TAB ====== -->
+  <section x-show="tab==='workspace_materials'" x-cloak>
+    <div class="surface rounded-lg p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold">素材</h2>
+        <button @click="loadWorkspaceMaterials()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label for="material-title" class="block text-sm text-slate-300 mb-1">标题</label>
+          <input id="material-title" x-model="materialForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label for="material-tags" class="block text-sm text-slate-300 mb-1">标签</label>
+          <input id="material-tags" x-model="materialForm.tagsText" placeholder="悬疑, 反转"
+            class="form-control w-full rounded px-3 py-2 text-sm">
+        </div>
+        <div class="md:col-span-2">
+          <label for="material-excerpt" class="block text-sm text-slate-300 mb-1">摘要</label>
+          <textarea id="material-excerpt" x-model="materialForm.excerpt" rows="3"
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
+        </div>
+        <div class="md:col-span-2">
+          <label for="material-content" class="block text-sm text-slate-300 mb-1">正文</label>
+          <textarea id="material-content" x-model="materialForm.content" rows="6"
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
+        </div>
+      </div>
+      <button @click="createWorkspaceMaterial()"
+        class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">新增素材</button>
+    </div>
+
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h3 class="text-sm font-semibold">素材列表 <span class="text-slate-500 ml-1" x-text="workspaceMaterials.length"></span></h3>
+        <span class="text-xs text-slate-500">已选 <span x-text="cardForm.source_material_ids.length"></span></span>
+      </div>
+      <div x-show="workspaceMaterials.length===0" class="p-8 text-center text-slate-500 text-sm">暂无素材</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspaceMaterials.length>0">
+        <template x-for="m in workspaceMaterials" :key="m.id">
+          <label class="p-4 flex gap-3 hover:bg-slate-800/55 transition cursor-pointer">
+            <input type="checkbox" :value="m.id" x-model="cardForm.source_material_ids"
+              class="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-900/60 text-cyan-300 shrink-0">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-3 mb-1">
+                <h4 class="text-sm font-medium text-slate-100 truncate" x-text="m.title"></h4>
+                <span class="text-xs text-slate-500 shrink-0" x-text="m.status"></span>
+              </div>
+              <p class="text-sm text-slate-400 line-clamp-2" x-text="m.excerpt || m.content"></p>
+              <div class="flex flex-wrap gap-1 mt-2">
+                <template x-for="tag in (m.tags || [])" :key="tag">
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="tag"></span>
+                </template>
+              </div>
+            </div>
+          </label>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE CARDS TAB ====== -->
+  <section x-show="tab==='workspace_cards'" x-cloak>
+    <div class="surface rounded-lg p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold">选题卡</h2>
+        <span class="text-xs text-slate-500">素材数 <span x-text="cardForm.source_material_ids.length"></span></span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label for="card-title" class="block text-sm text-slate-300 mb-1">标题</label>
+          <input id="card-title" x-model="cardForm.title" class="form-control w-full rounded px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label for="card-genre" class="block text-sm text-slate-300 mb-1">流派</label>
+          <input id="card-genre" x-model="cardForm.genre" class="form-control w-full rounded px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label for="card-platform" class="block text-sm text-slate-300 mb-1">平台</label>
+          <select id="card-platform" x-model="cardForm.platform" class="form-control w-full rounded px-3 py-2 text-sm">
+            <option value="zhihu">zhihu</option>
+          </select>
+        </div>
+        <div>
+          <label for="card-target-reader" class="block text-sm text-slate-300 mb-1">目标读者</label>
+          <input id="card-target-reader" x-model="cardForm.target_reader" class="form-control w-full rounded px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label for="card-hook" class="block text-sm text-slate-300 mb-1">钩子</label>
+          <textarea id="card-hook" x-model="cardForm.hook" rows="4"
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
+        </div>
+        <div>
+          <label for="card-angle" class="block text-sm text-slate-300 mb-1">角度</label>
+          <textarea id="card-angle" x-model="cardForm.angle" rows="4"
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
+        </div>
+        <div class="md:col-span-2">
+          <label for="card-risk-notes" class="block text-sm text-slate-300 mb-1">风险备注</label>
+          <textarea id="card-risk-notes" x-model="cardForm.risk_notes" rows="3"
+            class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
+        </div>
+      </div>
+      <button @click="createWorkspaceCard()"
+        class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">创建选题卡</button>
+    </div>
+
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h3 class="text-sm font-semibold">选题列表 <span class="text-slate-500 ml-1" x-text="workspaceCards.length"></span></h3>
+        <button @click="loadWorkspaceCards()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+      </div>
+      <div x-show="workspaceCards.length===0" class="p-8 text-center text-slate-500 text-sm">暂无选题卡</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspaceCards.length>0">
+        <template x-for="card in workspaceCards" :key="card.id">
+          <div class="p-4">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <h4 class="font-medium text-sm text-slate-100 break-words" x-text="card.title"></h4>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="card.status"></span>
+                </div>
+                <div class="text-xs text-slate-500">
+                  <span x-text="card.genre || '未定流派'"></span>
+                  <span class="mx-1">/</span>
+                  <span x-text="card.platform"></span>
+                  <span class="mx-1">/</span>
+                  <span>素材 <span x-text="(card.source_material_ids || []).length"></span></span>
+                </div>
+                <p class="text-sm text-slate-400 mt-2 line-clamp-2" x-text="card.hook || card.angle || card.target_reader"></p>
+              </div>
+              <div class="flex gap-2 shrink-0">
+                <button @click="approveWorkspaceCard(card)" :disabled="card.status==='approved'"
+                  class="px-3 py-1.5 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition">通过</button>
+                <button @click="createTaskFromCard(card)" :disabled="card.status!=='approved'"
+                  class="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">建任务</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE TASKS TAB ====== -->
+  <section x-show="tab==='workspace_tasks'" x-cloak>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h2 class="text-base font-semibold">任务 <span class="text-slate-500 text-sm ml-1" x-text="workspaceTasks.length"></span></h2>
+        <button @click="loadWorkspaceTasks()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+      </div>
+      <div x-show="workspaceTasks.length===0" class="p-8 text-center text-slate-500 text-sm">暂无任务</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspaceTasks.length>0">
+        <template x-for="task in workspaceTasks" :key="task.id">
+          <div class="p-4">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2 mb-1">
+                  <h3 class="font-medium text-sm text-slate-100 break-words" x-text="task.topic"></h3>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="task.status"></span>
+                  <span class="text-xs text-slate-500" x-text="'重试 '+task.retry_count"></span>
+                </div>
+                <div class="text-xs text-slate-500">
+                  <span x-text="task.genre || '未定流派'"></span>
+                  <span class="mx-1">/</span>
+                  <span x-text="task.chapters+' 章'"></span>
+                  <span class="mx-1">/</span>
+                  <span x-text="task.mode"></span>
+                </div>
+                <div x-show="task.error" class="mt-2 text-xs text-red-200 bg-red-950/40 border border-red-500/30 rounded px-3 py-2 break-words">
+                  <span class="font-medium">错误：</span><span x-text="task.error"></span>
+                </div>
+              </div>
+              <div class="flex gap-2 shrink-0">
+                <button @click="retryWorkspaceTask(task)" :disabled="task.status!=='failed'"
+                  class="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">重试</button>
+                <button @click="cancelWorkspaceTask(task)" :disabled="task.status!=='queued'"
+                  class="px-3 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition">取消</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE REVIEW TAB ====== -->
+  <section x-show="tab==='workspace_review'" x-cloak>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="surface rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+          <h2 class="text-base font-semibold">草稿 <span class="text-slate-500 text-sm ml-1" x-text="workspaceDrafts.length"></span></h2>
+          <button @click="loadWorkspaceDrafts()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+        </div>
+        <div x-show="workspaceDrafts.length===0" class="p-8 text-center text-slate-500 text-sm">暂无待审草稿</div>
+        <div class="divide-y divide-slate-800/70" x-show="workspaceDrafts.length>0">
+          <template x-for="draft in workspaceDrafts" :key="draft.id">
+            <button @click="openDraft(draft)" type="button"
+              :class="selectedDraft?.id===draft.id?'bg-cyan-400/10':'hover:bg-slate-800/55'"
+              class="w-full p-4 text-left transition">
+              <div class="flex items-start justify-between gap-2 mb-1">
+                <span class="font-medium text-sm text-slate-100 line-clamp-2" x-text="draft.title"></span>
+                <span class="status-chip px-2 py-0.5 text-xs shrink-0" x-text="draft.status"></span>
+              </div>
+              <p class="text-xs text-slate-500 truncate" x-text="draft.task_id"></p>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <div class="surface rounded-lg p-6 lg:col-span-2">
+        <div x-show="!selectedDraft" class="text-center text-slate-500 text-sm py-16">请选择草稿</div>
+        <div x-show="selectedDraft">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+            <div>
+              <h3 class="text-base font-semibold">编辑草稿</h3>
+              <p class="text-xs text-slate-500 mt-1" x-text="selectedDraft?.task_id"></p>
+            </div>
+            <span class="status-chip px-2 py-0.5 text-xs self-start md:self-auto" x-text="selectedDraft?.status"></span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label for="draft-title" class="block text-sm text-slate-300 mb-1">标题</label>
+              <input id="draft-title" x-model="draftEdit.title" class="form-control w-full rounded px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label for="draft-tags" class="block text-sm text-slate-300 mb-1">标签</label>
+              <input id="draft-tags" x-model="draftEdit.tagsText" class="form-control w-full rounded px-3 py-2 text-sm">
+            </div>
+            <div class="md:col-span-2">
+              <label for="draft-synopsis" class="block text-sm text-slate-300 mb-1">简介</label>
+              <textarea id="draft-synopsis" x-model="draftEdit.synopsis" rows="3"
+                class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
+            </div>
+            <div class="md:col-span-2">
+              <label for="draft-body" class="block text-sm text-slate-300 mb-1">正文</label>
+              <textarea id="draft-body" x-model="draftEdit.body" rows="14"
+                class="form-control w-full rounded px-3 py-2 text-sm resize-y font-sans leading-relaxed"></textarea>
+            </div>
+            <div class="md:col-span-2">
+              <label for="draft-editor-notes" class="block text-sm text-slate-300 mb-1">编辑备注</label>
+              <textarea id="draft-editor-notes" x-model="draftEdit.editor_notes" rows="4"
+                class="form-control w-full rounded px-3 py-2 text-sm resize-y"></textarea>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button @click="saveDraft()"
+              class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">保存</button>
+            <button @click="markDraftReady()"
+              class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">就绪</button>
+            <button @click="generatePackage(selectedDraft.task_id, 'zhihu')"
+              :disabled="selectedDraft?.status !== 'ready_for_package'"
+              class="px-4 py-2 bg-slate-100 text-slate-950 rounded text-sm hover:bg-white disabled:opacity-45 disabled:cursor-not-allowed transition">生成知乎包</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== WORKSPACE PACKAGES TAB ====== -->
+  <section x-show="tab==='workspace_packages'" x-cloak>
+    <div class="surface rounded-lg overflow-hidden">
+      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <h2 class="text-base font-semibold">发布包 <span class="text-slate-500 text-sm ml-1" x-text="workspacePackages.length"></span></h2>
+        <button @click="loadWorkspacePackages()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+      </div>
+      <div x-show="workspacePackages.length===0" class="p-8 text-center text-slate-500 text-sm">暂无发布包</div>
+      <div class="divide-y divide-slate-800/70" x-show="workspacePackages.length>0">
+        <template x-for="pkg in workspacePackages" :key="pkg.id">
+          <div class="p-4">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2 mb-1">
+                  <h3 class="font-medium text-sm text-slate-100 break-words" x-text="pkg.title"></h3>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="pkg.status"></span>
+                  <span class="status-chip px-2 py-0.5 text-xs text-cyan-200" x-text="pkg.platform"></span>
+                </div>
+                <p class="text-sm text-slate-400 line-clamp-2" x-text="pkg.synopsis"></p>
+                <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-slate-500">
+                  <div class="break-words">正文：<span x-text="pkg.content_path"></span></div>
+                  <div class="break-words">元数据：<span x-text="pkg.metadata_path"></span></div>
+                </div>
+              </div>
+              <button @click="confirmPackage(pkg)" :disabled="pkg.status==='confirmed' || pkg.status==='exported'"
+                class="px-3 py-1.5 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition shrink-0">确认</button>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
   </section>
@@ -297,6 +696,81 @@
 </main>
 
 <script>
+function initParticleNetwork() {
+  const canvas = document.getElementById('particleNetwork');
+  if (!canvas) return;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  let width = 0;
+  let height = 0;
+  let particles = [];
+  let animationId = null;
+  const particleCount = 42;
+
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = Math.floor(width * window.devicePixelRatio);
+    canvas.height = Math.floor(height * window.devicePixelRatio);
+    ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+    particles = Array.from({ length: particleCount }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.22,
+      vy: (Math.random() - 0.5) * 0.22,
+      r: 1 + Math.random() * 1.8,
+      a: 0.24 + Math.random() * 0.38,
+    }));
+    draw();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, width, height);
+    for (let i = 0; i < particles.length; i += 1) {
+      const a = particles[i];
+      for (let j = i + 1; j < particles.length; j += 1) {
+        const b = particles[j];
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        if (distance < 128) {
+          ctx.strokeStyle = `rgba(45, 212, 191, ${(1 - distance / 128) * 0.13})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+    }
+    for (const p of particles) {
+      ctx.fillStyle = `rgba(103, 232, 249, ${p.a})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function tick() {
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.x < -10) p.x = width + 10;
+      if (p.x > width + 10) p.x = -10;
+      if (p.y < -10) p.y = height + 10;
+      if (p.y > height + 10) p.y = -10;
+    }
+    draw();
+    animationId = requestAnimationFrame(tick);
+  }
+
+  resize();
+  window.addEventListener('resize', resize);
+  if (!reducedMotion) {
+    animationId = requestAnimationFrame(tick);
+  }
+}
+
 function app() {
   return {
     tab: 'run',
@@ -304,6 +778,16 @@ function app() {
     runs: [],
     selectedRun: null,
     stories: [],
+    workspaceMaterials: [],
+    workspaceCards: [],
+    workspaceTasks: [],
+    workspaceDrafts: [],
+    workspacePackages: [],
+    workspaceError: '',
+    materialForm: { title: '', content: '', excerpt: '', tagsText: '' },
+    cardForm: { title: '', source_material_ids: [], genre: '', platform: 'zhihu', hook: '', angle: '', risk_notes: '', target_reader: '' },
+    selectedDraft: null,
+    draftEdit: { title: '', synopsis: '', tagsText: '', body: '', editor_notes: '' },
     skillIcons: {'悬疑':'🔍','历史':'📜','科幻':'🚀','言情':'💕','职场':'💼','脑洞':'💡','现实':'🏠','武侠':'⚔️'},
     // Run form
     runForm: { topic: '', genre: '', chapters: 1 },
@@ -327,6 +811,7 @@ function app() {
     async init() {
       try { this.genres = await (await fetch('/api/skills/genres')).json(); } catch(e) {}
       this.loadScheduler();
+      initParticleNetwork();
     },
 
     // ---- Run ----
@@ -402,8 +887,177 @@ function app() {
         this.viewingStory = s; this.storyContent = d.content; this.storyViewer = true;
       } catch(e) {}
     },
+
+    // ---- Workspace ----
+    parseWorkspaceTags(text) {
+      return (text || '').split(',').map(t => t.trim()).filter(Boolean);
+    },
+    async workspaceFailure(res) {
+      try {
+        const d = await res.json();
+        return d.detail || res.statusText;
+      } catch(e) {
+        return res.statusText;
+      }
+    },
+    async loadWorkspace() {
+      await Promise.all([
+        this.loadWorkspaceMaterials(),
+        this.loadWorkspaceCards(),
+        this.loadWorkspaceTasks(),
+        this.loadWorkspaceDrafts(),
+        this.loadWorkspacePackages(),
+      ]);
+    },
+    async loadWorkspaceList(url, target, label) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this[target] = await res.json();
+        if (this.workspaceError.startsWith(label)) this.workspaceError = '';
+      } catch(e) {
+        this.workspaceError = label + '加载失败: ' + e.message;
+      }
+    },
+    async loadWorkspaceMaterials() { await this.loadWorkspaceList('/api/workspace/materials', 'workspaceMaterials', '素材'); },
+    async loadWorkspaceCards() { await this.loadWorkspaceList('/api/workspace/topic-cards', 'workspaceCards', '选题卡'); },
+    async loadWorkspaceTasks() { await this.loadWorkspaceList('/api/workspace/tasks', 'workspaceTasks', '任务'); },
+    async loadWorkspaceDrafts() { await this.loadWorkspaceList('/api/workspace/drafts', 'workspaceDrafts', '草稿'); },
+    async loadWorkspacePackages() { await this.loadWorkspaceList('/api/workspace/packages', 'workspacePackages', '发布包'); },
+    async createWorkspaceMaterial() {
+      try {
+        const res = await fetch('/api/workspace/materials/manual', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            title: this.materialForm.title,
+            content: this.materialForm.content,
+            excerpt: this.materialForm.excerpt,
+            tags: this.parseWorkspaceTags(this.materialForm.tagsText),
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this.materialForm = { title: '', content: '', excerpt: '', tagsText: '' };
+        await this.loadWorkspaceMaterials();
+      } catch(e) { alert('素材创建失败: '+e.message); }
+    },
+    async createWorkspaceCard() {
+      try {
+        const res = await fetch('/api/workspace/topic-cards', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            title: this.cardForm.title,
+            source_material_ids: [...this.cardForm.source_material_ids],
+            genre: this.cardForm.genre,
+            platform: this.cardForm.platform,
+            hook: this.cardForm.hook,
+            angle: this.cardForm.angle,
+            risk_notes: this.cardForm.risk_notes,
+            target_reader: this.cardForm.target_reader,
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this.cardForm = { title: '', source_material_ids: [], genre: '', platform: 'zhihu', hook: '', angle: '', risk_notes: '', target_reader: '' };
+        await Promise.all([this.loadWorkspaceCards(), this.loadWorkspaceMaterials()]);
+      } catch(e) { alert('选题卡创建失败: '+e.message); }
+    },
+    async approveWorkspaceCard(card) {
+      try {
+        const res = await fetch('/api/workspace/topic-cards/'+encodeURIComponent(card.id)+'/approve', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceCards();
+      } catch(e) { alert('审核失败: '+e.message); }
+    },
+    async createTaskFromCard(card) {
+      try {
+        const res = await fetch('/api/workspace/topic-cards/'+encodeURIComponent(card.id)+'/create-task', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({chapters: 1, mode: 'full', priority: 0}),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceTasks();
+      } catch(e) { alert('任务创建失败: '+e.message); }
+    },
+    async retryWorkspaceTask(task) {
+      try {
+        const res = await fetch('/api/workspace/tasks/'+encodeURIComponent(task.id)+'/retry', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceTasks();
+      } catch(e) { alert('重试失败: '+e.message); }
+    },
+    async cancelWorkspaceTask(task) {
+      try {
+        const res = await fetch('/api/workspace/tasks/'+encodeURIComponent(task.id)+'/cancel', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceTasks();
+      } catch(e) { alert('取消失败: '+e.message); }
+    },
+    openDraft(draft) {
+      this.selectedDraft = draft;
+      this.draftEdit = {
+        title: draft.title || '',
+        synopsis: draft.synopsis || '',
+        tagsText: (draft.tags || []).join(', '),
+        body: draft.body || '',
+        editor_notes: draft.editor_notes || '',
+      };
+    },
+    async saveDraft() {
+      if (!this.selectedDraft) return;
+      const taskId = this.selectedDraft.task_id;
+      try {
+        const res = await fetch('/api/workspace/drafts/'+encodeURIComponent(taskId), {
+          method: 'PATCH',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            title: this.draftEdit.title,
+            synopsis: this.draftEdit.synopsis,
+            tags: this.parseWorkspaceTags(this.draftEdit.tagsText),
+            body: this.draftEdit.body,
+            editor_notes: this.draftEdit.editor_notes,
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspaceDrafts();
+        const updated = this.workspaceDrafts.find(d => d.task_id === taskId);
+        if (updated) this.openDraft(updated);
+      } catch(e) { alert('草稿保存失败: '+e.message); }
+    },
+    async markDraftReady() {
+      if (!this.selectedDraft) return;
+      const taskId = this.selectedDraft.task_id;
+      try {
+        const res = await fetch('/api/workspace/drafts/'+encodeURIComponent(taskId)+'/ready', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await Promise.all([this.loadWorkspaceDrafts(), this.loadWorkspaceTasks()]);
+        const updated = this.workspaceDrafts.find(d => d.task_id === taskId);
+        if (updated) this.openDraft(updated);
+      } catch(e) { alert('标记失败: '+e.message); }
+    },
+    async generatePackage(taskId, platform='zhihu') {
+      if (!taskId) return;
+      try {
+        const res = await fetch('/api/workspace/packages/generate', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({task_id: taskId, platform: platform}),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspacePackages();
+      } catch(e) { alert('发布包生成失败: '+e.message); }
+    },
+    async confirmPackage(pkg) {
+      try {
+        const res = await fetch('/api/workspace/packages/'+encodeURIComponent(pkg.id)+'/confirm', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadWorkspacePackages();
+      } catch(e) { alert('发布确认失败: '+e.message); }
+    },
   }
 }
 </script>
+</div>
 </body>
 </html>
