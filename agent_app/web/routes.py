@@ -15,11 +15,15 @@ from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
 
-from ..config import APP_ROOT, load_settings
+from ..config import APP_ROOT, Settings, load_settings
+from ..deepagent.runner import CompetitionPaperRunner
+from ..domain.models import RunSpec
+from ..interfaces.web import resolve_paper_input_paths, serialize_run_result
 from ..nature_skills import list_available_skills
 from ..orchestrator import Orchestrator, WorkflowResult
 from ..memory import MemoryManager
 from ..rag import PaperRAG
+from .paper_stream import PaperChatRequest, PaperChatStreamer, build_followup_question
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -28,9 +32,27 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 router = APIRouter()
 DEFAULT_SOLVE_STRATEGY = "agent_loop"
 
-_settings = load_settings()
+
+def _load_settings_for_routes() -> Settings:
+    try:
+        return load_settings()
+    except RuntimeError as exc:
+        if "Missing DEEPSEEK_API_KEY" not in str(exc):
+            raise
+        logger.info("[Web] DEEPSEEK_API_KEY missing; route helpers loaded without orchestrator")
+        return Settings(
+            api_key="",
+            api_base=None,
+            model="deepseek-v4-pro",
+            temperature=0.3,
+            embedding_api_key=None,
+        )
+
+
+_settings = _load_settings_for_routes()
 DATA_DIR = APP_ROOT / "data"
 KNOWLEDGE_DIR = APP_ROOT.parent / "knowledge_base"
+PAPER_INPUT_DIR = DATA_DIR / "paper_inputs"
 
 _rag = PaperRAG(
     knowledge_dir=KNOWLEDGE_DIR,
@@ -46,14 +68,16 @@ if _rag.embedding_api_key and _rag.chunks:
         logger.info("[RAG] Embedding 索引暂不可用: %s", e)
 
 _init_memory = None
-try:
-    from ..memory.redis_backends import _redis_client
-    _redis_client().ping()
-    _init_memory = MemoryManager(use_redis=True)
-except Exception:
-    _init_memory = MemoryManager(use_redis=False)
+_orch = None
+if _settings.api_key:
+    try:
+        from ..memory.redis_backends import _redis_client
+        _redis_client().ping()
+        _init_memory = MemoryManager(use_redis=True)
+    except Exception:
+        _init_memory = MemoryManager(use_redis=False)
 
-_orch = Orchestrator(_settings, rag=_rag, memory_manager=_init_memory)
+    _orch = Orchestrator(_settings, rag=_rag, memory_manager=_init_memory)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -76,6 +100,46 @@ async def solve(data: dict):
     task_id = uuid.uuid4().hex[:12]
 
     asyncio.create_task(_run_solve(task_id, question, strategy, top_k))
+    return {"task_id": task_id, "status": "started"}
+
+
+@router.post("/api/paper/run")
+async def create_paper_run(data: dict):
+    question = data.get("question", "").strip()
+    if not question:
+        return JSONResponse({"error": "问题不能为空"}, status_code=400)
+    try:
+        data_files = resolve_paper_input_paths(data.get("data_files", []), PAPER_INPUT_DIR)
+        reference_files = resolve_paper_input_paths(data.get("reference_files", []), PAPER_INPUT_DIR)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    runner = CompetitionPaperRunner.from_settings(_settings)
+    result = await asyncio.to_thread(
+        runner.run,
+        RunSpec(question=question, data_files=data_files, reference_files=reference_files),
+    )
+    return serialize_run_result(result)
+
+
+@router.post("/api/paper/chat/start")
+async def start_paper_chat(data: dict):
+    question = data.get("question", "").strip()
+    if not question:
+        return JSONResponse({"error": "问题不能为空"}, status_code=400)
+    try:
+        data_files = resolve_paper_input_paths(data.get("data_files", []), PAPER_INPUT_DIR)
+        reference_files = resolve_paper_input_paths(data.get("reference_files", []), PAPER_INPUT_DIR)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    task_id = uuid.uuid4().hex[:12]
+    async with _paper_tasks_lock:
+        _paper_tasks[task_id] = PaperChatRequest(
+            question=question,
+            data_files=data_files,
+            reference_files=reference_files,
+            messages=data.get("messages", []),
+        )
     return {"task_id": task_id, "status": "started"}
 
 
@@ -104,6 +168,8 @@ async def _run_solve(task_id: str, question: str, strategy: str, top_k: int):
 
     try:
         await ws.send_json({"type": "start", "task_id": task_id, "strategy": strategy})
+        if _orch is None:
+            raise RuntimeError("Missing DEEPSEEK_API_KEY in .env")
         solver = _select_solver_for_strategy(_orch, strategy)
 
         if strategy == "review":
@@ -174,6 +240,8 @@ def _sync_send_token(ws, agent: str, token: str, progress_start: float, progress
 _token_queue: list = []
 _active_tasks: dict[str, WebSocket] = {}
 _active_tasks_lock = Lock()
+_paper_tasks: dict[str, PaperChatRequest] = {}
+_paper_tasks_lock = Lock()
 SOLVE_TASK_TIMEOUT = 600  # 10-minute global timeout per task
 
 
@@ -209,18 +277,61 @@ async def ws_solve(websocket: WebSocket, task_id: str):
             _active_tasks.pop(task_id, None)
 
 
+@router.websocket("/ws/paper/{task_id}")
+async def ws_paper(websocket: WebSocket, task_id: str):
+    await websocket.accept()
+    async with _paper_tasks_lock:
+        request = _paper_tasks.pop(task_id, None)
+    if request is None:
+        await websocket.send_json({"type": "error", "message": "任务不存在或已过期"})
+        await websocket.close()
+        return
+
+    loop = asyncio.get_running_loop()
+
+    def emit(event: dict):
+        asyncio.run_coroutine_threadsafe(websocket.send_json(event), loop)
+
+    spec = RunSpec(
+        question=build_followup_question(request),
+        data_files=request.data_files,
+        reference_files=request.reference_files,
+    )
+    try:
+        streamer = PaperChatStreamer(output_root=APP_ROOT / "output" / "runs", settings=_settings)
+        await asyncio.wait_for(asyncio.to_thread(streamer.run, spec, emit), timeout=SOLVE_TASK_TIMEOUT)
+    except asyncio.TimeoutError:
+        await websocket.send_json({"type": "error", "message": f"任务超时（{SOLVE_TASK_TIMEOUT}s），请简化问题"})
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        logger.exception("Paper chat stream failed")
+        await websocket.send_json({"type": "error", "message": str(exc)})
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "rag_ready": _rag.is_ready, "active_tasks": len(_active_tasks)}
+    return {
+        "status": "ok",
+        "rag_ready": _rag.is_ready,
+        "active_tasks": len(_active_tasks),
+        "paper_tasks": len(_paper_tasks),
+    }
 
 
 @router.get("/api/status")
 async def status():
-    mem_stats = _orch.memory.stats() if _orch.memory else {}
+    mem_stats = _orch.memory.stats() if _orch and _orch.memory else {}
     return {
         "rag_ready": _rag.is_ready,
         "rag_chunks": len(_rag.chunks),
         "active_tasks": len(_active_tasks),
+        "paper_tasks": len(_paper_tasks),
         "memory": mem_stats,
     }
 

@@ -9,8 +9,8 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from .config import APP_ROOT
-from .literature import fetch_paper_to_kb, search_arxiv, search_crossref, search_semantic_scholar
+from ..config import APP_ROOT
+from ..literature import fetch_paper_to_kb, search_arxiv, search_crossref, search_semantic_scholar
 
 NOTES_DIR = APP_ROOT / "notes"
 OUTPUT_DIR = APP_ROOT / "output"
@@ -142,10 +142,10 @@ def python_exec(code: str) -> str:
     verify a code snippet. Prints to stdout/stderr are captured.
 
     Safety: Docker container isolation (--network=none, --memory=512m,
-    --read-only, non-root user) when Docker available. Falls back to
-    subprocess with safety preamble (memory limit + blocked builtins).
+    --read-only, non-root user). Unsafe host fallback is disabled by
+    default and is only for explicitly trusted development contexts.
     """
-    from .sandbox import safe_execute
+    from ..sandbox import safe_execute
 
     result = safe_execute(code, timeout=PYTHON_TIMEOUT)
 
@@ -364,7 +364,7 @@ def nature_viz_template(template_name: str) -> str:
 
     Example: nature_viz_template('standard_line')
     """
-    from .nature_skills import get_viz_template
+    from ..nature_skills import get_viz_template
 
     mapping = {
         "standard_line": "01_standard_line_plot",
@@ -390,7 +390,7 @@ def model_reference() -> str:
     Covers optimization, prediction, evaluation, dynamic systems, and graph/network models.
     Use when unsure which model type to apply to a problem.
     """
-    from .nature_skills import get_model_reference
+    from ..nature_skills import get_model_reference
 
     return get_model_reference()[:4000]
 
@@ -401,15 +401,15 @@ def writing_rules() -> str:
     abstract requirements, formatting, and citation format.
     Use when writing or revising competition papers.
     """
-    from .nature_skills import get_writing_rules
+    from ..nature_skills import get_writing_rules
 
     return get_writing_rules()[:4000]
 
 
 # ===================== tool list =====================
 
-from .exploration import EXPLORATION_TOOLS, write_file  # noqa: E402
-from .subagent import spawn_subagent  # noqa: E402
+from ..exploration import EXPLORATION_TOOLS, write_file  # noqa: E402
+from ..subagent import spawn_subagent  # noqa: E402
 
 TOOLS = [
     calculator,

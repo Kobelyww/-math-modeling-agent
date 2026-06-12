@@ -23,6 +23,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from .base import normalize_llm_content
 from .config import APP_ROOT, load_settings
+from .deepagent.runner import CompetitionPaperRunner
+from .interfaces.cli import AttachmentBuffer, build_run_spec
 from .llm import create_llm
 from .memory import MemoryManager
 from .orchestrator import Orchestrator
@@ -94,6 +96,8 @@ ORCHESTRATOR_HELP = f"""
 
 命令：
   /mode <模式名>  - 切换工作流模式（默认 agent_loop）
+  /attach <路径>  - 添加竞赛论文输入附件
+  /paper <问题>   - 使用 DeepAgent 竞赛论文生成器运行
   /plan <问题>    - 仅生成求解计划，不执行
   /solve <问题>   - 启动多智能体协作分析
   /stream         - 流式输出模式（实时 token 级输出）
@@ -143,6 +147,7 @@ class CLI:
 
         self.orchestrator = Orchestrator(self.settings, rag=self.rag, memory_manager=self.memory_manager)
         self.mode: str = DEFAULT_ORCHESTRATOR_MODE
+        self.paper_attachments = AttachmentBuffer()
 
         # 设置默认流式回调 — 所有模式自动流式输出 + 思考内容
         self._current_role: str = ""
@@ -241,8 +246,11 @@ class CLI:
             print(f"未知模式: {self.mode}")
             return
 
-        # Persist all outputs to disk
-        self.orchestrator._save_outputs(result)
+        # Persist outputs when running with the real orchestrator. Some tests
+        # provide a small fake that only implements the selected solve method.
+        save_outputs = getattr(self.orchestrator, "_save_outputs", None)
+        if save_outputs is not None:
+            save_outputs(result)
         self._print_result(result)
 
     def solve_stream(self, question: str) -> None:
@@ -354,6 +362,25 @@ class CLI:
                 continue
             if raw.lower() == "/help":
                 print(ORCHESTRATOR_HELP)
+                continue
+            if raw.startswith("/attach "):
+                path = raw[len("/attach "):].strip()
+                self.paper_attachments.attach(Path(path))
+                print(f"[paper] 已添加附件: {path}")
+                continue
+            if raw == "/paper":
+                print("请提供问题，例如：/paper 建立交通流优化模型")
+                continue
+            if raw.startswith("/paper "):
+                question = raw[len("/paper "):].strip()
+                if not question:
+                    print("请提供问题，例如：/paper 建立交通流优化模型")
+                    continue
+                spec = build_run_spec(question, self.paper_attachments)
+                runner = CompetitionPaperRunner.from_settings(self.settings)
+                result = runner.run(spec)
+                print(f"[paper] run_id={result.run_id} status={result.status.value}")
+                print(result.summary)
                 continue
             if raw.lower().startswith("/mode"):
                 parts = raw.split(maxsplit=1)

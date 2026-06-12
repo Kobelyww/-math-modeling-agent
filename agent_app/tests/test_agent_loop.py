@@ -300,18 +300,19 @@ def test_gui_default_mode_is_agent_loop():
     assert COLLABORATION_MODES[0] == "agent_loop"
 
 
-def test_web_template_defaults_to_agent_loop_console():
+def test_web_template_defaults_to_paper_chat_console():
     from pathlib import Path
 
     html = Path("agent_app/web/templates/index.html").read_text(encoding="utf-8")
 
-    assert '<option value="agent_loop" selected>' in html
-    assert 'class="console-shell"' in html
-    assert 'id="loop-timeline"' in html
+    assert "数模 DeepAgent 论文生产系统" in html
+    assert 'id="btn-paper"' in html
+    assert 'id="chat-log"' in html
+    assert 'id="followup-input"' in html
     assert 'id="artifact-rail"' in html
 
 
-def test_web_assets_define_console_regions():
+def test_web_assets_define_paper_chat_regions():
     from pathlib import Path
 
     css = Path("agent_app/web/static/style.css").read_text(encoding="utf-8")
@@ -319,11 +320,12 @@ def test_web_assets_define_console_regions():
 
     assert ".console-shell" in css
     assert ".control-rail" in css
-    assert ".loop-workspace" in css
+    assert ".chat-workspace" in css
+    assert ".chat-log" in css
     assert ".artifact-rail" in css
-    assert "const ROLE_META" in js
-    assert "function appendTimelineEvent" in js
-    assert "function updateArtifactState" in js
+    assert "const STAGE_LABELS" in js
+    assert "function startPaperRun" in js
+    assert "function handlePaperEvent" in js
 
 
 def test_streamlit_agent_loop_trace_rows_are_stable():

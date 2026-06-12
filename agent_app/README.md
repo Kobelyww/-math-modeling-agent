@@ -1,6 +1,32 @@
-# 数模多智能体协作系统
+# 数模 DeepAgent 论文生产系统
 
-基于 DeepSeek 大模型的数学建模竞赛多 Agent 协作框架，提供从**问题分析 → 模型建立 → 算法实现 → 论文写作 → 评审反思**的全流程自动化支持。
+本项目使用 DeepAgent 构建数学建模竞赛论文生产工作流，支持赛题文本、数据文件和参考文献/PDF 输入，输出 run 级可追踪竞赛提交包。
+
+## 快速开始
+
+```bash
+python -m agent_app.cli
+```
+
+```text
+/attach data/traffic.csv
+/attach references/modeling-paper.pdf
+/paper 根据交通流量数据建立预测模型，并完成竞赛论文提交包
+```
+
+输出目录：
+
+```text
+agent_app/output/runs/<run_id>/
+```
+
+## Legacy commands
+
+`/solve` remains available during migration for the legacy multi-agent flow. New competition-paper work should use `/paper`.
+
+## Legacy Flow
+
+The old `/solve` commands and `Orchestrator` remain available during migration, but new development should use `CompetitionPaperRunner` and `/paper`. The old multi-strategy orchestrator is a compatibility path, not the primary architecture.
 
 ## 功能概览
 
@@ -21,14 +47,14 @@
 
 ```
 agent_app/
-├── __init__.py              # 包入口，导出 Settings / Orchestrator / WorkflowResult
+├── __init__.py              # 包入口，导出 Settings / CompetitionPaperRunner / RunSpec / RunResult
 ├── config.py                # 配置管理（.env / Agent 个性化温度配置）
 ├── llm.py                   # LLM 工厂（ChatDeepSeek）
 ├── base.py                  # Agent 基类（invoke / stream / 重试 / 错误分类）
 ├── agents.py                # 7 个专业 Agent + 工厂函数
 ├── orchestrator.py          # 编排器（4 策略 + 6 终止条件 + 检查点 + 费用估算）
 ├── conditions.py            # 6 种可组合终止条件（Token/超时/轮次/质量/外部）
-├── tools.py                 # 工具集（18 个工具）
+├── tools/                   # 工具包（18 个工具）
 ├── rag.py                   # 论文知识库（TF-IDF + Embedding 混合检索）
 ├── literature.py            # 学术文献检索（arXiv / Semantic Scholar / Crossref）
 ├── cli.py                   # 命令行入口
@@ -81,9 +107,9 @@ echo 'DEEPSEEK_API_BASE=https://api.deepseek.com' >> .env
 # Ubuntu: sudo apt install texlive-full
 ```
 
-## 快速开始
+## 其他入口
 
-### 图形界面（推荐）
+### 图形界面
 
 ```bash
 streamlit run agent_app/gui.py
@@ -97,50 +123,38 @@ python agent_app/gui.py
 python -m agent_app.cli
 ```
 
-进入后可使用命令：
+进入后可使用 DeepAgent 论文工作流命令：
 
 | 命令 | 说明 |
 |------|------|
-| `/solve <问题>` | 启动多智能体协作分析 |
+| `/attach <路径>` | 添加数据文件、参考文献或 PDF |
+| `/paper <赛题>` | 生成 run 级竞赛论文提交包 |
+| `/help` | 显示帮助 |
+| `/exit` | 退出 |
+
+兼容命令：
+
+| 命令 | 说明 |
+|------|------|
+| `/solve <问题>` | 启动旧多智能体协作分析 |
 | `/mode <模式>` | 切换策略：`agent_loop` / `plan` / `explore` / `sequential` / `review` / `parallel` |
 | `/stream` | 流式输出模式 |
 | `/chat` | 切换到单智能体对话 |
-| `/help` | 显示帮助 |
-| `/exit` | 退出 |
 
 ### 编程调用
 
 ```python
-from agent_app import load_settings, Orchestrator
-from agent_app.rag import PaperRAG
+from agent_app import CompetitionPaperRunner, RunSpec, load_settings
 
 settings = load_settings()
-rag = PaperRAG(knowledge_dir="knowledge_base", index_path="data/rag_index.pkl")
-rag.load_index()
-
-orch = Orchestrator(settings, rag=rag)
-
-# 默认 Agent Loop：动态决定下一步，而不是固定流水线
-result = orch.solve_agent_loop("建立交通流优化模型")
-
-# 串行模式
-result = orch.solve_sequential("建立交通流优化模型")
-
-# 评审反射模式
-result = orch.solve_with_review("建立交通流优化模型", max_review_rounds=2)
-
-# 流式模式（实时输出每个 token）
-result = orch.solve_stream(
-    "建立交通流优化模型",
-    on_modeling_token=lambda t: print(t, end=""),
-    on_programming_token=lambda t: print(t, end=""),
-    on_writing_token=lambda t: print(t, end=""),
-    on_synthesis_token=lambda t: print(t, end=""),
-)
-
-# 查看结果
-print(result.format_overview())
+runner = CompetitionPaperRunner.from_settings(settings)
+result = runner.run(RunSpec(question="建立交通流优化模型"))
+print(result.run_id, result.status.value)
 ```
+
+#### Legacy Orchestrator compatibility
+
+`Orchestrator` is still available for the old `/solve` multi-strategy flow during migration, but new programmatic integrations should use `CompetitionPaperRunner` and `RunSpec`.
 
 ## 配置说明
 
