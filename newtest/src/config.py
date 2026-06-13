@@ -51,10 +51,10 @@ class MemoryConfig:
 @dataclass
 class AppConfig:
     """应用配置"""
-    llm: LLMConfig = None
-    parser: ParserConfig = None
-    rag: RAGConfig = None
-    memory: MemoryConfig = None
+    llm: Optional[LLMConfig] = None
+    parser: Optional[ParserConfig] = None
+    rag: Optional[RAGConfig] = None
+    memory: Optional[MemoryConfig] = None
     
     def __post_init__(self):
         if self.llm is None:
@@ -70,16 +70,32 @@ def load_config() -> AppConfig:
     """从环境变量加载配置"""
     return AppConfig(
         llm=LLMConfig(
+            primary_model=os.getenv("LLM_PRIMARY_MODEL", "mimo-v2.5"),
+            multimodal_model=os.getenv("LLM_MULTIMODAL_MODEL", "mimo-v2.5"),
+            embedding_model=os.getenv("LLM_EMBEDDING_MODEL", "mimo-v2.5-embedding"),
             api_key=os.getenv("MIMO_API_KEY", ""),
             api_base=os.getenv("MIMO_API_BASE", "https://api.mimo.example.com"),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
+            max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
         ),
         parser=ParserConfig(
             marker_model_path=os.getenv("MARKER_MODEL_PATH", "marker-model"),
+            use_local_marker=os.getenv("PARSER_USE_LOCAL_MARKER", "true").lower() == "true",
+            enable_ocr=os.getenv("PARSER_ENABLE_OCR", "true").lower() == "true",
+            max_file_size_mb=int(os.getenv("PARSER_MAX_FILE_SIZE_MB", "100")),
         ),
         rag=RAGConfig(
+            vector_db_type=os.getenv("RAG_VECTOR_DB_TYPE", "chromadb"),
             vector_db_path=os.getenv("VECTOR_DB_PATH", "./data/vector_db"),
+            embedding_dim=int(os.getenv("RAG_EMBEDDING_DIM", "768")),
+            chunk_size=int(os.getenv("RAG_CHUNK_SIZE", "1000")),
+            chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "200")),
+            top_k=int(os.getenv("RAG_TOP_K", "5")),
         ),
         memory=MemoryConfig(
+            stm_max_tokens=int(os.getenv("MEMORY_STM_MAX_TOKENS", "50000")),
+            recent_window_size=int(os.getenv("MEMORY_RECENT_WINDOW_SIZE", "5")),
+            compress_trigger=int(os.getenv("MEMORY_COMPRESS_TRIGGER", "30000")),
             ltm_db_path=os.getenv("LTM_DB_PATH", "./data/long_term_memory.db"),
         ),
     )
