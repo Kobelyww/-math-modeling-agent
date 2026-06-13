@@ -1,5 +1,8 @@
 import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
 from src.agents.base_agent import BaseAgent, AgentResult, AgentStatus
+from src.agents.document_parsing import DocumentParsingAgent
+from src.parsers.marker_pdf import StructuredDocument, Section, Table
 
 
 class MockAgent(BaseAgent):
@@ -140,3 +143,91 @@ def test_reset():
     
     assert agent.status == AgentStatus.IDLE
     assert agent.retry_count == 0
+
+
+# ---- DocumentParsingAgent tests ----
+
+def test_document_parsing_agent_initialization():
+    """测试DocumentParsingAgent初始化"""
+    agent = DocumentParsingAgent()
+    assert agent.role == "文档解析专家"
+    assert agent.parser is not None
+    assert agent.status == AgentStatus.IDLE
+
+
+@pytest.mark.asyncio
+async def test_document_parsing_agent_missing_pdf_path():
+    """测试缺少pdf_path参数"""
+    agent = DocumentParsingAgent()
+    result = await agent.invoke({})
+    assert result.success is False
+    assert "缺少参数" in result.message
+
+
+@pytest.mark.asyncio
+async def test_document_parsing_agent_file_not_found():
+    """测试PDF文件不存在"""
+    agent = DocumentParsingAgent()
+    result = await agent.invoke({"pdf_path": "/nonexistent/file.pdf"})
+    assert result.success is False
+    assert "不存在" in result.message
+
+
+@pytest.mark.asyncio
+async def test_document_parsing_agent_file_too_large(tmp_path):
+    """测试文件大小超过限制"""
+    from src.config import ParserConfig
+
+    config = ParserConfig(max_file_size_mb=0)
+    agent = DocumentParsingAgent(config=config)
+
+    pdf_file = tmp_path / "big.pdf"
+    pdf_file.write_bytes(b"x" * 1024)
+
+    result = await agent.invoke({"pdf_path": str(pdf_file)})
+    assert result.success is False
+    assert "超过限制" in result.message
+
+
+@pytest.mark.asyncio
+async def test_document_parsing_agent_parse_success(tmp_path):
+    """测试成功解析PDF"""
+    pdf_file = tmp_path / "test.pdf"
+    pdf_file.write_bytes(b"fake pdf content")
+
+    agent = DocumentParsingAgent()
+
+    mock_doc = StructuredDocument(
+        title="测试文档",
+        sections=[Section(level=1, title="第一章")],
+        tables=[Table(headers=["A", "B"], rows=[["1", "2"]])],
+    )
+
+    with patch.object(agent.parser, "parse", new_callable=AsyncMock, return_value=mock_doc):
+        result = await agent.invoke({"pdf_path": str(pdf_file)})
+
+    assert result.success is True
+    assert result.data["title"] == "测试文档"
+    assert result.data["section_count"] == 1
+    assert result.data["table_count"] == 1
+    assert result.data["figure_count"] == 0
+    assert result.data["formula_count"] == 0
+    assert isinstance(result.data["document"], StructuredDocument)
+
+
+@pytest.mark.asyncio
+async def test_document_parsing_agent_parse_error(tmp_path):
+    """测试解析过程抛出异常时的重试和失败处理"""
+    pdf_file = tmp_path / "bad.pdf"
+    pdf_file.write_bytes(b"bad pdf")
+
+    agent = DocumentParsingAgent()
+
+    with patch.object(
+        agent.parser, "parse", new_callable=AsyncMock, side_effect=RuntimeError("解析失败")
+    ):
+        result = await agent.invoke({"pdf_path": str(pdf_file)})
+
+    assert result.success is False
+    assert "处理失败" in result.message
+    assert agent.status == AgentStatus.FAILED
