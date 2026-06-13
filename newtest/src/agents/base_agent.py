@@ -17,10 +17,6 @@ class AgentResult:
     data: Dict[str, Any] = field(default_factory=dict)
     message: str = ""
     status: AgentStatus = AgentStatus.COMPLETED
-    
-    @property
-    def is_success(self) -> bool:
-        return self.success
 
 class BaseAgent(ABC):
     """基础智能体类"""
@@ -41,19 +37,30 @@ class BaseAgent(ABC):
     async def invoke(self, input_data: Any) -> AgentResult:
         """调用智能体处理"""
         self.status = AgentStatus.PROCESSING
+        self.retry_count = 0
         
-        try:
-            result = await self.process(input_data)
-            self.status = AgentStatus.COMPLETED
-            return result
-        except Exception as e:
-            self.status = AgentStatus.FAILED
-            return AgentResult(
-                success=False,
-                data={},
-                message=f"处理失败: {str(e)}",
-                status=AgentStatus.FAILED
-            )
+        while self.retry_count <= self.max_retries:
+            try:
+                result = await self.process(input_data)
+                self.status = AgentStatus.COMPLETED
+                return result
+            except Exception as e:
+                self.retry_count += 1
+                if self.retry_count > self.max_retries:
+                    self.status = AgentStatus.FAILED
+                    return AgentResult(
+                        success=False,
+                        data={},
+                        message=f"处理失败 (重试{self.max_retries}次后): {str(e)}",
+                        status=AgentStatus.FAILED
+                    )
+        
+        return AgentResult(
+            success=False,
+            data={},
+            message="未知错误",
+            status=AgentStatus.FAILED
+        )
     
     def reset(self):
         """重置智能体状态"""

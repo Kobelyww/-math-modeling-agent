@@ -51,3 +51,6 @@ line_length = 100
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
