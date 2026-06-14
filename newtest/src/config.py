@@ -1,6 +1,42 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List
+from enum import Enum
 import os
+
+class TaskCategory(Enum):
+    """任务类别"""
+    # MiMo V2.5 擅长的任务（多模态、视觉理解）
+    MULTIMODAL = "multimodal"  # 图像理解、图表识别
+    OCR = "ocr"  # 文字识别
+    TABLE_UNDERSTANDING = "table_understanding"  # 表格理解
+    FORMULA_RECOGNITION = "formula_recognition"  # 公式识别
+    IMAGE_DESCRIPTION = "image_description"  # 图像描述
+    
+    # DeepSeek V4 擅长的任务（推理、代码、长文本）
+    REASONING = "reasoning"  # 逻辑推理
+    MATH_REASONING = "math_reasoning"  # 数学推理
+    CODE_GENERATION = "code_generation"  # 代码生成
+    CODE_DEBUG = "code_debug"  # 代码调试
+    LONG_TEXT = "long_text"  # 长文本处理
+    SUMMARIZATION = "summarization"  # 文本摘要
+    ANALYSIS = "analysis"  # 文本分析
+    
+    # 通用任务
+    QA = "qa"  # 问答
+    TRANSLATION = "translation"  # 翻译
+    CREATIVE = "creative"  # 创意写作
+    EXTRACTION = "extraction"  # 信息提取
+
+@dataclass
+class ModelProfile:
+    """模型配置文件"""
+    name: str
+    api_base: str
+    api_key: str
+    temperature: float = 0.3
+    max_tokens: int = 4096
+    supports_multimodal: bool = False
+    strengths: List[str] = field(default_factory=list)
 
 @dataclass
 class LLMConfig:
@@ -16,28 +52,115 @@ class LLMConfig:
     temperature: float = 0.3
     max_retries: int = 3
     
+    # 模型配置文件
+    model_profiles: Dict[str, ModelProfile] = field(default_factory=dict)
+    
+    # 任务到模型的映射
+    task_model_mapping: Dict[TaskCategory, str] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """初始化模型配置"""
+        if not self.model_profiles:
+            self.model_profiles = {
+                "mimo-v2.5": ModelProfile(
+                    name="mimo-v2.5",
+                    api_base=self.api_base,
+                    api_key=self.api_key,
+                    supports_multimodal=True,
+                    strengths=["multimodal", "ocr", "table", "formula", "image"]
+                ),
+                "deepseek-v4": ModelProfile(
+                    name="deepseek-v4",
+                    api_base=self.deepseek_api_base,
+                    api_key=self.deepseek_api_key,
+                    supports_multimodal=False,
+                    strengths=["reasoning", "math", "code", "long_text", "analysis"]
+                ),
+            }
+        
+        if not self.task_model_mapping:
+            self.task_model_mapping = {
+                # MiMo V2.5 擅长的多模态任务
+                TaskCategory.MULTIMODAL: "mimo-v2.5",
+                TaskCategory.OCR: "mimo-v2.5",
+                TaskCategory.TABLE_UNDERSTANDING: "mimo-v2.5",
+                TaskCategory.FORMULA_RECOGNITION: "mimo-v2.5",
+                TaskCategory.IMAGE_DESCRIPTION: "mimo-v2.5",
+                
+                # DeepSeek V4 擅长的推理任务
+                TaskCategory.REASONING: "deepseek-v4",
+                TaskCategory.MATH_REASONING: "deepseek-v4",
+                TaskCategory.CODE_GENERATION: "deepseek-v4",
+                TaskCategory.CODE_DEBUG: "deepseek-v4",
+                TaskCategory.LONG_TEXT: "deepseek-v4",
+                TaskCategory.SUMMARIZATION: "deepseek-v4",
+                TaskCategory.ANALYSIS: "deepseek-v4",
+                
+                # 通用任务使用 DeepSeek V4（成本更低）
+                TaskCategory.QA: "deepseek-v4",
+                TaskCategory.TRANSLATION: "deepseek-v4",
+                TaskCategory.CREATIVE: "mimo-v2.5",
+                TaskCategory.EXTRACTION: "deepseek-v4",
+            }
+    
     def get_model_for_task(self, task_type: str) -> str:
         """根据任务类型获取合适的模型"""
-        if task_type in ["multimodal", "image_understanding", "ocr"]:
+        # 尝试匹配任务类别
+        try:
+            category = TaskCategory(task_type)
+            return self.task_model_mapping.get(category, self.primary_model)
+        except ValueError:
+            pass
+        
+        # 关键词匹配
+        task_lower = task_type.lower()
+        
+        # 多模态相关任务 -> MiMo V2.5
+        multimodal_keywords = ["image", "picture", "photo", "chart", "graph", "table", 
+                              "formula", "equation", "ocr", "visual", "diagram"]
+        if any(kw in task_lower for kw in multimodal_keywords):
             return self.multimodal_model
-        elif task_type == "embedding":
-            return self.embedding_model
-        elif task_type == "deepseek":
+        
+        # 推理/代码相关任务 -> DeepSeek V4
+        reasoning_keywords = ["reason", "logic", "math", "calculate", "code", "program",
+                             "debug", "analyze", "analyze", "summarize", "long"]
+        if any(kw in task_lower for kw in reasoning_keywords):
             return self.deepseek_model
-        else:
-            return self.primary_model
+        
+        # 默认使用主模型
+        return self.primary_model
+    
+    def get_model_config(self, model_name: str) -> ModelProfile:
+        """获取模型配置"""
+        return self.model_profiles.get(model_name, self.model_profiles[self.primary_model])
     
     def get_api_base_for_model(self, model: str) -> str:
         """根据模型获取API地址"""
+        profile = self.model_profiles.get(model)
+        if profile:
+            return profile.api_base
         if model == self.deepseek_model:
             return self.deepseek_api_base
         return self.api_base
     
     def get_api_key_for_model(self, model: str) -> str:
         """根据模型获取API密钥"""
+        profile = self.model_profiles.get(model)
+        if profile:
+            return profile.api_key
         if model == self.deepseek_model:
             return self.deepseek_api_key
         return self.api_key
+    
+    def should_use_multimodal(self, task_description: str) -> bool:
+        """判断是否应该使用多模态模型"""
+        multimodal_indicators = [
+            "图片", "图像", "图表", "表格", "公式", "照片", "扫描",
+            "image", "picture", "chart", "graph", "table", "formula",
+            "photo", "scan", "ocr", "visual", "diagram", "figure"
+        ]
+        task_lower = task_description.lower()
+        return any(indicator in task_lower for indicator in multimodal_indicators)
 
 @dataclass
 class ParserConfig:
