@@ -1297,10 +1297,23 @@ gh pr create --title "evolve: <target>" --body "<metrics, diff, comparison>"
 ## 5. 技术选型
 
 ### 5.1 核心依赖
-- **基座大模型**：MiMo V2.5（主要LLM，支持多模态）
-- **对话模型**：DeepSeek V4（对话和推理）
-- **多模态模型**：MiMo V2.5（用于图表理解、OCR等多模态任务）
-- **Embedding模型**：MiMo V2.5-Embedding（向量化）
+- **基座大模型**：MiMo V2.5（多模态能力：图像、表格、公式识别）
+- **对话模型**：DeepSeek V4（推理能力：逻辑推理、数学推理、代码生成）
+- **Embedding模型**：阿里云百练 text-embedding-v2（向量化，Dim=1536）
+- **智能模型路由器**：根据任务特点自动选择最优模型
+
+**模型路由策略**：
+| 任务类型 | 推荐模型 | 原因 |
+|----------|----------|------|
+| 图像/图表理解 | MiMo V2.5 | 多模态能力强 |
+| 表格解析 | MiMo V2.5 | 视觉理解能力 |
+| 公式识别 | MiMo V2.5 | 数学符号识别 |
+| OCR文字识别 | MiMo V2.5 | 图像识别能力 |
+| 逻辑推理 | DeepSeek V4 | 推理能力强 |
+| 数学计算 | DeepSeek V4 | 数学推理能力 |
+| 代码生成 | DeepSeek V4 | 代码能力强 |
+| 长文本处理 | DeepSeek V4 | 长上下文支持 |
+| 文本摘要 | DeepSeek V4 | 成本低、效果好 |
 - **向量数据库**：ChromaDB或FAISS
 - **文档处理**：
   - Marker（PDF解析，基于深度学习）
@@ -1316,22 +1329,21 @@ gh pr create --title "evolve: <target>" --body "<metrics, diff, comparison>"
 ```python
 class LLMConfig:
     def __init__(self):
-        self.primary_model = "mimo-v2.5"  # 主要LLM
+        self.primary_model = "mimo-v2.5"  # 主要LLM（多模态）
+        self.deepseek_model = "deepseek-v4"  # 对话模型（推理）
         self.multimodal_model = "mimo-v2.5"  # 多模态模型（图表、OCR）
-        self.embedding_model = "mimo-v2.5-embedding"  # 嵌入模型
-        self.api_base = "https://api.mimo.example.com"  # API地址
-        self.api_key = ""  # API密钥
+        self.api_base = "https://api.mimo.example.com"  # MiMo API地址
+        self.deepseek_api_base = "https://api.deepseek.com"  # DeepSeek API地址
+        self.api_key = ""  # MiMo API密钥
+        self.deepseek_api_key = ""  # DeepSeek API密钥
         self.temperature = 0.3  # 默认温度
         self.max_retries = 3  # 重试次数
     
     def get_model_for_task(self, task_type: str) -> str:
         """根据任务类型获取合适的模型"""
-        if task_type in ["multimodal", "image_understanding", "ocr"]:
-            return self.multimodal_model
-        elif task_type == "embedding":
-            return self.embedding_model
-        else:
-            return self.primary_model
+        # MiMo V2.5 擅长：多模态、图像、表格、公式、OCR
+        # DeepSeek V4 擅长：推理、代码、数学、长文本、摘要
+        ...
 ```
 
 **多模态任务处理**：
@@ -1352,6 +1364,44 @@ class MultimodalHandler:
     async def process_formula_image(self, image_path: str) -> LaTeXFormula:
         """处理公式图像，识别LaTeX公式"""
         model = self.llm_config.get_model_for_task("multimodal")
+```
+
+**智能模型路由器（ModelRouter）**：
+```python
+class ModelRouter:
+    """根据任务特点智能选择模型"""
+    
+    def __init__(self, config: LLMConfig):
+        self.config = config
+        self._task_keywords = self._build_task_keywords()
+    
+    def analyze_task(self, task_description: str) -> TaskAnalysis:
+        """分析任务并推荐模型"""
+        # 1. 检测任务类别（多模态/推理/代码等）
+        # 2. 评估复杂度（简单/中等/复杂）
+        # 3. 检测是否需要多模态
+        # 4. 检测是否需要强推理
+        # 5. 选择模型
+        
+    def get_model_for_task(self, task_description: str) -> str:
+        """获取任务对应的模型"""
+        # MiMo V2.5: 图像、表格、公式、OCR
+        # DeepSeek V4: 推理、代码、数学、长文本、摘要
+
+# 任务类别
+class TaskCategory(Enum):
+    # MiMo V2.5 擅长
+    MULTIMODAL = "multimodal"  # 图像理解
+    OCR = "ocr"  # 文字识别
+    TABLE_UNDERSTANDING = "table_understanding"  # 表格理解
+    FORMULA_RECOGNITION = "formula_recognition"  # 公式识别
+    
+    # DeepSeek V4 擅长
+    REASONING = "reasoning"  # 逻辑推理
+    MATH_REASONING = "math_reasoning"  # 数学推理
+    CODE_GENERATION = "code_generation"  # 代码生成
+    LONG_TEXT = "long_text"  # 长文本处理
+    SUMMARIZATION = "summarization"  # 文本摘要
 ```
 
 ### 5.2 开发工具
@@ -1419,6 +1469,39 @@ class MultimodalHandler:
 - 支持第三方题库
 - 支持学习管理系统（LMS）
 
-## 9. 总结
+## 9. 实现状态
 
-本设计文档详细描述了PPT/PDF转复习提纲和考试例题智能系统的架构、组件、数据流和实现计划。系统采用模块化分层架构，通过多智能体协作、Agentic RAG、记忆系统和自进化系统，能够提供高质量的复习提纲和考试例题生成服务。
+### 9.1 已完成功能 ✅
+
+| 模块 | 功能 | 文件位置 |
+|------|------|----------|
+| 配置管理 | LLMConfig, ParserConfig, RAGConfig, MemoryConfig | `src/config.py` |
+| 智能模型路由器 | ModelRouter, TaskCategory, TaskAnalysis | `src/services/model_router.py` |
+| 基础智能体 | BaseAgent, AgentResult, AgentStatus | `src/agents/base_agent.py` |
+| 文档解析Agent | DocumentParsingAgent | `src/agents/document_parsing.py` |
+| Marker PDF解析 | MarkerPDFParser, StructuredDocument | `src/parsers/marker_pdf.py` |
+| 知识图谱 | KnowledgeGraph, KnowledgePoint, Relationship | `src/knowledge/knowledge_graph.py` |
+| RAG服务 | RAGService, QueryType, RetrievalStrategy | `src/services/rag_service.py` |
+| 记忆服务 | ShortTermMemory, LongTermMemory, MemoryService | `src/services/memory_service.py` |
+| 主协调器 | MainCoordinator, CoordinatorState | `src/coordinator/main_coordinator.py` |
+| 应用入口 | CLI交互 | `src/main.py` |
+| 测试 | 44个测试用例 | `tests/` |
+
+### 9.2 待实现功能 ❌
+
+| 模块 | 功能 | 优先级 |
+|------|------|--------|
+| 提纲生成Agent | OutlineGenerationAgent | 高 |
+| 例题生成Agent | QuestionGenerationAgent | 高 |
+| 内容理解Agent | ContentUnderstandingAgent | 中 |
+| 质量评估Agent | QualityEvaluationAgent | 中 |
+| 增强PPT解析 | EnhancedPPTParser | 中 |
+| 工作记忆 | WorkingMemory | 低 |
+| 自进化服务 | EvolutionService (DSPy+GEPA) | 低 |
+| 评估服务 | EvaluationService | 低 |
+
+## 10. 总结
+
+本设计文档详细描述了PPT/PDF转复习提纲和考试例题智能系统的架构、组件、数据流和实现计划。系统采用模块化分层架构，通过多智能体协作、Agentic RAG、记忆系统和智能模型路由，能够提供高质量的复习提纲和考试例题生成服务。
+
+**当前进度**：核心框架已完成（约40%），包括配置管理、智能模型路由、文档解析、知识图谱、RAG服务、记忆服务和主协调器。剩余功能将在后续迭代中实现。
