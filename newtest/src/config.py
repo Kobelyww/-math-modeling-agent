@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List
 from enum import Enum
 import os
+from dotenv import load_dotenv
+
+# 加载.env文件
+load_dotenv()
 
 class TaskCategory(Enum):
     """任务类别"""
