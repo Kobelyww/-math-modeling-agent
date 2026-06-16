@@ -63,6 +63,12 @@ DEEPSEEK_MODEL=deepseek-v4-pro
 DEEPSEEK_API_BASE=
 DEEPSEEK_TEMPERATURE=0.7
 DEEPSEEK_MAX_RETRIES=3
+
+# 可选：百炼/DashScope 视频生成。读取优先级：
+# DASHSCOPE_API_KEY -> BAILIAN_API_KEY -> EMBEDDING_API_KEY
+EMBEDDING_API_KEY=your_bailian_api_key
+BAILIAN_VIDEO_MODEL=wanx2.1-t2v-turbo
+BAILIAN_VIDEO_SIZE=1280*720
 ```
 
 可选的 Agent 温度配置：
@@ -105,6 +111,7 @@ python -m zhihu_fiction.cli
 /publish                导出最近作品的多平台发布包
 /publish <主题>         创作并导出发布包
 /drama                  将最近/已加载小说转成短剧视频 Prompt 包
+/drama_video [数量]     生成 Prompt 包并提交百炼视频任务，默认 1 个镜头
 /autopublish            浏览器辅助发布到知乎
 /mode <模式>            设置创作模式：fast、polish、full
 /genre <题材>           设置目标题材
@@ -129,6 +136,16 @@ python -m zhihu_fiction.cli
 /drama
 ```
 
+百炼视频任务流程：
+
+```text
+/create 一个适合短剧改编的复仇爽文
+/drama_video
+/drama_video 3
+```
+
+`/drama_video` 会先生成短剧 Prompt 包，再把前 N 个镜头提交到阿里云百炼/DashScope 视频生成接口。默认只提交 1 个镜头，避免一次性消耗过多额度。任务 ID 和状态会写入输出目录下的 `video_jobs.jsonl`。
+
 输出目录示例：
 
 ```text
@@ -138,10 +155,11 @@ zhihu_fiction/output/<story>/短剧视频Prompt包_<timestamp>/
 ├── 角色一致性设定.md
 ├── 分集剧本.md
 ├── 镜头表.json
-└── 视频生成Prompts.md
+├── 视频生成Prompts.md
+└── video_jobs.jsonl       # 仅 /drama_video 生成
 ```
 
-第一版只生成视频模型 Prompt 包，不直接调用视频生成 API。
+`/drama` 只生成视频模型 Prompt 包，不调用视频生成 API。`/drama_video` 会提交百炼异步视频任务；后续可根据 `provider_job_id` 查询状态并下载生成视频。
 
 ## Web 服务使用
 
@@ -151,12 +169,19 @@ zhihu_fiction/output/<story>/短剧视频Prompt包_<timestamp>/
 uvicorn zhihu_fiction.server:app --reload
 ```
 
-浏览器打开本地服务首页即可使用 Web 工作台。
+浏览器打开本地服务首页即可使用小说创作工作台。短剧视频生产使用独立页面：
+
+```text
+http://127.0.0.1:8000/video
+```
+
+`/video` 会列出已生成小说，可设置提交镜头数量并调用百炼异步视频任务。默认只提交 1 个镜头，任务 ID、状态和 `video_jobs.jsonl` 路径会显示在右侧结果栏。
 
 主要接口：
 
 ```text
 GET  /                         Web 首页
+GET  /video                    短剧视频生产页面
 POST /api/run                  启动一次创作任务
 GET  /api/stream/{run_id}      订阅 SSE 流式进度
 POST /api/run/continue         续写任务
@@ -164,6 +189,7 @@ GET  /api/runs                 查看运行历史
 GET  /api/runs/{run_id}        查看单次运行详情
 GET  /api/stories              查看生成作品列表
 GET  /api/stories/{story_path} 查看作品内容
+POST /api/drama-video          为指定作品提交百炼短剧视频任务
 GET  /api/skills/genres        查看技能库题材
 GET  /api/skills/{genre}       查看指定题材技能卡
 GET  /api/scheduler            查看调度状态
@@ -188,7 +214,7 @@ Workspace 将一次性创作流程扩展为本地内容生产闭环：
 - **审核**：轻量编辑标题、简介、标签和正文。
 - **发布包**：从审核后的草稿生成平台发布包并确认导出。
 
-Workspace API 位于 `/api/workspace/*`。默认使用 `zhihu_fiction/data/workspace/` 下的 JSONL/JSON 文件存储，不需要额外数据库。
+Workspace API 位于 `/api/workspace/*`。历史 JSONL/JSON 文件存储仍作为兼容路径保留；V1 本地单机生产模式默认使用 SQLite，配置见下方“本地单机生产模式”。
 
 主要接口：
 
@@ -214,6 +240,47 @@ POST /api/workspace/packages/generate
 POST /api/workspace/packages/{package_id}/confirm
 GET  /api/workspace/packages/{package_id}/files
 ```
+
+## 本地单机生产模式
+
+V1 推荐使用 SQLite 作为工作台主存储，本地对象目录保存图片、视频和发布包。
+
+```bash
+cp zhihu_fiction/.env.example .env
+python -m pytest zhihu_fiction/tests -q
+uvicorn zhihu_fiction.server:app --reload
+```
+
+打开：
+
+```text
+http://127.0.0.1:8000/
+http://127.0.0.1:8000/video
+```
+
+视频生成前会展示成本估算并要求人工确认。
+
+## 短剧视频生产基础设施
+
+默认本地单机模式使用本地内存队列、本地文件对象存储、SQLite workspace 持久化：
+
+- `ZH_VIDEO_QUEUE_BACKEND=memory`
+- `ZH_OBJECT_STORAGE_BACKEND=local`
+- `ZH_WORKSPACE_BACKEND=sqlite`
+
+生产环境可以逐步切换：
+
+- Redis 队列：设置 `ZH_VIDEO_QUEUE_BACKEND=redis` 和 `REDIS_URL`
+- MinIO 对象存储：设置 `ZH_OBJECT_STORAGE_BACKEND=minio`、`MINIO_ENDPOINT`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`、`MINIO_BUCKET`
+- SQLite workspace：设置 `ZH_WORKSPACE_BACKEND=sqlite` 和 `ZH_WORKSPACE_SQLITE_PATH`
+
+生产环境需要单独启动视频 worker，用于消费 Redis 中的短剧视频任务：
+
+```bash
+python -m zhihu_fiction.app.services.drama_video_worker
+```
+
+当前视频模型默认使用阿里云百炼/DashScope，可用 `EMBEDDING_API_KEY`、`DASHSCOPE_API_KEY` 或 `BAILIAN_API_KEY` 提供 API Key。
 
 ## 数据与输出
 

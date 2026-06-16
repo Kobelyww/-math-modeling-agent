@@ -8,8 +8,10 @@ from typing import Any
 from ..orchestrator import WorkflowResult
 from .models import (
     Material,
+    Project,
     PublishPackage,
     ReviewDraft,
+    Story,
     StoryTask,
     TopicCard,
     new_id,
@@ -172,7 +174,9 @@ class WorkspaceService:
             body=body,
             review_result=dict(review_result),
         )
-        return self.repo.save_review_draft(draft)
+        saved = self.repo.save_review_draft(draft)
+        self._register_story_project(task, story_path, body, saved)
+        return saved
 
     def update_review_draft(self, task_id: str, changes: dict) -> ReviewDraft:
         draft = self.repo.get_review_draft(task_id)
@@ -304,6 +308,41 @@ class WorkspaceService:
         metadata_path.write_text("\n".join(metadata_lines), encoding="utf-8")
 
         return str(package_dir)
+
+    def _register_story_project(
+        self,
+        task: StoryTask,
+        story_path: str | Path,
+        body: str,
+        draft: ReviewDraft,
+    ) -> None:
+        existing_story = next(
+            (story for story in self.repo.list_stories() if story.task_id == task.id),
+            None,
+        )
+        if existing_story is not None:
+            return
+
+        project = Project(
+            id=new_id("project"),
+            title=draft.title or task.topic,
+            source=task.platform or "zhihu",
+            description=draft.synopsis,
+            tags=[task.genre] if task.genre else [],
+        )
+        self.repo.save_project(project)
+        self.repo.save_story(
+            Story(
+                id=new_id("story"),
+                project_id=project.id,
+                title=draft.title or task.topic,
+                body_path=str(story_path),
+                version=1,
+                task_id=task.id,
+                synopsis=draft.synopsis,
+                word_count=len(body),
+            )
+        )
 
 
 def _clean_text(value: object) -> str:

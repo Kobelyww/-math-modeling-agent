@@ -138,3 +138,120 @@ def test_cmd_drama_generates_package(monkeypatch, tmp_path, capsys):
     assert "短剧 Prompt 包已生成" in captured.out
     assert "共 1 集，6 个镜头" in captured.out
     assert str(tmp_path) in captured.out
+
+
+def test_cmd_drama_video_submits_limited_shots(monkeypatch, tmp_path, capsys):
+    project = make_project()
+    submitted_shot_ids = []
+    appended_jobs = []
+
+    class StubAdapter:
+        def __init__(self, llm):
+            self.llm = llm
+
+        def adapt_result(self, result):
+            assert result.topic == "测试主题"
+            return project
+
+    class StubExporter:
+        def export(self, exported_project):
+            assert exported_project is project
+            return tmp_path / "短剧视频Prompt包_20260609_120000"
+
+        def export_failure(self, source_title, raw_output, error):
+            raise AssertionError("export_failure should not be called")
+
+    class StubJob:
+        def __init__(self, shot_id):
+            self.shot_id = shot_id
+            self.provider_job_id = f"task-{shot_id}"
+            self.status = "PENDING"
+
+    class StubProvider:
+        def submit_shot(self, shot):
+            submitted_shot_ids.append(shot.id)
+            return StubJob(shot.id)
+
+    class StubStore:
+        def __init__(self, path):
+            self.path = path
+
+        def append(self, job):
+            appended_jobs.append(job)
+
+    monkeypatch.setattr(cli_mod, "create_llm", lambda settings, temperature=0.3: object())
+    monkeypatch.setattr(cli_mod, "DramaAdapter", StubAdapter)
+    monkeypatch.setattr(cli_mod, "DramaExporter", StubExporter)
+    monkeypatch.setattr(cli_mod, "create_video_provider", lambda: StubProvider())
+    monkeypatch.setattr(cli_mod, "VideoJobStore", StubStore)
+
+    cli = CLI.__new__(CLI)
+    cli.settings = object()
+    cli.last_result = make_result()
+
+    cli.cmd_drama_video("2")
+
+    captured = capsys.readouterr()
+    assert submitted_shot_ids == ["ep01_sc01_sh01", "ep01_sc01_sh02"]
+    assert [job.shot_id for job in appended_jobs] == submitted_shot_ids
+    assert "已提交 2 个视频生成任务" in captured.out
+    assert "video_jobs.jsonl" in captured.out
+
+
+def test_cmd_drama_video_defaults_to_one_shot(monkeypatch):
+    project = make_project()
+    submitted_shot_ids = []
+
+    class StubAdapter:
+        def __init__(self, llm):
+            self.llm = llm
+
+        def adapt_result(self, result):
+            return project
+
+    class StubExporter:
+        def export(self, exported_project):
+            return Path("/tmp/package")
+
+        def export_failure(self, source_title, raw_output, error):
+            raise AssertionError("export_failure should not be called")
+
+    class StubProvider:
+        def submit_shot(self, shot):
+            submitted_shot_ids.append(shot.id)
+            return type(
+                "StubJob",
+                (),
+                {"shot_id": shot.id, "provider_job_id": "task-1", "status": "PENDING"},
+            )()
+
+    class StubStore:
+        def __init__(self, path):
+            self.path = path
+
+        def append(self, job):
+            pass
+
+    monkeypatch.setattr(cli_mod, "create_llm", lambda settings, temperature=0.3: object())
+    monkeypatch.setattr(cli_mod, "DramaAdapter", StubAdapter)
+    monkeypatch.setattr(cli_mod, "DramaExporter", StubExporter)
+    monkeypatch.setattr(cli_mod, "create_video_provider", lambda: StubProvider())
+    monkeypatch.setattr(cli_mod, "VideoJobStore", StubStore)
+
+    cli = CLI.__new__(CLI)
+    cli.settings = object()
+    cli.last_result = make_result()
+
+    cli.cmd_drama_video("")
+
+    assert submitted_shot_ids == ["ep01_sc01_sh01"]
+
+
+def test_cmd_drama_video_requires_loaded_story(capsys):
+    cli = CLI.__new__(CLI)
+    cli.last_result = None
+
+    cli.cmd_drama_video("")
+
+    captured = capsys.readouterr()
+    assert "没有可转换的视频源小说" in captured.out

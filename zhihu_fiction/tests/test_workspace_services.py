@@ -117,6 +117,37 @@ def test_create_review_draft_from_completed_task(tmp_path):
     assert draft.original_body == body
 
 
+def test_create_review_draft_registers_project_and_story(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    service = WorkspaceService(repo)
+    task = StoryTask(
+        id="task_1",
+        topic_card_id="card_1",
+        topic="成稿标题",
+        genre="现实悬疑",
+        status="needs_review",
+        run_id="pipeline_1",
+    )
+    repo.save_task(task)
+
+    draft = service.create_review_draft_from_result(
+        task,
+        Path("output/story.md"),
+        "正文内容",
+        {"score": 8},
+    )
+
+    projects = repo.list_projects()
+    stories = repo.list_stories(projects[0].id)
+    assert projects[0].title == "成稿标题"
+    assert projects[0].tags == ["现实悬疑"]
+    assert stories[0].project_id == projects[0].id
+    assert stories[0].title == "成稿标题"
+    assert stories[0].body_path == "output/story.md"
+    assert stories[0].task_id == task.id
+    assert draft.review_result == {"score": 8}
+
+
 def test_update_draft_and_mark_ready_updates_task(tmp_path):
     repo = WorkspaceRepository(tmp_path)
     service = WorkspaceService(repo)

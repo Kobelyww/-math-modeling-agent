@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
 from .config import APP_ROOT
+
+logger = logging.getLogger(__name__)
 
 AUTH_DIR = APP_ROOT / "data" / "auth"
 
@@ -59,13 +62,12 @@ class Automator:
                 from playwright.sync_api import sync_playwright
             except ImportError:
                 raise AutomatorError(
-                    "playwright 未安装。请运行: pip install playwright"
+                    "playwright 未安装。请运行: pip install playwright && playwright install chromium"
                 )
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(
                 headless=self._headless,
                 slow_mo=self._slow_mo,
-                channel="chrome",
             )
 
     def _session_path(self, platform: str) -> Path:
@@ -99,7 +101,8 @@ class Automator:
 
             context.close()
             return logged_in
-        except Exception:
+        except Exception as exc:
+            logger.warning("Login check failed for %s: %s", platform, exc)
             return False
 
     def login_interactive(self, platform: str, timeout_seconds: int = 180) -> bool:
@@ -171,80 +174,34 @@ class Automator:
         return self.login_interactive(platform)
 
     def auto_publish_zhihu(self, title: str, content: str, tags: list[str]) -> bool:
-        """自动发布到知乎专栏。"""
-        self._ensure_playwright()
-        cfg = PLATFORM_CONFIGS["zhihu"]
-        session_path = self._session_path("zhihu")
+        """自动发布到知乎专栏。委托给更成熟的 ZhihuPublisher。"""
+        from .automator_zhihu import ZhihuPublisher, LoginRequired, PublishError
 
-        if not self._is_logged_in("zhihu"):
-            raise AutomatorError("知乎未登录，请先调用 ensure_login('zhihu')")
-
-        print(f"\n  [知乎] 正在打开发布页面...")
-        context = self._browser.new_context(
-            storage_state=str(session_path),
-            viewport={"width": 1280, "height": 800},
-            locale="zh-CN",
-        )
-        page = context.new_page()
-        page.goto(cfg["publish_url"], wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(3000)
-
+        publisher = ZhihuPublisher(headless=self._headless, slow_mo=self._slow_mo)
         try:
-            title_input = page.locator('[data-testid="article-title"], [placeholder*="标题"], .WriteIndexTitle-input, input[name="title"]').first
-            title_input.wait_for(state="visible", timeout=10000)
-            title_input.click()
-            title_input.fill("")
-            title_input.type(title, delay=20)
-            print(f"  [知乎] 标题已填入")
+            if not publisher.is_logged_in():
+                if not publisher.login_interactive():
+                    print("  [知乎] 登录失败，发布取消")
+                    return False
 
-            editor = page.locator('[data-testid="article-editor"], .public-DraftEditor-content, [contenteditable="true"], .DraftEditor-root .DraftEditor-editorContainer').first
-            editor.wait_for(state="visible", timeout=10000)
-            editor.click()
+            result = publisher.publish(title=title, content=content, tags=tags or [])
+            return result.get("success", False)
 
-            try:
-                editor.evaluate("(el, text) => { el.focus(); document.execCommand('insertText', false, text); }", content)
-            except Exception:
-                editor.type(content, delay=5)
-            print(f"  [知乎] 正文已填入 ({len(content)} 字)")
-
-            if tags:
+        except LoginRequired:
+            print("  [知乎] Session 过期，需要重新登录")
+            if publisher.login_interactive():
                 try:
-                    tag_area = page.locator('[data-testid="article-tags"], .TagInput input, [placeholder*="标签"]').first
-                    tag_area.click()
-                    for tag in tags:
-                        tag_area.type(tag, delay=10)
-                        page.wait_for_timeout(500)
-                        page.keyboard.press("Enter")
-                        page.wait_for_timeout(300)
-                    print(f"  [知乎] 标签已填入: {', '.join(tags)}")
-                except Exception:
-                    print(f"  [知乎] 标签填入跳过（未找到标签输入框）")
-
-            print(f"\n  [知乎] ====== 请在浏览器中确认并点击发布按钮 ======")
-            print(f"  [知乎] 等待手动确认...（最长 120 秒）")
-
-            start = time.time()
-            while time.time() - start < 120:
-                page.wait_for_timeout(1000)
-                if "articles" in page.url or "/p/" in page.url:
-                    print(f"  [知乎] 发布成功！")
-                    return True
-
-                if "zhuanlan.zhihu.com/write" not in page.url:
-                    pass
-
-            page.wait_for_timeout(5000)
-            print(f"  [知乎] 发布完成（等待结束）")
-            return True
-
-        except Exception as exc:
-            print(f"  [知乎] 自动化填入失败: {exc}")
-            print(f"  [知乎] 请在已打开的浏览器中手动填入内容后发布")
-            page.wait_for_timeout(120000)
+                    result = publisher.publish(title=title, content=content, tags=tags or [])
+                    return result.get("success", False)
+                except Exception as exc:
+                    print(f"  [知乎] 重试发布失败: {exc}")
+                    return False
+            return False
+        except PublishError as exc:
+            print(f"  [知乎] 发布失败: {exc}")
             return False
         finally:
-            page.close()
-            context.close()
+            publisher.cleanup()
 
     def auto_publish_qidian(
         self, title: str, content: str, metadata: dict, chapters: list
@@ -382,6 +339,15 @@ class Automator:
 
         for platform in platforms:
             try:
+                meta = metadata_map.get(platform, {})
+                chapters = chapters_map.get(platform, [])
+
+                if platform == "zhihu":
+                    # ZhihuPublisher handles login internally
+                    tags = meta.get("tags", []) if isinstance(meta, dict) else getattr(meta, "tags", [])
+                    results["zhihu"] = self.auto_publish_zhihu(title, content, tags)
+                    continue
+
                 if not self.ensure_login(platform):
                     results[platform] = False
                     continue
@@ -392,13 +358,7 @@ class Automator:
                 continue
 
             try:
-                meta = metadata_map.get(platform, {})
-                chapters = chapters_map.get(platform, [])
-
-                if platform == "zhihu":
-                    tags = meta.get("tags", []) if isinstance(meta, dict) else getattr(meta, "tags", [])
-                    results["zhihu"] = self.auto_publish_zhihu(title, content, tags)
-                elif platform == "qidian":
+                if platform == "qidian":
                     qd_meta = meta if isinstance(meta, dict) else {
                         "book_title": getattr(meta, "book_title", title),
                         "synopsis": getattr(meta, "synopsis", ""),
@@ -427,8 +387,10 @@ class Automator:
                 self._browser.close()
             except Exception:
                 pass
+            self._browser = None
         if self._playwright:
             try:
                 self._playwright.stop()
             except Exception:
                 pass
+            self._playwright = None

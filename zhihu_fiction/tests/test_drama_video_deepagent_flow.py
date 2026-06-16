@@ -1,0 +1,437 @@
+"""Tests for short-drama DeepAgent workflow service."""
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from zhihu_fiction.app.services.drama_video_deepagent_flow import (
+    advance_deepagent,
+    confirm_stage,
+    revise_stage,
+    start_deepagent_run,
+    start_deepagent_video_loop,
+)
+from zhihu_fiction.app.state import AppState
+from zhihu_fiction.workspace.repositories import WorkspaceRepository
+
+
+def _deps(repo):
+    return SimpleNamespace(workspace_repo=repo)
+
+
+def test_start_deepagent_run_initializes_spec_and_persists_session(monkeypatch, tmp_path):
+    story_dir = tmp_path / "测试主题"
+    story_dir.mkdir()
+    (story_dir / "小说正文.md").write_text("# 测试主题\n\n正文", encoding="utf-8")
+    import zhihu_fiction.server as server_mod
+
+    monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path)
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    state = AppState()
+
+    response = start_deepagent_run(
+        _deps(repo),
+        state,
+        story_path="测试主题/小说正文.md",
+        project_id="project_1",
+        shot_limit=2,
+        stage_drafts={"script": "已有剧本"},
+        id_factory=lambda prefix: "deepagent_fixed",
+    )
+
+    assert response == {
+        "run_id": "deepagent_fixed",
+        "status": "started",
+        "agent": "deepagent",
+        "next_stage": "style",
+    }
+    assert state.video_deepagent_specs["deepagent_fixed"]["confirmed_stages"] == ["script"]
+    assert state.video_deepagent_specs["deepagent_fixed"]["project_id"] == "project_1"
+    assert repo.get_drama_session("deepagent_fixed").status == "started"
+    assert repo.get_drama_session("deepagent_fixed").project_id == "project_1"
+
+
+def test_start_and_confirm_stage_record_operation_logs(monkeypatch, tmp_path):
+    story_dir = tmp_path / "测试主题"
+    story_dir.mkdir()
+    (story_dir / "小说正文.md").write_text("# 测试主题\n\n正文", encoding="utf-8")
+    import zhihu_fiction.server as server_mod
+
+    monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path)
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    deps = _deps(repo)
+    state = AppState()
+
+    start_deepagent_run(
+        deps,
+        state,
+        story_path="测试主题/小说正文.md",
+        project_id="project_1",
+        shot_limit=2,
+        stage_drafts={},
+        id_factory=lambda prefix: "deepagent_fixed",
+    )
+    confirm_stage(
+        deps,
+        state,
+        "deepagent_fixed",
+        "script",
+        "确认剧本",
+        video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
+    )
+
+    logs = repo.list_operation_logs("project_1")
+
+    assert [log.action for log in logs] == ["confirm_stage", "start_session"]
+    assert logs[0].metadata["stage"] == "script"
+    assert logs[0].target_kind == "stage_version"
+    assert logs[0].target_id == repo.list_drama_stage_versions("deepagent_fixed")[0].id
+    assert logs[1].target_kind == "drama_session"
+    assert logs[1].target_id == "deepagent_fixed"
+    assert logs[1].metadata == {
+        "story_path": "测试主题/小说正文.md",
+        "shot_limit": 2,
+    }
+
+
+def test_confirm_stage_updates_consistency_profile(monkeypatch, tmp_path):
+    story_dir = tmp_path / "测试主题"
+    story_dir.mkdir()
+    (story_dir / "小说正文.md").write_text("# 测试主题\n\n正文", encoding="utf-8")
+    import zhihu_fiction.server as server_mod
+
+    monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path)
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    deps = _deps(repo)
+    state = AppState()
+
+    start_deepagent_run(
+        deps,
+        state,
+        story_path="测试主题/小说正文.md",
+        project_id="project_1",
+        shot_limit=2,
+        stage_drafts={},
+        id_factory=lambda prefix: "deepagent_consistency",
+    )
+    confirm_stage(
+        deps,
+        state,
+        "deepagent_consistency",
+        "script",
+        "角色：林晚。地点：运城。限制：女主不能提前知道真相。",
+        video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
+    )
+
+    profile = repo.latest_consistency_profile_for_session("deepagent_consistency")
+
+    assert profile is not None
+    assert profile.project_id == "project_1"
+    assert profile.characters == [{"name": "林晚", "source_stage": "script"}]
+    assert profile.world_facts == [{"text": "运城", "source_stage": "script"}]
+    assert profile.narrative_constraints == ["女主不能提前知道真相"]
+    assert profile.source_version_ids == [
+        repo.list_drama_stage_versions("deepagent_consistency")[0].id
+    ]
+
+
+def test_confirm_stage_merges_consistency_profile_without_losing_prior_data(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "project_id": "project_1",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {},
+        "confirmed_stages": [],
+        "pending_stage": "script",
+        "video_run_id": "",
+    }
+
+    confirm_stage(
+        deps,
+        state,
+        "run_1",
+        "script",
+        "角色：林晚。风格：冷暖对比。",
+        video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
+    )
+    confirm_stage(
+        deps,
+        state,
+        "run_1",
+        "style",
+        "视觉：低饱和城市夜景。镜头：手持纪实。",
+        video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
+    )
+    profile = repo.latest_consistency_profile_for_session("run_1")
+    profile.asset_bindings = {"林晚": {"ref_image": "asset_character_linwan"}}
+    repo.save_consistency_profile(profile)
+
+    confirm_stage(
+        deps,
+        state,
+        "run_1",
+        "plot",
+        "剧情：异味线索逐步升级。",
+        video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
+    )
+    confirm_stage(
+        deps,
+        state,
+        "run_1",
+        "character_refs",
+        "角色：林晚。人物参考图：白衬衫，疲惫但警觉。",
+        video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
+    )
+
+    profile = repo.latest_consistency_profile_for_session("run_1")
+
+    assert profile.visual_style["notes"] == [
+        "冷暖对比",
+        "低饱和城市夜景",
+        "手持纪实",
+    ]
+    assert profile.asset_bindings["林晚"]["ref_image"] == "asset_character_linwan"
+    assert profile.asset_bindings["林晚"]["generated_refs"][0]["source_stage"] == "character_refs"
+    assert len(profile.source_version_ids) == 4
+
+
+def test_deepagent_auto_loop_stops_at_confirmation_checkpoint(monkeypatch, tmp_path):
+    story_dir = tmp_path / "故事"
+    story_dir.mkdir()
+    (story_dir / "小说正文.md").write_text("# 故事\n\n正文", encoding="utf-8")
+    import zhihu_fiction.server as server_mod
+
+    monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path)
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    deps = _deps(repo)
+    state = AppState()
+
+    result = start_deepagent_video_loop(
+        deps,
+        state,
+        story_path="故事/小说正文.md",
+        project_id="project_1",
+        shot_limit=2,
+        stage_drafts={},
+        model_runner=lambda stage, context: f"{stage} draft",
+        id_factory=lambda prefix: "deepagent_1",
+    )
+
+    session = repo.get_drama_session("deepagent_1")
+    assert result["run_id"] == "deepagent_1"
+    assert result["status"] == "awaiting_confirmation"
+    assert result["pending_stage"] == "script"
+    assert result["draft"] == "script draft"
+    assert session.pending_stage == "script"
+    assert session.project_id == "project_1"
+    assert session.drafts["script"] == "script draft"
+    assert repo.list_drama_stage_versions("deepagent_1")[0].project_id == "project_1"
+    assert state.video_deepagent_specs["deepagent_1"]["drafts"]["script"] == "script draft"
+
+
+def test_advance_deepagent_generates_and_caches_next_stage(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {},
+        "confirmed_stages": [],
+        "pending_stage": None,
+        "video_run_id": "",
+    }
+
+    response = advance_deepagent(
+        deps,
+        state,
+        "run_1",
+        generator=lambda story_path, stage, drafts: {
+            "stage": stage,
+            "label": "剧本",
+            "model": "deepseek-v4-pro",
+            "content": "script draft",
+            "events": [],
+        },
+    )
+    repeated = advance_deepagent(deps, state, "run_1")
+
+    assert response["status"] == "awaiting_confirmation"
+    assert response["stage"] == "script"
+    assert repeated["content"] == "script draft"
+    assert [item.event for item in repo.list_drama_stage_versions("run_1")] == ["draft"]
+
+
+def test_confirm_stage_can_resume_pending_draft_from_repository(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    first_state = AppState()
+    first_state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {},
+        "confirmed_stages": [],
+        "pending_stage": None,
+        "video_run_id": "",
+    }
+    advance_deepagent(
+        deps,
+        first_state,
+        "run_1",
+        generator=lambda story_path, stage, drafts: {
+            "stage": stage,
+            "label": "剧本",
+            "model": "deepseek-v4-pro",
+            "content": "durable script draft",
+            "events": [],
+        },
+    )
+
+    resumed_state = AppState()
+    response = confirm_stage(
+        deps,
+        resumed_state,
+        "run_1",
+        "script",
+        "",
+        video_starter=lambda state, story_path, shot_limit, drafts: "video_unused",
+    )
+
+    assert response["status"] == "ready_for_next_stage"
+    assert response["next_stage"] == "style"
+    assert resumed_state.video_deepagent_specs["run_1"]["stage_drafts"]["script"] == "durable script draft"
+    assert repo.get_drama_session("run_1").stage_drafts["script"] == "durable script draft"
+
+
+def test_confirm_stage_starts_video_after_final_confirmation(monkeypatch, tmp_path):
+    story_dir = tmp_path / "测试主题"
+    story_dir.mkdir()
+    (story_dir / "小说正文.md").write_text("# 测试主题\n\n正文", encoding="utf-8")
+    import zhihu_fiction.server as server_mod
+
+    monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path)
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "测试主题/小说正文.md",
+        "project_id": "project_1",
+        "shot_limit": 3,
+        "stage_drafts": {
+            "script": "script",
+            "style": "style",
+            "plot": "plot",
+            "character_refs": "refs",
+        },
+        "drafts": {},
+        "confirmed_stages": ["script", "style", "plot", "character_refs"],
+        "pending_stage": "storyboard",
+        "video_run_id": "",
+    }
+
+    response = confirm_stage(
+        deps,
+        state,
+        "run_1",
+        "storyboard",
+        "storyboard confirmed",
+        video_starter=lambda state, story_path, shot_limit, drafts, project_id="": f"video_for_{project_id}",
+    )
+
+    assert response["status"] == "video_started"
+    assert response["video_run_id"] == "video_for_project_1"
+    assert state.video_deepagent_specs["run_1"]["stage_drafts"]["storyboard"] == "storyboard confirmed"
+
+
+def test_revise_stage_records_human_feedback(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {"script": "old draft"},
+        "confirmed_stages": [],
+        "pending_stage": "script",
+        "video_run_id": "",
+    }
+
+    response = revise_stage(
+        deps,
+        state,
+        "run_1",
+        "script",
+        current_draft="",
+        feedback="更强冲突",
+        reviser=lambda story_path, stage, drafts, current_draft="", human_feedback="": {
+            "stage": stage,
+            "label": "剧本",
+            "model": "deepseek-v4-pro",
+            "agent": "deepagent",
+            "content": f"revised from {current_draft}: {human_feedback}",
+            "events": [],
+        },
+    )
+
+    assert response["status"] == "awaiting_confirmation"
+    assert "old draft" in response["content"]
+    version = repo.list_drama_stage_versions("run_1")[0]
+    assert version.event == "revision"
+    assert version.human_feedback == "更强冲突"
+
+
+def test_revise_stage_marks_matching_rework_request_completed(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "project_id": "project_1",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {"script": "old draft"},
+        "confirmed_stages": [],
+        "pending_stage": "script",
+        "video_run_id": "",
+        "rework_requests": [
+            {
+                "review_id": "review_1",
+                "project_id": "project_1",
+                "run_id": "run_1",
+                "stage": "script",
+                "target_kind": "stage_version",
+                "target_id": "version_1",
+                "instruction": "加强冲突",
+                "comment": "冲突不够",
+                "status": "requested",
+            }
+        ],
+    }
+
+    response = revise_stage(
+        deps,
+        state,
+        "run_1",
+        "script",
+        current_draft="",
+        feedback="加强冲突",
+        reviser=lambda story_path, stage, drafts, current_draft="", human_feedback="": {
+            "stage": stage,
+            "label": "剧本",
+            "model": "deepseek-v4-pro",
+            "agent": "deepagent",
+            "content": "revised script",
+            "events": [],
+        },
+    )
+
+    request = state.video_deepagent_specs["run_1"]["rework_requests"][0]
+    assert request["status"] == "completed"
+    assert request["completed_stage_version_id"]
+    assert response["rework_request"] == request

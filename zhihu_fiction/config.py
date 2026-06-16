@@ -40,9 +40,7 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
 
     load_dotenv(env_path)
 
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise RuntimeError("Missing DEEPSEEK_API_KEY in .env")
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     temperature = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.7"))
     raw_model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")

@@ -432,19 +432,23 @@ class StageGateMiddleware(AgentMiddleware):
 
     def _detect_approval(self, result) -> None:
         # result can be ModelResponse, AIMessage, or dict
-        content = ""
+        contents: list[str] = []
         if isinstance(result, dict):
             messages = result.get("messages", [])
-            if messages:
-                last = messages[-1]
-                content = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
+            for msg in messages:
+                c = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+                if isinstance(c, str):
+                    contents.append(c)
         else:
-            content = getattr(result, "content", "")
-        if not isinstance(content, str) or not content:
+            c = getattr(result, "content", "")
+            if isinstance(c, str):
+                contents.append(c)
+        combined = "".join(contents)
+        if not combined:
             return
         info = self._stage_info()
         marker = info.get("approval_marker", "")
-        if marker and marker in content:
+        if marker and marker in combined:
             if marker == "[SPEC_APPROVED]" and not self._spec_approved:
                 self._spec_approved = True
                 logger.info("✅ Spec 审查通过")
@@ -577,6 +581,193 @@ def create_coordinator(
         ],
     )
     return agent
+
+
+# ============================================================
+# Drama Video DeepAgent Coordinator
+# ============================================================
+
+DRAMA_VIDEO_STAGE_LABELS = {
+    "script": "剧本",
+    "style": "风格设计",
+    "plot": "剧情设计",
+    "character_refs": "人物参考图",
+    "storyboard": "分镜",
+}
+
+
+DRAMA_VIDEO_STAGE_TOOL_NAMES = {
+    "script": "write_drama_script",
+    "style": "design_drama_style",
+    "plot": "design_drama_plot",
+    "character_refs": "generate_character_refs",
+    "storyboard": "build_storyboard",
+}
+
+
+def _invoke_drama_video_stage(
+    llm: BaseChatModel,
+    system_prompt: str,
+    *,
+    story_title: str,
+    genre: str,
+    story: str,
+    confirmed_context: str,
+    publishing_reference: str,
+) -> str:
+    prompt = (
+        f"小说标题：{story_title}\n"
+        f"题材：{genre}\n\n"
+        f"前序已确认稿：\n{confirmed_context or '无'}\n\n"
+        f"发布方案参考：\n{publishing_reference or '无'}\n\n"
+        f"小说正文：\n{story}\n"
+    )
+    response = llm.invoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=prompt),
+    ])
+    return normalize_content(response.content)
+
+
+def _make_write_drama_script(llm: BaseChatModel):
+    @tool
+    def write_drama_script(
+        story_title: str,
+        genre: str,
+        story: str,
+        confirmed_context: str = "",
+        publishing_reference: str = "",
+    ) -> str:
+        """把小说转化为短剧剧本，输出集数、场次、对白、冲突推进和悬念。"""
+        return _invoke_drama_video_stage(
+            llm,
+            "你是短剧剧本统筹。请把小说转化为可生产短剧剧本，包含集数规划、场次、主要对白、冲突推进、每集开场钩子和结尾悬念。只输出剧本阶段内容。",
+            story_title=story_title,
+            genre=genre,
+            story=story,
+            confirmed_context=confirmed_context,
+            publishing_reference=publishing_reference,
+        )
+    return write_drama_script
+
+
+def _make_design_drama_style(llm: BaseChatModel):
+    @tool
+    def design_drama_style(
+        story_title: str,
+        genre: str,
+        story: str,
+        confirmed_context: str = "",
+        publishing_reference: str = "",
+    ) -> str:
+        """生成短剧视觉风格、一致性规则、镜头语言和负面风格约束。"""
+        return _invoke_drama_video_stage(
+            llm,
+            "你是短剧视觉风格导演。请基于已确认剧本输出视觉基调、色彩、灯光、服化道、镜头语言、角色和场景一致性规则、负面风格约束。只输出风格设计阶段内容。",
+            story_title=story_title,
+            genre=genre,
+            story=story,
+            confirmed_context=confirmed_context,
+            publishing_reference=publishing_reference,
+        )
+    return design_drama_style
+
+
+def _make_design_drama_plot(llm: BaseChatModel):
+    @tool
+    def design_drama_plot(
+        story_title: str,
+        genre: str,
+        story: str,
+        confirmed_context: str = "",
+        publishing_reference: str = "",
+    ) -> str:
+        """生成短剧剧情节奏、反转点、情绪曲线、爽点和信息揭露顺序。"""
+        return _invoke_drama_video_stage(
+            llm,
+            "你是短剧剧情设计师。请输出每集节奏、反转点、情绪曲线、爽点、信息揭露顺序，以及适合短视频观看的压缩策略。只输出剧情设计阶段内容。",
+            story_title=story_title,
+            genre=genre,
+            story=story,
+            confirmed_context=confirmed_context,
+            publishing_reference=publishing_reference,
+        )
+    return design_drama_plot
+
+
+def _make_generate_character_refs(llm: BaseChatModel):
+    @tool
+    def generate_character_refs(
+        story_title: str,
+        genre: str,
+        story: str,
+        confirmed_context: str = "",
+        publishing_reference: str = "",
+    ) -> str:
+        """生成人物参考图 Prompt、角色外貌、服装、气质和一致性 Prompt。"""
+        return _invoke_drama_video_stage(
+            llm,
+            "你是短剧人物参考图设计师。请输出主角和重要配角的外貌、年龄、服装、气质、表情范围、参考图 Prompt 和一致性 Prompt。只输出人物参考图阶段内容。",
+            story_title=story_title,
+            genre=genre,
+            story=story,
+            confirmed_context=confirmed_context,
+            publishing_reference=publishing_reference,
+        )
+    return generate_character_refs
+
+
+def _make_build_storyboard(llm: BaseChatModel):
+    @tool
+    def build_storyboard(
+        story_title: str,
+        genre: str,
+        story: str,
+        confirmed_context: str = "",
+        publishing_reference: str = "",
+    ) -> str:
+        """生成分镜表，包含镜头编号、人物、动作、对白、镜头运动、时长和视频 Prompt。"""
+        return _invoke_drama_video_stage(
+            llm,
+            "你是短剧分镜导演。请输出镜头编号、场景、人物、动作、对白、情绪、镜头运动、时长和视频生成 Prompt，确保可以进入视频模型生产。只输出分镜阶段内容。",
+            story_title=story_title,
+            genre=genre,
+            story=story,
+            confirmed_context=confirmed_context,
+            publishing_reference=publishing_reference,
+        )
+    return build_storyboard
+
+
+def create_drama_video_coordinator(llm: BaseChatModel, stage: str):
+    """创建短剧视频生产 Coordinator DeepAgent。"""
+    from deepagents import create_deep_agent
+
+    factories = {
+        "script": _make_write_drama_script,
+        "style": _make_design_drama_style,
+        "plot": _make_design_drama_plot,
+        "character_refs": _make_generate_character_refs,
+        "storyboard": _make_build_storyboard,
+    }
+    if stage not in factories:
+        raise ValueError("stage must be one of script, style, plot, character_refs, storyboard")
+
+    label = DRAMA_VIDEO_STAGE_LABELS[stage]
+    tool_name = DRAMA_VIDEO_STAGE_TOOL_NAMES[stage]
+    system_prompt = (
+        "你是短剧视频生产 DeepAgent Coordinator。你模仿小说生成工作流，用工具完成当前生产阶段。\n"
+        f"当前阶段：{label}\n"
+        f"你只能调用工具 {tool_name}。必须先调用工具，再整合工具结果。\n"
+        "禁止调用视频生成模型；视频提交只能发生在最终视频生成阶段。\n"
+        "最终回复必须包含标记【阶段草稿】，其后是可供工作台编辑确认的当前阶段内容。"
+    )
+
+    return create_deep_agent(
+        model=llm,
+        tools=[factories[stage](llm)],
+        system_prompt=system_prompt,
+    )
 
 
 # ============================================================

@@ -8,28 +8,31 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   :root {
-    --bg-0: #0b1117;
-    --bg-1: #111a22;
-    --surface: rgba(15, 23, 31, 0.82);
-    --surface-strong: rgba(18, 27, 37, 0.94);
-    --surface-muted: rgba(148, 163, 184, 0.08);
-    --border-soft: rgba(148, 163, 184, 0.18);
-    --text-main: #e5edf5;
-    --text-muted: #93a4b8;
-    --accent: #2dd4bf;
-    --accent-cyan: #67e8f9;
+    --paper: #f7f3ea;
+    --paper-soft: #ede6d8;
+    --ink: #171412;
+    --ink-muted: #5f574e;
+    --line: #d8cdbc;
+    --clay: #b85c38;
+    --clay-dark: #7b341e;
+    --sand: #fffaf1;
+    --surface: #fffaf1;
+    --surface-muted: #efe6d8;
+    --border-soft: #d8cdbc;
+    --text-main: #171412;
+    --text-muted: #6b6258;
     --danger: #fb7185;
-    --warning: #fbbf24;
+    --warning: #9a6a00;
   }
   [x-cloak] { display: none !important; }
+  .anthropic-shell {
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--text-main);
+    letter-spacing: 0;
+  }
   .app-shell {
     position: relative;
-    min-height: 100vh;
-    background:
-      radial-gradient(circle at 12% 8%, rgba(45, 212, 191, 0.16), transparent 24%),
-      radial-gradient(circle at 86% 2%, rgba(103, 232, 249, 0.1), transparent 26%),
-      linear-gradient(145deg, var(--bg-0), var(--bg-1) 56%, #0d1218);
-    color: var(--text-main);
   }
   .particle-canvas {
     position: fixed;
@@ -38,37 +41,63 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
+    opacity: 0.22;
   }
   .app-content {
     position: relative;
     z-index: 1;
     min-height: 100vh;
   }
+  .content-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+    gap: 1.5rem;
+  }
+  .system-map {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
   .surface {
     background: var(--surface);
     border: 1px solid var(--border-soft);
-    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.24);
-    backdrop-filter: blur(14px);
+    box-shadow: none;
   }
   .surface-strong {
-    background: var(--surface-strong);
+    background: rgba(247, 243, 234, 0.95);
     border: 1px solid var(--border-soft);
-    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(14px);
+  }
+  .ink-panel {
+    background: var(--ink);
+    color: var(--paper);
+    border: 1px solid #2b2520;
+  }
+  .cream-panel {
+    background: var(--sand);
+    border: 1px solid var(--line);
   }
   .surface-muted {
     background: var(--surface-muted);
     border: 1px solid var(--border-soft);
   }
   .tab-active {
-    border-bottom: 2px solid var(--accent-cyan);
-    color: var(--accent-cyan);
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .editorial-tab {
+    border: 1px solid var(--line);
+    color: var(--ink-muted);
+    background: rgba(255, 250, 241, 0.6);
+  }
+  .editorial-tab:hover {
+    color: var(--ink);
+    border-color: #a9947f;
   }
   .nav-tab {
-    color: var(--text-muted);
+    color: var(--ink-muted);
   }
   .nav-tab:hover {
-    color: var(--text-main);
+    color: var(--ink);
   }
   .status-chip {
     display: inline-flex;
@@ -80,17 +109,41 @@
     color: #cbd5e1;
   }
   .form-control {
-    background: rgba(2, 6, 12, 0.42);
-    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: #fffdf7;
+    border: 1px solid var(--line);
     color: var(--text-main);
   }
   .form-control::placeholder {
-    color: #64748b;
+    color: #9b9287;
   }
   .form-control:focus {
     outline: none;
-    border-color: rgba(103, 232, 249, 0.72);
-    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.16);
+    border-color: var(--clay);
+    box-shadow: 0 0 0 3px rgba(184, 92, 56, 0.14);
+  }
+  .cta-primary {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .cta-primary:hover {
+    background: #2a241f;
+  }
+  .link-warm {
+    color: var(--clay-dark);
+  }
+  .link-warm:hover {
+    color: var(--clay);
+    text-decoration: underline;
+  }
+  .bg-ink {
+    background: #171412;
+  }
+  .surface .text-slate-100,
+  .surface .text-slate-200,
+  .surface .text-slate-300,
+  .surface .text-slate-400,
+  .surface .text-slate-500 {
+    color: var(--ink-muted);
   }
   .progress-bar { transition: width 0.5s ease; }
   .stage-ok { color: #22c55e; } .stage-running { color: #f59e0b; }
@@ -99,51 +152,104 @@
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
   @media (prefers-reduced-motion: reduce) {
-    .progress-bar {
+    .progress-bar, .particle-canvas {
       transition: none;
+    }
+  }
+  @media (max-width: 900px) {
+    .content-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>
 </head>
-<body class="app-shell min-h-screen" x-data="app()" x-init="init()">
+<body class="app-shell anthropic-shell min-h-screen" x-data="app()" x-init="init()">
 <canvas id="particleNetwork" class="particle-canvas" aria-hidden="true"></canvas>
 <div class="app-content">
 
 <!-- Header -->
-<header class="surface-strong border-b border-slate-800/70">
-  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-    <h1 class="text-lg font-bold text-slate-100">Zhihu Fiction Studio</h1>
-    <span class="text-xs text-slate-400">知乎爆款小说自动创作系统</span>
+<header class="surface-strong border-b border-[#d8cdbc] bg-[#f7f3ea]/95">
+  <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3 min-w-0">
+      <div class="w-8 h-8 bg-[#171412] text-[#f7f3ea] grid place-items-center text-sm font-semibold shrink-0">ZF</div>
+      <div class="min-w-0">
+        <h1 class="text-base font-semibold text-[#171412]">Zhihu Fiction Studio</h1>
+        <p class="text-xs text-[#6b6258]">Novel operations console</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4 text-sm">
+      <span class="hidden sm:inline text-[#6b6258]">Warm, editorial AI workflow</span>
+      <a href="/video" class="link-warm">短剧视频生产</a>
+    </div>
   </div>
 </header>
 
+<section class="border-b border-[#d8cdbc] bg-[#efe6d8]">
+  <div class="max-w-6xl mx-auto px-4 py-8 content-grid">
+    <div>
+      <div class="text-sm text-[#6b6258] mb-3">知乎小说生产系统</div>
+      <h2 class="text-4xl md:text-6xl leading-none font-semibold tracking-normal text-[#171412] max-w-3xl">
+        从选题、创作、审核到短剧生产的一体化工作台
+      </h2>
+      <p class="mt-5 max-w-2xl text-base leading-7 text-[#5f574e]">
+        主界面保持小说业务的高密度操作效率，同时采用更克制的暖白纸面、炭黑文字和清晰分区，降低视觉噪声。
+      </p>
+    </div>
+    <aside class="ink-panel p-5">
+      <div class="text-xs uppercase tracking-wider text-[#cfc4b4] mb-4">System map</div>
+      <div class="system-map">
+        <div class="border border-[#3a312a] p-3">
+          <div class="text-2xl font-semibold" x-text="projects.length"></div>
+          <div class="text-xs text-[#cfc4b4]">项目</div>
+        </div>
+        <div class="border border-[#3a312a] p-3">
+          <div class="text-2xl font-semibold" x-text="workspaceTasks.length"></div>
+          <div class="text-xs text-[#cfc4b4]">任务</div>
+        </div>
+        <div class="border border-[#3a312a] p-3">
+          <div class="text-2xl font-semibold" x-text="workspaceDrafts.length"></div>
+          <div class="text-xs text-[#cfc4b4]">待审</div>
+        </div>
+        <div class="border border-[#3a312a] p-3">
+          <div class="text-2xl font-semibold" x-text="workspacePackages.length"></div>
+          <div class="text-xs text-[#cfc4b4]">发布包</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</section>
+
 <!-- Tabs -->
-<nav class="surface-strong border-b border-slate-800/70">
-  <div class="max-w-5xl mx-auto px-4 flex gap-0 overflow-x-auto whitespace-nowrap">
+<nav class="surface-strong border-b border-[#d8cdbc] bg-[#f7f3ea]">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex gap-2 overflow-x-auto whitespace-nowrap">
     <button @click="tab='run'" :class="tab==='run'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">运行</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">运行</button>
+    <button @click="tab='projectDashboard'; loadProjects(); loadTaskCenter()" :class="tab==='projectDashboard'?'tab-active':''"
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">项目总览</button>
+    <button @click="tab='costCenter'; loadCostCenter()" :class="tab==='costCenter'?'tab-active':''"
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">成本中心</button>
     <button @click="tab='history'; loadHistory()" :class="tab==='history'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">历史</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">历史</button>
     <button @click="tab='skills'; loadSkills()" :class="tab==='skills'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">技能</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">技能</button>
     <button @click="tab='scheduler'; loadScheduler()" :class="tab==='scheduler'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">调度</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">调度</button>
     <button @click="tab='stories'; loadStories()" :class="tab==='stories'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">作品</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">作品</button>
     <button @click="tab='workspace_materials'; loadWorkspace()" :class="tab==='workspace_materials'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">素材</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">素材</button>
     <button @click="tab='workspace_cards'; loadWorkspace()" :class="tab==='workspace_cards'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">选题卡</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">选题卡</button>
     <button @click="tab='workspace_tasks'; loadWorkspace()" :class="tab==='workspace_tasks'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">任务</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">任务</button>
     <button @click="tab='workspace_review'; loadWorkspace()" :class="tab==='workspace_review'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">审核</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">审核</button>
     <button @click="tab='workspace_packages'; loadWorkspace()" :class="tab==='workspace_packages'?'tab-active':''"
-      class="nav-tab shrink-0 px-5 py-3 text-sm font-medium transition">发布包</button>
+      class="nav-tab editorial-tab shrink-0 px-4 py-2 text-sm font-medium transition">发布包</button>
   </div>
 </nav>
 
-<main class="max-w-5xl mx-auto px-4 py-6">
+<main class="max-w-6xl mx-auto px-4 py-6">
   <div x-show="workspaceError" x-cloak class="surface-muted rounded-lg px-4 py-3 mb-4 text-sm text-amber-200">
     <div class="flex items-start justify-between gap-3">
       <span x-text="workspaceError"></span>
@@ -151,9 +257,735 @@
     </div>
   </div>
 
+  <!-- ====== PROJECT DASHBOARD ====== -->
+  <section id="project-dashboard" x-show="tab==='projectDashboard' && !projectWorkbenchOpen" x-cloak>
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">项目</div>
+        <div class="text-2xl font-semibold" x-text="projects.length"></div>
+      </div>
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">任务</div>
+        <div class="text-2xl font-semibold" x-text="unifiedTasks.length"></div>
+      </div>
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">待处理</div>
+        <div class="text-2xl font-semibold" x-text="taskCountByStatus('queued') + taskCountByStatus('running')"></div>
+      </div>
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">失败</div>
+        <div class="text-2xl font-semibold" x-text="taskCountByStatus('failed')"></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-[1fr_0.42fr] gap-5">
+      <section class="surface rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-[#d8cdbc] flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h2 class="text-base font-semibold">项目列表</h2>
+            <p class="text-xs text-slate-500 mt-1">点击项目进入单作品工作台</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input x-model="projectQuery" placeholder="搜索项目" class="form-control rounded px-3 py-2 text-sm">
+            <button @click="loadProjects()" class="text-sm link-warm">刷新</button>
+          </div>
+        </div>
+        <div x-show="filteredProjects().length===0" class="p-8 text-center text-slate-500 text-sm">暂无项目。完成一篇小说审核后会自动创建项目。</div>
+        <div class="divide-y divide-[#d8cdbc]" x-show="filteredProjects().length>0">
+          <template x-for="project in filteredProjects()" :key="project.id">
+            <button type="button" @click="openProjectWorkbench(project)"
+              class="w-full p-4 text-left hover:bg-[#efe6d8] transition">
+              <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2 mb-1">
+                    <h3 class="font-medium text-sm text-slate-100 break-words" x-text="project.title"></h3>
+                    <span class="status-chip px-2 py-0.5 text-xs" x-text="project.status"></span>
+                    <span class="status-chip px-2 py-0.5 text-xs" x-text="project.source"></span>
+                  </div>
+                  <p class="text-sm text-slate-400 line-clamp-2" x-text="project.description || '暂无项目简介'"></p>
+                  <div class="flex flex-wrap gap-1 mt-2">
+                    <template x-for="tag in (project.tags || [])" :key="tag">
+                      <span class="status-chip px-2 py-0.5 text-xs" x-text="tag"></span>
+                    </template>
+                  </div>
+                </div>
+                <div class="text-xs text-slate-500 shrink-0" x-text="formatDate(project.updated_at || project.created_at)"></div>
+              </div>
+            </button>
+          </template>
+        </div>
+      </section>
+
+      <aside class="surface rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-semibold">任务中心</h2>
+            <p class="text-xs text-slate-500 mt-1">统一查看小说和视频任务</p>
+          </div>
+          <button @click="loadTaskCenter()" class="text-sm link-warm">刷新</button>
+        </div>
+        <div class="p-4 border-b border-[#d8cdbc] flex flex-wrap gap-2 text-xs">
+          <template x-for="([status, count]) in Object.entries(taskCenter.summary || {})" :key="status">
+            <span class="status-chip px-2 py-0.5" x-text="status + ' ' + count"></span>
+          </template>
+        </div>
+        <div x-show="unifiedTasks.length===0" class="p-8 text-center text-slate-500 text-sm">暂无任务</div>
+        <div class="divide-y divide-[#d8cdbc] max-h-[38rem] overflow-y-auto" x-show="unifiedTasks.length>0">
+          <template x-for="task in unifiedTasks.slice(0, 12)" :key="task.kind + task.id">
+            <div class="p-4">
+              <div class="flex items-start justify-between gap-3 mb-1">
+                <div class="min-w-0">
+                  <h3 class="text-sm font-medium text-slate-100 break-words" x-text="task.title || task.id"></h3>
+                  <p class="text-xs text-slate-500 mt-1" x-text="task.kind + ' / ' + task.id"></p>
+                </div>
+                <span class="status-chip px-2 py-0.5 text-xs shrink-0" x-text="task.status"></span>
+              </div>
+              <div x-show="task.error" class="text-xs text-red-200 bg-red-950/40 border border-red-500/30 rounded px-3 py-2 mt-2 break-words">
+                <span x-text="task.error"></span>
+              </div>
+              <div class="flex gap-2 mt-3">
+                <button @click="retryUnifiedTask(task)" :disabled="task.status!=='failed' || task.kind!=='story_task'"
+                  class="px-3 py-1.5 cta-primary rounded text-xs disabled:opacity-45 disabled:cursor-not-allowed transition">重试</button>
+                <button @click="cancelUnifiedTask(task)" :disabled="task.status!=='queued'"
+                  class="px-3 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600 disabled:opacity-45 disabled:cursor-not-allowed transition">取消</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ====== COST CENTER ====== -->
+  <section id="cost-center" x-show="tab==='costCenter'" x-cloak>
+    <div class="surface rounded-lg p-5 mb-5">
+      <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+        <div>
+          <p class="text-xs text-slate-500 mb-1">成本中心</p>
+          <h2 class="text-2xl font-semibold">模型调用与发布成本</h2>
+          <p class="text-sm text-slate-500 mt-2">按日期和项目查看账本、预算剩余和费用来源。</p>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-2">
+          <input type="date" x-model="costCenterDate" class="form-control rounded px-3 py-2 text-sm">
+          <input x-model="costCenterProjectId" placeholder="项目 ID，可选" class="form-control rounded px-3 py-2 text-sm">
+          <button @click="loadCostCenter()" class="px-4 py-2 cta-primary rounded text-sm">刷新</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">今日总花费</div>
+        <div class="text-2xl font-semibold" x-text="'¥' + (costSummary().spent_today_cny || 0)"></div>
+      </div>
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">账本合计</div>
+        <div class="text-2xl font-semibold" x-text="'¥' + (costSummary().ledger_total_cny || 0)"></div>
+      </div>
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">今日剩余</div>
+        <div class="text-2xl font-semibold" x-text="'¥' + (costSummary().remaining_today_cny || 0)"></div>
+      </div>
+      <div class="surface rounded-lg p-4">
+        <div class="text-xs text-slate-500 mb-1">账本记录</div>
+        <div class="text-2xl font-semibold" x-text="costSummary().entry_count || 0"></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-[0.34fr_0.66fr] gap-5">
+      <aside class="surface rounded-lg p-4">
+        <div class="flex items-center justify-between gap-2 mb-3">
+          <h3 class="text-sm font-semibold">费用拆分</h3>
+          <span class="status-chip px-2 py-0.5" x-text="costSummary().configured ? '预算已配置' : '预算未配置'"></span>
+        </div>
+        <div class="space-y-4 text-sm">
+          <div>
+            <div class="flex justify-between text-xs text-slate-500 mb-2">
+              <span>按来源</span>
+              <span x-text="'环境已花费 ¥' + (costSummary().env_spend_cny || 0)"></span>
+            </div>
+            <div class="space-y-2">
+              <template x-for="([source, amount]) in Object.entries(costSummary().by_source || {})" :key="source">
+                <div class="surface-muted rounded p-2 flex items-center justify-between gap-2">
+                  <span class="break-words" x-text="source"></span>
+                  <strong x-text="'¥' + amount"></strong>
+                </div>
+              </template>
+              <div x-show="Object.keys(costSummary().by_source || {}).length===0" class="text-slate-500">暂无来源数据</div>
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-500 mb-2">按项目</div>
+            <div class="space-y-2">
+              <template x-for="([projectId, amount]) in Object.entries(costSummary().by_project || {})" :key="projectId">
+                <button type="button" @click="costCenterProjectId=projectId; loadCostCenter()"
+                  class="surface-muted rounded p-2 w-full text-left flex items-center justify-between gap-2">
+                  <span class="break-words" x-text="projectId"></span>
+                  <strong x-text="'¥' + amount"></strong>
+                </button>
+              </template>
+              <div x-show="Object.keys(costSummary().by_project || {}).length===0" class="text-slate-500">暂无项目数据</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="surface rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-semibold">成本账本</h3>
+            <p class="text-xs text-slate-500 mt-1" x-text="costCenter.date || costCenterDate"></p>
+          </div>
+          <span class="text-xs text-slate-500" x-text="filteredCostLedger().length + ' 条'"></span>
+        </div>
+        <div x-show="filteredCostLedger().length===0" class="p-8 text-center text-slate-500 text-sm">暂无成本记录</div>
+        <div class="divide-y divide-[#d8cdbc]" x-show="filteredCostLedger().length>0" x-cloak>
+          <template x-for="entry in filteredCostLedger()" :key="entry.id">
+            <div class="p-4">
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <div class="min-w-0">
+                  <strong class="break-words" x-text="entry.source"></strong>
+                  <p class="text-xs text-slate-500 mt-1 break-words">
+                    Project <span x-text="entry.project_id"></span>
+                    <span x-text="' / Release ' + entry.release_id"></span>
+                  </p>
+                </div>
+                <div class="text-right">
+                  <strong class="block" x-text="'¥' + (entry.amount_cny || 0)"></strong>
+                  <span class="status-chip px-2 py-0.5" x-text="entry.estimated ? '预计' : '实际'"></span>
+                </div>
+              </div>
+              <p class="text-xs text-slate-500 break-words">
+                Run <span x-text="entry.run_id"></span>
+                <span x-text="' / Package ' + entry.package_id"></span>
+                <span x-text="' / ' + formatDate(entry.created_at)"></span>
+              </p>
+            </div>
+          </template>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ====== PROJECT WORKBENCH ====== -->
+  <section id="project-workbench" x-show="tab==='projectDashboard' && projectWorkbenchOpen" x-cloak>
+    <div class="surface rounded-lg p-5 mb-5">
+      <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+        <div class="min-w-0">
+          <button type="button" @click="closeProjectWorkbench()" class="text-sm link-warm mb-3">返回项目总览</button>
+          <h2 class="text-2xl font-semibold break-words" x-text="selectedProject?.title || '项目工作台'"></h2>
+          <p class="text-sm text-slate-500 mt-2" x-text="selectedProject?.description || '项目履历、资产和审核状态集中在这里。'"></p>
+          <div class="flex flex-wrap gap-1 mt-3">
+            <template x-for="tag in (selectedProject?.tags || [])" :key="tag">
+              <span class="status-chip px-2 py-0.5 text-xs" x-text="tag"></span>
+            </template>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 shrink-0">
+          <button @click="openVideoForProject()" class="px-4 py-2 cta-primary rounded text-sm">进入短剧视频生产</button>
+          <a href="/video" class="px-4 py-2 surface-muted rounded text-sm link-warm">打开视频工作台</a>
+        </div>
+      </div>
+    </div>
+    <div id="project-production-status" class="surface rounded-lg p-4 mb-5">
+      <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div>
+          <p class="text-xs text-slate-500 mb-1">生产状态</p>
+          <h3 class="text-lg font-semibold" x-text="productionStatus().next_action_label"></h3>
+          <p class="text-xs text-slate-500 mt-1">
+            推荐会话：<span x-text="productionStatus().recommended_run_id || '暂无'"></span>
+          </p>
+          <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span class="status-chip px-2 py-0.5" x-text="workspaceNextAction().kind === 'confirm_stage' ? '待确认' : (workspaceNextAction().label || '暂无待处理动作')"></span>
+            <span class="text-slate-500">
+              当前阶段：<span x-text="stageSummary().pending_stage || '暂无'"></span>
+            </span>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 min-w-0 lg:min-w-[34rem]">
+          <div class="surface-muted rounded p-3">
+            <p class="text-xs text-slate-500">待返工</p>
+            <strong class="text-xl" x-text="productionStatus().pending_rework_count || 0"></strong>
+          </div>
+          <div class="surface-muted rounded p-3">
+            <p class="text-xs text-slate-500">待审核资产</p>
+            <strong class="text-xl" x-text="productionStatus().awaiting_review_count || 0"></strong>
+          </div>
+          <div class="surface-muted rounded p-3">
+            <p class="text-xs text-slate-500">可导出</p>
+            <strong class="text-xl" x-text="productionStatus().export_ready_count || 0"></strong>
+          </div>
+          <div class="surface-muted rounded p-3">
+            <p class="text-xs text-slate-500">已导出包</p>
+            <strong class="text-xl" x-text="productionStatus().exported_package_count || 0"></strong>
+          </div>
+        </div>
+        <button type="button" @click="openRecommendedDramaSession()"
+          :disabled="!productionStatus().recommended_run_id"
+          class="px-4 py-2 cta-primary rounded text-sm disabled:opacity-45 disabled:cursor-not-allowed">继续推荐会话</button>
+      </div>
+      <div id="project-release-readiness" class="mt-4 border-t border-[#d8cdbc] pt-4">
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <span class="status-chip px-2 py-0.5 text-xs"
+            x-text="productionStatus().release_ready ? '发布就绪' : '发布阻塞'"></span>
+          <span class="text-xs text-slate-500"
+            x-text="releaseBlockers().length ? '需要先处理以下阻塞项' : productionStatus().release_action_label"></span>
+        </div>
+        <div class="flex flex-wrap gap-2" x-show="releaseBlockers().length>0" x-cloak>
+          <template x-for="blocker in releaseBlockers()" :key="blocker.code">
+            <span class="surface-muted rounded px-3 py-1.5 text-xs">
+              <strong x-text="blocker.label"></strong>
+              <span class="text-slate-500" x-text="' x' + blocker.count"></span>
+            </span>
+          </template>
+        </div>
+        <div id="project-release-manifest" class="mt-4 surface-muted rounded p-3 text-xs">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div>
+              <h4 class="text-sm font-semibold">发布交付清单</h4>
+              <p class="text-slate-500 mt-1">当前项目包：<span x-text="releaseManifest().release_package?.id || '暂无'"></span></p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" @click="copyReleaseManifest()" class="px-3 py-1.5 surface rounded text-xs">复制清单</button>
+              <button type="button" @click="downloadReleasePackage()"
+                :disabled="!releaseManifest().delivery_actions?.can_download"
+                class="px-3 py-1.5 cta-primary rounded text-xs disabled:opacity-45 disabled:cursor-not-allowed">下载发布包</button>
+              <button type="button" @click="confirmProjectRelease()"
+                :disabled="!releaseManifest().delivery_actions?.can_confirm"
+                class="px-3 py-1.5 cta-primary rounded text-xs disabled:opacity-45 disabled:cursor-not-allowed">确认交付</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div>
+              <span class="text-slate-500">推荐 Run</span>
+              <strong class="block break-words" x-text="releaseManifest().recommended_run_id || '暂无'"></strong>
+            </div>
+            <div>
+              <span class="text-slate-500">包所属 Run</span>
+              <strong class="block break-words" x-text="releaseManifest().release_package_run_id || '暂无'"></strong>
+            </div>
+            <div>
+              <span class="text-slate-500">最新会话</span>
+              <strong class="block break-words" x-text="releaseManifest().latest_session_id || '暂无'"></strong>
+            </div>
+            <div>
+              <span class="text-slate-500">资产数</span>
+              <strong class="block" x-text="releaseManifest().asset_summary?.total || 0"></strong>
+            </div>
+          </div>
+          <div id="project-release-cost-guardrail" class="mt-3 border-t border-[#d8cdbc] pt-3">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <span class="font-semibold">成本预估</span>
+              <span class="status-chip px-2 py-0.5"
+                x-text="releaseCostGuardrail().within_budget ? '预算状态：可执行' : '预算状态：不足'"></span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+              <div>
+                <span class="text-slate-500">预计成本</span>
+                <strong class="block" x-text="'¥' + (releaseCostGuardrail().estimate?.estimated_total_cny || 0)"></strong>
+              </div>
+              <div>
+                <span class="text-slate-500">今日已花费</span>
+                <strong class="block" x-text="'¥' + (releaseCostGuardrail().budget?.spent_today_cny || 0)"></strong>
+              </div>
+              <div>
+                <span class="text-slate-500">今日剩余</span>
+                <strong class="block" x-text="'¥' + (releaseCostGuardrail().budget?.remaining_today_cny || 0)"></strong>
+              </div>
+              <div>
+                <span class="text-slate-500">镜头数</span>
+                <strong class="block" x-text="releaseCostGuardrail().estimate?.shot_count || 0"></strong>
+              </div>
+            </div>
+          </div>
+          <div id="project-release-history" class="mt-3 border-t border-[#d8cdbc] pt-3">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <span class="font-semibold">最近交付</span>
+              <span class="text-slate-500" x-text="releaseHistory().length + ' 条'"></span>
+            </div>
+            <div x-show="releaseHistory().length===0" class="text-slate-500">暂无交付记录</div>
+            <div class="space-y-2" x-show="releaseHistory().length>0" x-cloak>
+              <template x-for="release in releaseHistory().slice(0, 3)" :key="release.id">
+                <div class="surface rounded p-2">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <strong class="break-words" x-text="release.package_id"></strong>
+                    <span class="status-chip px-2 py-0.5" x-text="release.status"></span>
+                  </div>
+                  <div class="mt-1 text-slate-500 break-words">
+                    Run <span x-text="release.run_id"></span>
+                    <span x-text="' / ' + formatDate(release.created_at)"></span>
+                  </div>
+                  <button type="button" @click="loadReleaseDetail(release)" class="mt-2 text-xs link-warm">查看详情</button>
+                </div>
+              </template>
+            </div>
+            <div id="project-release-detail" x-show="releaseAuditDetail" x-cloak class="mt-3 surface rounded p-3">
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <strong>交付审计</strong>
+                <span class="status-chip px-2 py-0.5" x-text="releaseAuditDetail?.release?.status || ''"></span>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div>
+                  <span class="text-slate-500">Package</span>
+                  <strong class="block break-words" x-text="releaseAuditDetail?.release?.package_id || '暂无'"></strong>
+                </div>
+                <div>
+                  <span class="text-slate-500">Run</span>
+                  <strong class="block break-words" x-text="releaseAuditDetail?.release?.run_id || '暂无'"></strong>
+                </div>
+                <div>
+                  <span class="text-slate-500">审核通过</span>
+                  <strong class="block" x-text="releaseAuditDetail?.review_summary?.approved || 0"></strong>
+                </div>
+              </div>
+              <div id="project-release-cost-ledger" class="mt-3 border-t border-[#d8cdbc] pt-3">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <strong class="text-xs">成本账本</strong>
+                  <span class="status-chip px-2 py-0.5" x-text="releaseCostLedgerSummary().entry_count + ' 条'"></span>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-xs mb-2">
+                  <div class="surface-muted rounded p-2">
+                    <span class="text-slate-500">预计</span>
+                    <strong class="block" x-text="'¥' + (releaseCostLedgerSummary().estimated_total_cny || 0)"></strong>
+                  </div>
+                  <div class="surface-muted rounded p-2">
+                    <span class="text-slate-500">实际</span>
+                    <strong class="block" x-text="'¥' + (releaseCostLedgerSummary().actual_total_cny || 0)"></strong>
+                  </div>
+                  <div class="surface-muted rounded p-2">
+                    <span class="text-slate-500">合计</span>
+                    <strong class="block" x-text="'¥' + (releaseCostLedgerSummary().total_cny || 0)"></strong>
+                  </div>
+                </div>
+                <div x-show="releaseCostLedger().length===0" class="text-slate-500">暂无成本记录</div>
+                <div class="space-y-1" x-show="releaseCostLedger().length>0" x-cloak>
+                  <template x-for="entry in releaseCostLedger()" :key="entry.id">
+                    <div class="surface-muted rounded p-2">
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <strong x-text="entry.source"></strong>
+                        <span class="status-chip px-2 py-0.5" x-text="entry.estimated ? '预计' : '实际'"></span>
+                      </div>
+                      <p class="text-slate-500 mt-1 break-words">
+                        <span x-text="'¥' + (entry.amount_cny || 0)"></span>
+                        <span x-text="' / ' + formatDate(entry.created_at)"></span>
+                      </p>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <div id="project-release-integrity" class="mt-3 border-t border-[#d8cdbc] pt-3">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <strong class="text-xs">完整性校验</strong>
+                  <span class="status-chip px-2 py-0.5" x-text="releaseIntegrity().status || 'unknown'"></span>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-xs mb-2">
+                  <div class="surface-muted rounded p-2">
+                    <span class="text-slate-500">通过</span>
+                    <strong class="block" x-text="releaseIntegrity().summary?.passed || 0"></strong>
+                  </div>
+                  <div class="surface-muted rounded p-2">
+                    <span class="text-slate-500">失败</span>
+                    <strong class="block" x-text="releaseIntegrity().summary?.failed || 0"></strong>
+                  </div>
+                  <div class="surface-muted rounded p-2">
+                    <span class="text-slate-500">警告</span>
+                    <strong class="block" x-text="releaseIntegrity().summary?.warning || 0"></strong>
+                  </div>
+                </div>
+                <div class="space-y-1">
+                  <template x-for="check in releaseIntegrityChecks()" :key="check.code">
+                    <div class="surface-muted rounded p-2">
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <strong x-text="check.label"></strong>
+                        <span class="status-chip px-2 py-0.5" x-text="check.status"></span>
+                      </div>
+                      <p class="text-slate-500 mt-1 break-words" x-text="check.message"></p>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-[0.36fr_0.34fr_0.30fr] gap-5">
+      <section class="space-y-5">
+        <div class="surface rounded-lg overflow-hidden">
+          <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
+            <h3 class="text-sm font-semibold">小说版本</h3>
+            <span class="text-xs text-slate-500" x-text="projectWorkspace.stories.length"></span>
+          </div>
+          <div x-show="projectWorkspace.stories.length===0" class="p-6 text-sm text-slate-500">暂无小说版本</div>
+          <div class="divide-y divide-[#d8cdbc]" x-show="projectWorkspace.stories.length>0">
+            <template x-for="story in projectWorkspace.stories" :key="story.id">
+              <div class="p-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <h4 class="text-sm font-medium text-slate-100 break-words" x-text="story.title"></h4>
+                    <p class="text-xs text-slate-500 mt-1 break-words" x-text="story.body_path"></p>
+                  </div>
+                  <span class="status-chip px-2 py-0.5 text-xs shrink-0" x-text="'v' + story.version"></span>
+                </div>
+                <p class="text-sm text-slate-400 mt-2 line-clamp-3" x-text="story.synopsis"></p>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div id="project-review-list" class="surface rounded-lg overflow-hidden">
+          <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
+            <h3 class="text-sm font-semibold">审核记录</h3>
+            <span class="text-xs text-slate-500" x-text="projectWorkspace.reviews.length"></span>
+          </div>
+          <div x-show="projectWorkspace.reviews.length===0" class="p-6 text-sm text-slate-500">暂无审核记录</div>
+          <div class="divide-y divide-[#d8cdbc]" x-show="projectWorkspace.reviews.length>0">
+            <template x-for="review in projectWorkspace.reviews" :key="review.id">
+              <div class="p-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 class="text-sm font-medium" x-text="review.target_kind + ' / ' + review.target_id"></h4>
+                    <p class="text-xs text-slate-500 mt-1" x-text="review.reviewer"></p>
+                  </div>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="review.decision"></span>
+                </div>
+                <p class="text-sm text-slate-400 mt-2 break-words" x-text="review.comment"></p>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div id="project-rework-list" class="surface rounded-lg overflow-hidden">
+          <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
+            <h3 class="text-sm font-semibold">返工请求</h3>
+            <span class="text-xs text-slate-500" x-text="pendingReworkRequests().length + '/' + projectWorkspace.rework_requests.length"></span>
+          </div>
+          <div id="project-rework-execution" x-show="reworkExecution.status" x-cloak class="p-4 border-b border-[#d8cdbc] bg-[#efe6d8]">
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <h4 class="text-sm font-semibold" x-text="reworkExecution.status === 'running' ? '正在返工' : '返工完成'"></h4>
+              <span class="status-chip px-2 py-0.5 text-xs" x-text="reworkExecution.status"></span>
+            </div>
+            <p class="text-sm text-slate-500 break-words" x-text="reworkExecution.message"></p>
+            <pre x-show="reworkExecution.content" class="text-xs leading-5 whitespace-pre-wrap break-words max-h-48 overflow-y-auto bg-[#fffaf1] border border-[#d8cdbc] p-3 mt-3"
+              x-text="reworkExecution.content"></pre>
+          </div>
+          <div x-show="projectWorkspace.rework_requests.length===0" class="p-6 text-sm text-slate-500">暂无返工请求</div>
+          <div class="divide-y divide-[#d8cdbc]" x-show="projectWorkspace.rework_requests.length>0">
+            <template x-for="request in projectWorkspace.rework_requests" :key="request.review_id + request.stage">
+              <div class="p-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <h4 class="text-sm font-medium" x-text="request.stage + ' / ' + request.target_id"></h4>
+                    <p class="text-xs text-slate-500 mt-1" x-text="request.run_id"></p>
+                  </div>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="request.status"></span>
+                </div>
+                <p class="text-sm text-slate-400 mt-2 break-words" x-text="request.instruction || request.comment"></p>
+                <button type="button" x-show="request.status==='requested'" @click="executeReworkRequest(request)"
+                  class="mt-3 px-3 py-1.5 cta-primary rounded text-xs">执行返工</button>
+                <div id="project-rework-version-actions" x-show="request.completed_stage_version_id" x-cloak
+                  class="mt-3 flex flex-wrap gap-2">
+                  <button type="button" @click="openCompletedReworkVersion(request)"
+                    class="px-3 py-1.5 cta-primary rounded text-xs">查看返工版本</button>
+                  <button type="button" @click="confirmReworkVersionAsDraft(request)"
+                    class="px-3 py-1.5 surface-muted rounded text-xs link-warm">确认为草稿</button>
+                  <button type="button" @click="requestReworkVersionChanges(request)"
+                    class="px-3 py-1.5 surface-muted rounded text-xs link-warm">再次请求修改</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div id="project-drama-package-panel" class="surface rounded-lg overflow-hidden">
+          <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
+            <h3 class="text-sm font-semibold">短剧项目包</h3>
+            <span class="text-xs text-slate-500" x-text="projectDramaSessions().length"></span>
+          </div>
+          <div x-show="projectDramaSessions().length===0" class="p-6 text-sm text-slate-500">暂无短剧会话</div>
+          <div class="divide-y divide-[#d8cdbc]" x-show="projectDramaSessions().length>0">
+            <template x-for="session in projectDramaSessions()" :key="session.id">
+              <div class="p-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <h4 class="text-sm font-medium break-words" x-text="session.id"></h4>
+                    <p class="text-xs text-slate-500 mt-1" x-text="session.status + ' / 已确认 ' + session.confirmed_stage_count + '/5'"></p>
+                  </div>
+                  <span class="status-chip px-2 py-0.5 text-xs"
+                    x-text="session.latest_package ? '已导出' : (session.can_export_package ? '可导出' : '未就绪')"></span>
+                </div>
+                <div x-show="session.latest_package" x-cloak class="mt-2 text-xs break-all">
+                  <a :href="session.latest_package?.package_uri" target="_blank" rel="noopener noreferrer"
+                    class="link-warm" x-text="session.latest_package?.package_uri"></a>
+                </div>
+                <div x-show="session.latest_package" x-cloak class="mt-3 surface-muted rounded p-3 text-xs">
+                  <template x-if="packageSummary(session)">
+                    <div x-data="{ summary: packageSummary(session) }">
+                      <div x-show="summary.available" class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div>
+                        <span class="text-slate-500">阶段覆盖</span>
+                        <strong class="block" x-text="summary.stage_count + '/' + summary.confirmed_stage_count"></strong>
+                        </div>
+                        <div>
+                        <span class="text-slate-500">版本数</span>
+                        <strong class="block" x-text="summary.version_count"></strong>
+                        </div>
+                        <div>
+                        <span class="text-slate-500">导出时间</span>
+                        <strong class="block break-words" x-text="formatDate(summary.exported_at)"></strong>
+                        </div>
+                      </div>
+                      <div x-show="!summary.available" class="text-slate-500">
+                        包摘要不可读取：<span x-text="summary.reason"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+                <div x-show="packageExportStatus[session.id]" x-cloak class="mt-2 text-xs text-slate-500 break-words"
+                  x-text="packageExportStatus[session.id]"></div>
+                <div class="flex flex-wrap gap-2 mt-3">
+                  <button type="button" @click="openVideoForProject(session)"
+                    class="px-3 py-1.5 surface-muted rounded text-xs link-warm">继续生产</button>
+                  <button type="button" @click="exportProjectDramaPackage(session)"
+                    :disabled="!session.can_export_package || packageExportStatus[session.id] === '导出中...'"
+                    class="px-3 py-1.5 cta-primary rounded text-xs disabled:opacity-45 disabled:cursor-not-allowed">导出项目包</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <section id="project-timeline" class="surface rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
+          <h3 class="text-sm font-semibold">项目时间线</h3>
+          <button @click="selectedProject && loadProjectTimeline(selectedProject.id)" class="text-sm link-warm">刷新</button>
+        </div>
+        <div x-show="projectTimeline.length===0" class="p-6 text-sm text-slate-500">暂无时间线事件</div>
+        <div class="p-4 space-y-3" x-show="projectTimeline.length>0">
+          <template x-for="item in projectTimeline" :key="item.kind + item.id">
+            <div class="flex gap-3">
+              <div class="pt-1">
+                <div class="w-3 h-3 rounded-full bg-[#b85c38]"></div>
+              </div>
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-medium" x-text="timelineTitle(item)"></span>
+                  <span class="status-chip px-2 py-0.5 text-xs" x-text="item.kind"></span>
+                </div>
+                <p class="text-xs text-slate-500 mt-1" x-text="formatDate(item.created_at)"></p>
+              </div>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <section id="project-asset-library" class="surface rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-[#d8cdbc] space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold">资产库</h3>
+            <span class="text-xs text-slate-500" x-text="filteredProjectAssets().length + '/' + projectAssets().length"></span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div class="surface-muted rounded p-2">
+              <p class="text-xs text-slate-500">全部资产</p>
+              <p class="text-lg font-semibold" x-text="assetSummary().total || 0"></p>
+            </div>
+            <div class="surface-muted rounded p-2">
+              <p class="text-xs text-slate-500">待审核资产</p>
+              <p class="text-lg font-semibold" x-text="assetSummary().awaiting_review || 0"></p>
+            </div>
+            <div class="surface-muted rounded p-2">
+              <p class="text-xs text-slate-500">需修改</p>
+              <p class="text-lg font-semibold" x-text="assetSummary().needs_changes || 0"></p>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2 text-xs">
+            <template x-for="entry in assetSourceCounts()" :key="'source-' + entry[0]">
+              <span class="status-chip px-2 py-0.5" x-text="entry[0] + ' ' + entry[1]"></span>
+            </template>
+            <template x-for="entry in assetReviewCounts()" :key="'review-' + entry[0]">
+              <span class="status-chip px-2 py-0.5" x-show="entry[1] > 0" x-text="entry[0] + ' ' + entry[1]"></span>
+            </template>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" @click="assetFilter='all'"
+              :class="assetFilter==='all' ? 'cta-primary' : 'surface-muted'"
+              class="px-2.5 py-1 text-xs rounded transition">全部</button>
+            <template x-for="kind in assetKinds()" :key="kind">
+              <button type="button" @click="assetFilter=kind"
+                :class="assetFilter===kind ? 'cta-primary' : 'surface-muted'"
+                class="px-2.5 py-1 text-xs rounded transition" x-text="kind"></button>
+            </template>
+          </div>
+        </div>
+        <div x-show="filteredProjectAssets().length===0" class="p-6 text-sm text-slate-500">暂无资产</div>
+        <div class="divide-y divide-[#d8cdbc]" x-show="filteredProjectAssets().length>0">
+          <template x-for="asset in filteredProjectAssets()" :key="asset.source + asset.id">
+            <button type="button" @click="selectProjectAsset(asset)"
+              :class="selectedAsset?.id===asset.id && selectedAsset?.source===asset.source ? 'bg-[#efe6d8]' : 'hover:bg-[#efe6d8]'"
+              class="w-full p-4 text-left transition">
+              <div class="flex items-start justify-between gap-3 mb-2">
+                <div class="min-w-0">
+                  <h4 class="text-sm font-medium break-words" x-text="asset.kind + ' / ' + asset.title"></h4>
+                  <p class="text-xs text-slate-500 mt-1" x-text="asset.source + ' / ' + asset.content_type"></p>
+                </div>
+                <span class="status-chip px-2 py-0.5 text-xs" x-text="assetReviewDecision(asset)"></span>
+              </div>
+              <a x-show="asset.uri" :href="asset.uri" target="_blank" rel="noopener noreferrer" class="text-sm link-warm break-words" x-text="asset.uri"></a>
+              <p x-show="!asset.uri" class="text-sm text-slate-400 break-words" x-text="(asset.record?.content || '').slice(0, 140)"></p>
+            </button>
+          </template>
+        </div>
+        <div id="project-asset-preview" x-show="selectedAsset" x-cloak class="border-t border-[#d8cdbc] p-4 bg-[#efe6d8]">
+          <div class="flex items-start justify-between gap-3 mb-3">
+            <div class="min-w-0">
+              <h4 class="text-sm font-semibold break-words" x-text="selectedAsset?.title"></h4>
+              <p class="text-xs text-slate-500 mt-1" x-text="selectedAsset?.source + ' / ' + selectedAsset?.kind"></p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="status-chip px-2 py-0.5 text-xs" x-text="assetReviewDecision(selectedAsset)"></span>
+              <button type="button" @click="copyAssetPrompt(selectedAsset)" class="text-xs link-warm">复制文本</button>
+              <a x-show="selectedAsset?.uri" :href="selectedAsset?.uri" target="_blank" rel="noopener noreferrer"
+                class="text-xs link-warm">打开资源</a>
+            </div>
+          </div>
+          <pre class="text-xs leading-5 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-[#fffaf1] border border-[#d8cdbc] p-3"
+            x-text="assetPreviewText(selectedAsset)"></pre>
+          <div class="flex flex-wrap gap-2 mt-3">
+            <button type="button" @click="openAssetReviewDialog(selectedAsset, 'approved')"
+              class="px-3 py-1.5 cta-primary rounded text-xs">批准</button>
+            <button type="button" @click="openAssetReviewDialog(selectedAsset, 'changes_requested')"
+              class="px-3 py-1.5 surface-muted rounded text-xs link-warm">要求修改</button>
+            <button type="button" @click="openAssetReviewDialog(selectedAsset, 'rejected')"
+              class="px-3 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600">驳回</button>
+          </div>
+          <div id="asset-review-dialog" x-show="assetReviewDialog.open" x-cloak class="mt-3 border border-[#d8cdbc] bg-[#fffaf1] p-3">
+            <div class="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h5 class="text-sm font-semibold">审核意见</h5>
+                <p class="text-xs text-slate-500 mt-1" x-text="assetReviewDialog.decision"></p>
+              </div>
+              <button type="button" @click="closeAssetReviewDialog()" class="text-xs link-warm">关闭</button>
+            </div>
+            <textarea x-model="assetReviewDialog.comment" rows="3" class="form-control w-full rounded px-3 py-2 text-sm mb-2"
+              placeholder="说明通过理由或需要修改的问题"></textarea>
+            <textarea x-model="assetReviewDialog.agent_instruction" rows="3" class="form-control w-full rounded px-3 py-2 text-sm mb-3"
+              placeholder="给 Agent 的修改方向"></textarea>
+            <div class="flex justify-end gap-2">
+              <button type="button" @click="closeAssetReviewDialog()" class="px-3 py-1.5 surface-muted rounded text-xs">取消</button>
+              <button type="button" @click="submitAssetReviewDialog()" class="px-3 py-1.5 cta-primary rounded text-xs">提交审核</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
   <!-- ====== RUN TAB ====== -->
   <section x-show="tab==='run'" x-cloak>
-    <div class="surface rounded-lg p-6 mb-4">
+    <div class="surface cream-panel rounded-lg p-6 mb-4">
       <h2 class="text-base font-semibold mb-4">创作配置</h2>
       <div class="grid grid-cols-2 gap-4 mb-4">
         <div>
@@ -175,15 +1007,15 @@
         <label class="text-sm text-slate-300">章节数:</label>
         <input x-model.number="runForm.chapters" type="number" min="1" max="100"
           class="form-control w-20 rounded px-2 py-1.5 text-sm text-center">
-        <button @click="runForm.chapters=1" :class="runForm.chapters===1?'bg-indigo-600 text-white':'bg-slate-800/80'"
+        <button @click="runForm.chapters=1" :class="runForm.chapters===1?'cta-primary':'bg-[#efe6d8]'"
           class="px-3 py-1.5 rounded text-xs transition">短篇</button>
-        <button @click="runForm.chapters=5" :class="runForm.chapters===5?'bg-indigo-600 text-white':'bg-slate-800/80'"
+        <button @click="runForm.chapters=5" :class="runForm.chapters===5?'cta-primary':'bg-[#efe6d8]'"
           class="px-3 py-1.5 rounded text-xs transition">中篇 5章</button>
-        <button @click="runForm.chapters=20" :class="runForm.chapters===20?'bg-indigo-600 text-white':'bg-slate-800/80'"
+        <button @click="runForm.chapters=20" :class="runForm.chapters===20?'cta-primary':'bg-[#efe6d8]'"
           class="px-3 py-1.5 rounded text-xs transition">长篇 20章</button>
       </div>
       <button @click="startRun()" :disabled="running"
-        class="px-6 py-2 bg-indigo-600 text-white rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">
+        class="px-6 py-2 cta-primary rounded text-sm font-medium  disabled:opacity-50 disabled:cursor-not-allowed transition">
         <span x-show="!running">开始创作</span>
         <span x-show="running" class="flex items-center gap-2">
           <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -198,11 +1030,11 @@
         <span class="text-sm text-slate-300 font-medium" x-text="progress.message"></span>
         <span class="text-sm font-mono text-slate-500" x-text="progress.progress + '%'"></span>
       </div>
-      <div class="w-full bg-slate-800/80 rounded-full h-2 mb-3">
-        <div class="bg-indigo-600 h-2 rounded-full progress-bar" :style="'width:'+progress.progress+'%'"></div>
+      <div class="w-full bg-[#efe6d8] rounded-full h-2 mb-3">
+        <div class="bg-[#b85c38] h-2 rounded-full progress-bar" :style="'width:'+progress.progress+'%'"></div>
       </div>
       <div class="text-xs text-slate-500 mb-2">智能体实时日志 — 点击展开查看完整内容</div>
-      <div class="h-96 overflow-y-auto space-y-2 bg-gray-900 rounded-lg p-3 font-mono text-xs" x-ref="logContainer"
+      <div class="h-96 overflow-y-auto space-y-2 bg-ink rounded-lg p-3 font-mono text-xs text-[#f7f3ea]" x-ref="logContainer"
            x-effect="if($refs.logContainer) $refs.logContainer.scrollTop=$refs.logContainer.scrollHeight">
         <template x-for="log in stageLog" :key="log.id">
           <div>
@@ -251,31 +1083,31 @@
     <div x-show="runResult" class="surface rounded-lg p-6" x-transition>
       <h2 class="text-base font-semibold mb-3">创作结果</h2>
       <div class="grid grid-cols-2 gap-3 text-sm mb-4">
-        <div><span class="text-slate-400">主题：</span><span x-text="runResult.topic"></span></div>
-        <div><span class="text-slate-400">流派：</span><span x-text="runResult.genre"></span></div>
-        <div v-if="runResult.stages?.create"><span class="text-slate-400">字数：</span><span x-text="runResult.stages.create.words"></span></div>
-        <div v-if="runResult.stages?.review"><span class="text-slate-400">评分：</span><span x-text="runResult.stages.review.score?.toFixed(1)"></span></div>
-        <div><span class="text-slate-400">耗时：</span><span x-text="(runResult.total_duration_s/60).toFixed(1)+' 分钟'"></span></div>
+        <div><span class="text-slate-400">主题：</span><span x-text="runResult?.topic || ''"></span></div>
+        <div><span class="text-slate-400">流派：</span><span x-text="runResult?.genre || ''"></span></div>
+        <div x-show="runResult?.stages?.create" x-cloak><span class="text-slate-400">字数：</span><span x-text="runResult?.stages?.create?.words || '-'"></span></div>
+        <div x-show="runResult?.stages?.review" x-cloak><span class="text-slate-400">评分：</span><span x-text="runResult?.stages?.review?.score?.toFixed?.(1) || '-'"></span></div>
+        <div><span class="text-slate-400">耗时：</span><span x-text="runResult?.total_duration_s ? (runResult.total_duration_s/60).toFixed(1)+' 分钟' : '-'"></span></div>
       </div>
-      <div v-if="runResult.published_url && !runResult.published_url.endsWith('.md')" class="text-sm text-blue-600 mb-2">
-        发布地址：<span x-text="runResult.published_url"></span>
+      <div x-show="runResult?.published_url && !runResult.published_url.endsWith('.md')" x-cloak class="text-sm link-warm mb-2">
+        发布地址：<span x-text="runResult?.published_url || ''"></span>
       </div>
       <button @click="tab='stories'; loadStories()"
-        class="px-4 py-1.5 text-sm border border-slate-700 rounded hover:bg-slate-800/55 transition">查看所有作品</button>
+        class="px-4 py-1.5 text-sm border border-slate-700 rounded hover:bg-[#efe6d8] transition">查看所有作品</button>
     </div>
   </section>
 
   <!-- ====== HISTORY TAB ====== -->
   <section x-show="tab==='history'" x-cloak>
     <div class="surface rounded-lg overflow-hidden">
-      <div class="p-4 border-b border-slate-800/70 flex justify-between items-center">
+      <div class="p-4 border-b border-[#d8cdbc] flex justify-between items-center">
         <h2 class="text-base font-semibold">运行历史 <span class="text-slate-500 text-sm ml-2" x-text="runs.length+' 条'"></span></h2>
-        <button @click="loadHistory()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+        <button @click="loadHistory()" class="text-sm link-warm">刷新</button>
       </div>
       <div x-show="runs.length===0" class="p-8 text-center text-slate-500 text-sm">暂无运行记录，先去「运行」标签创作一篇吧</div>
       <div class="overflow-x-auto" x-show="runs.length>0">
         <table class="w-full text-sm">
-          <thead class="bg-slate-800/55 text-left text-slate-400">
+          <thead class="bg-[#efe6d8] text-left text-slate-400">
             <tr>
               <th class="px-4 py-2 font-medium">运行 ID</th>
               <th class="px-4 py-2 font-medium">主题</th>
@@ -289,10 +1121,10 @@
           <tbody>
             <template x-for="r in runs" :key="r.run_id">
               <tr @click="selectedRun = selectedRun===r.run_id ? null : r.run_id"
-                class="border-t border-slate-800/70 hover:bg-slate-800/55 cursor-pointer transition">
+                class="border-t border-[#d8cdbc] hover:bg-[#efe6d8] cursor-pointer transition">
                 <td class="px-4 py-2 font-mono text-xs" x-text="r.run_id"></td>
                 <td class="px-4 py-2 max-w-40 truncate" x-text="r.topic"></td>
-                <td class="px-4 py-2"><span class="px-2 py-0.5 bg-slate-800/80 rounded text-xs" x-text="r.genre"></span></td>
+                <td class="px-4 py-2"><span class="px-2 py-0.5 bg-[#efe6d8] rounded text-xs" x-text="r.genre"></span></td>
                 <td class="px-4 py-2">
                   <span :class="r.error?'text-red-500':'text-green-500'" x-text="r.error?'失败':'完成'"></span>
                 </td>
@@ -312,11 +1144,11 @@
           <h3 class="font-semibold mb-2" x-text="r.topic"></h3>
           <div class="grid grid-cols-3 gap-3 text-sm">
             <template x-for="(s, name) in r.stages" :key="name">
-              <div class="border border-slate-800/70 rounded p-3 bg-slate-950/35">
+              <div class="border border-[#d8cdbc] rounded p-3 bg-[#f7f3ea]">
                 <div class="text-slate-400 text-xs mb-1" x-text="name"></div>
                 <div :class="'stage-'+s.status" x-text="s.status"></div>
                 <template x-for="(v, k) in s" :key="k">
-                  <div v-if="k!=='status'" class="text-slate-400 text-xs" x-text="k+': '+v"></div>
+                  <div x-show="k!=='status'" class="text-slate-400 text-xs" x-text="k+': '+v"></div>
                 </template>
               </div>
             </template>
@@ -366,9 +1198,9 @@
           <span class="text-sm text-slate-400">间隔(分钟)：</span>
           <input x-model="schedulerInterval" type="number" min="10" class="form-control w-24 rounded px-2 py-1 text-sm">
         </div>
-        <button v-if="!scheduler.active" @click="startScheduler()"
+        <button x-show="!scheduler.active" @click="startScheduler()"
           class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">启动调度</button>
-        <button v-if="scheduler.active" @click="stopScheduler()"
+        <button x-show="scheduler.active" @click="stopScheduler()"
           class="px-4 py-2 bg-red-500 text-white rounded text-sm hover:bg-red-600 transition">停止调度</button>
       </div>
     </div>
@@ -392,7 +1224,7 @@
     <!-- Story Viewer Modal -->
     <div x-show="storyViewer" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" @click.self="storyViewer=null" x-transition>
       <div class="surface rounded-lg w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 m-4">
-        <div class="flex justify-between items-center mb-4 sticky top-0 bg-slate-950/95 pb-2 border-b border-slate-800/70">
+        <div class="flex justify-between items-center mb-4 sticky top-0 bg-[#fffaf1] pb-2 border-b border-[#d8cdbc]">
           <h3 class="font-semibold text-lg" x-text="viewingStory?.name"></h3>
           <button @click="storyViewer=null" class="text-slate-500 hover:text-slate-300 text-xl">&times;</button>
         </div>
@@ -406,7 +1238,7 @@
     <div class="surface rounded-lg p-6 mb-4">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-base font-semibold">素材</h2>
-        <button @click="loadWorkspaceMaterials()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+        <button @click="loadWorkspaceMaterials()" class="text-sm link-warm">刷新</button>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
@@ -430,20 +1262,20 @@
         </div>
       </div>
       <button @click="createWorkspaceMaterial()"
-        class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">新增素材</button>
+        class="px-4 py-2 cta-primary rounded text-sm  transition">新增素材</button>
     </div>
 
     <div class="surface rounded-lg overflow-hidden">
-      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+      <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
         <h3 class="text-sm font-semibold">素材列表 <span class="text-slate-500 ml-1" x-text="workspaceMaterials.length"></span></h3>
         <span class="text-xs text-slate-500">已选 <span x-text="cardForm.source_material_ids.length"></span></span>
       </div>
       <div x-show="workspaceMaterials.length===0" class="p-8 text-center text-slate-500 text-sm">暂无素材</div>
-      <div class="divide-y divide-slate-800/70" x-show="workspaceMaterials.length>0">
+      <div class="divide-y divide-[#d8cdbc]" x-show="workspaceMaterials.length>0">
         <template x-for="m in workspaceMaterials" :key="m.id">
-          <label class="p-4 flex gap-3 hover:bg-slate-800/55 transition cursor-pointer">
+          <label class="p-4 flex gap-3 hover:bg-[#efe6d8] transition cursor-pointer">
             <input type="checkbox" :value="m.id" x-model="cardForm.source_material_ids"
-              class="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-900/60 text-cyan-300 shrink-0">
+              class="mt-1 h-4 w-4 rounded border-[#a9947f] bg-[#fffaf1] text-[#b85c38] shrink-0">
             <div class="min-w-0 flex-1">
               <div class="flex items-start justify-between gap-3 mb-1">
                 <h4 class="text-sm font-medium text-slate-100 truncate" x-text="m.title"></h4>
@@ -505,16 +1337,16 @@
         </div>
       </div>
       <button @click="createWorkspaceCard()"
-        class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">创建选题卡</button>
+        class="px-4 py-2 cta-primary rounded text-sm  transition">创建选题卡</button>
     </div>
 
     <div class="surface rounded-lg overflow-hidden">
-      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+      <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
         <h3 class="text-sm font-semibold">选题列表 <span class="text-slate-500 ml-1" x-text="workspaceCards.length"></span></h3>
-        <button @click="loadWorkspaceCards()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+        <button @click="loadWorkspaceCards()" class="text-sm link-warm">刷新</button>
       </div>
       <div x-show="workspaceCards.length===0" class="p-8 text-center text-slate-500 text-sm">暂无选题卡</div>
-      <div class="divide-y divide-slate-800/70" x-show="workspaceCards.length>0">
+      <div class="divide-y divide-[#d8cdbc]" x-show="workspaceCards.length>0">
         <template x-for="card in workspaceCards" :key="card.id">
           <div class="p-4">
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -536,7 +1368,7 @@
                 <button @click="approveWorkspaceCard(card)" :disabled="card.status==='approved'"
                   class="px-3 py-1.5 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition">通过</button>
                 <button @click="createTaskFromCard(card)" :disabled="card.status!=='approved'"
-                  class="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">建任务</button>
+                  class="px-3 py-1.5 cta-primary rounded text-xs  disabled:opacity-50 disabled:cursor-not-allowed transition">建任务</button>
               </div>
             </div>
           </div>
@@ -548,12 +1380,12 @@
   <!-- ====== WORKSPACE TASKS TAB ====== -->
   <section x-show="tab==='workspace_tasks'" x-cloak>
     <div class="surface rounded-lg overflow-hidden">
-      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+      <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
         <h2 class="text-base font-semibold">任务 <span class="text-slate-500 text-sm ml-1" x-text="workspaceTasks.length"></span></h2>
-        <button @click="loadWorkspaceTasks()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+        <button @click="loadWorkspaceTasks()" class="text-sm link-warm">刷新</button>
       </div>
       <div x-show="workspaceTasks.length===0" class="p-8 text-center text-slate-500 text-sm">暂无任务</div>
-      <div class="divide-y divide-slate-800/70" x-show="workspaceTasks.length>0">
+      <div class="divide-y divide-[#d8cdbc]" x-show="workspaceTasks.length>0">
         <template x-for="task in workspaceTasks" :key="task.id">
           <div class="p-4">
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -576,7 +1408,7 @@
               </div>
               <div class="flex gap-2 shrink-0">
                 <button @click="retryWorkspaceTask(task)" :disabled="task.status!=='failed'"
-                  class="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">重试</button>
+                  class="px-3 py-1.5 cta-primary rounded text-xs  disabled:opacity-50 disabled:cursor-not-allowed transition">重试</button>
                 <button @click="cancelWorkspaceTask(task)" :disabled="task.status!=='queued'"
                   class="px-3 py-1.5 bg-red-500 text-white rounded text-xs hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition">取消</button>
               </div>
@@ -591,15 +1423,15 @@
   <section x-show="tab==='workspace_review'" x-cloak>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="surface rounded-lg overflow-hidden">
-        <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+        <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
           <h2 class="text-base font-semibold">草稿 <span class="text-slate-500 text-sm ml-1" x-text="workspaceDrafts.length"></span></h2>
-          <button @click="loadWorkspaceDrafts()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+          <button @click="loadWorkspaceDrafts()" class="text-sm link-warm">刷新</button>
         </div>
         <div x-show="workspaceDrafts.length===0" class="p-8 text-center text-slate-500 text-sm">暂无待审草稿</div>
-        <div class="divide-y divide-slate-800/70" x-show="workspaceDrafts.length>0">
+        <div class="divide-y divide-[#d8cdbc]" x-show="workspaceDrafts.length>0">
           <template x-for="draft in workspaceDrafts" :key="draft.id">
             <button @click="openDraft(draft)" type="button"
-              :class="selectedDraft?.id===draft.id?'bg-cyan-400/10':'hover:bg-slate-800/55'"
+              :class="selectedDraft?.id===draft.id?'bg-[#efe6d8]':'hover:bg-[#efe6d8]'"
               class="w-full p-4 text-left transition">
               <div class="flex items-start justify-between gap-2 mb-1">
                 <span class="font-medium text-sm text-slate-100 line-clamp-2" x-text="draft.title"></span>
@@ -648,12 +1480,12 @@
           </div>
           <div class="flex flex-wrap gap-2">
             <button @click="saveDraft()"
-              class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">保存</button>
+              class="px-4 py-2 cta-primary rounded text-sm  transition">保存</button>
             <button @click="markDraftReady()"
               class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">就绪</button>
             <button @click="generatePackage(selectedDraft.task_id, 'zhihu')"
               :disabled="selectedDraft?.status !== 'ready_for_package'"
-              class="px-4 py-2 bg-slate-100 text-slate-950 rounded text-sm hover:bg-white disabled:opacity-45 disabled:cursor-not-allowed transition">生成知乎包</button>
+              class="px-4 py-2 cta-primary rounded text-sm  disabled:opacity-45 disabled:cursor-not-allowed transition">生成知乎包</button>
           </div>
         </div>
       </div>
@@ -663,12 +1495,12 @@
   <!-- ====== WORKSPACE PACKAGES TAB ====== -->
   <section x-show="tab==='workspace_packages'" x-cloak>
     <div class="surface rounded-lg overflow-hidden">
-      <div class="p-4 border-b border-slate-800/70 flex items-center justify-between">
+      <div class="p-4 border-b border-[#d8cdbc] flex items-center justify-between">
         <h2 class="text-base font-semibold">发布包 <span class="text-slate-500 text-sm ml-1" x-text="workspacePackages.length"></span></h2>
-        <button @click="loadWorkspacePackages()" class="text-sm text-cyan-300 hover:underline">刷新</button>
+        <button @click="loadWorkspacePackages()" class="text-sm link-warm">刷新</button>
       </div>
       <div x-show="workspacePackages.length===0" class="p-8 text-center text-slate-500 text-sm">暂无发布包</div>
-      <div class="divide-y divide-slate-800/70" x-show="workspacePackages.length>0">
+      <div class="divide-y divide-[#d8cdbc]" x-show="workspacePackages.length>0">
         <template x-for="pkg in workspacePackages" :key="pkg.id">
           <div class="p-4">
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -676,7 +1508,7 @@
                 <div class="flex flex-wrap items-center gap-2 mb-1">
                   <h3 class="font-medium text-sm text-slate-100 break-words" x-text="pkg.title"></h3>
                   <span class="status-chip px-2 py-0.5 text-xs" x-text="pkg.status"></span>
-                  <span class="status-chip px-2 py-0.5 text-xs text-cyan-200" x-text="pkg.platform"></span>
+                  <span class="status-chip px-2 py-0.5 text-xs text-[#7b341e]" x-text="pkg.platform"></span>
                 </div>
                 <p class="text-sm text-slate-400 line-clamp-2" x-text="pkg.synopsis"></p>
                 <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-slate-500">
@@ -706,8 +1538,7 @@ function initParticleNetwork() {
   let width = 0;
   let height = 0;
   let particles = [];
-  let animationId = null;
-  const particleCount = 42;
+  const particleCount = 34;
 
   function resize() {
     width = window.innerWidth;
@@ -718,10 +1549,10 @@ function initParticleNetwork() {
     particles = Array.from({ length: particleCount }, () => ({
       x: Math.random() * width,
       y: Math.random() * height,
-      vx: (Math.random() - 0.5) * 0.22,
-      vy: (Math.random() - 0.5) * 0.22,
-      r: 1 + Math.random() * 1.8,
-      a: 0.24 + Math.random() * 0.38,
+      vx: (Math.random() - 0.5) * 0.18,
+      vy: (Math.random() - 0.5) * 0.18,
+      r: 1 + Math.random() * 1.6,
+      a: 0.16 + Math.random() * 0.24,
     }));
     draw();
   }
@@ -733,8 +1564,8 @@ function initParticleNetwork() {
       for (let j = i + 1; j < particles.length; j += 1) {
         const b = particles[j];
         const distance = Math.hypot(a.x - b.x, a.y - b.y);
-        if (distance < 128) {
-          ctx.strokeStyle = `rgba(45, 212, 191, ${(1 - distance / 128) * 0.13})`;
+        if (distance < 140) {
+          ctx.strokeStyle = `rgba(184, 92, 56, ${(1 - distance / 140) * 0.12})`;
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
@@ -744,7 +1575,7 @@ function initParticleNetwork() {
       }
     }
     for (const p of particles) {
-      ctx.fillStyle = `rgba(103, 232, 249, ${p.a})`;
+      ctx.fillStyle = `rgba(123, 52, 30, ${p.a})`;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fill();
@@ -761,23 +1592,61 @@ function initParticleNetwork() {
       if (p.y > height + 10) p.y = -10;
     }
     draw();
-    animationId = requestAnimationFrame(tick);
+    requestAnimationFrame(tick);
   }
 
   resize();
   window.addEventListener('resize', resize);
   if (!reducedMotion) {
-    animationId = requestAnimationFrame(tick);
+    requestAnimationFrame(tick);
   }
+}
+
+function emptyProjectWorkspace() {
+  return {
+    stories: [],
+    video_assets: [],
+    assets: [],
+    assets_summary: {},
+    production_status: {},
+    release_manifest: {},
+    release_history: [],
+    drama_sessions: [],
+    rework_requests: [],
+    reviews: [],
+    operation_logs: [],
+    consistency_profiles: [],
+    latest_consistency_profile: null,
+    stage_summary: {},
+    next_action: {},
+  };
 }
 
 function app() {
   return {
-    tab: 'run',
+    tab: 'projectDashboard',
     genres: [],
     runs: [],
     selectedRun: null,
     stories: [],
+    projects: [],
+    projectQuery: '',
+    projectWorkbenchOpen: false,
+    selectedProject: null,
+    projectWorkspace: emptyProjectWorkspace(),
+    projectTimeline: [],
+    assetFilter: 'all',
+    selectedAsset: null,
+    assetReviewDialog: { open: false, asset: null, decision: '', comment: '', agent_instruction: '' },
+    reworkExecution: { status: '', message: '', content: '', request: null },
+    packageExportStatus: {},
+    releaseAuditDetail: null,
+    taskCenter: { summary: {}, tasks: [] },
+    unifiedTasks: [],
+    costCenter: { summary: {}, entries: [] },
+    costLedger: [],
+    costCenterDate: new Date().toISOString().slice(0, 10),
+    costCenterProjectId: '',
     workspaceMaterials: [],
     workspaceCards: [],
     workspaceTasks: [],
@@ -809,9 +1678,517 @@ function app() {
     storyContent: '',
 
     async init() {
+      initParticleNetwork();
       try { this.genres = await (await fetch('/api/skills/genres')).json(); } catch(e) {}
       this.loadScheduler();
-      initParticleNetwork();
+      this.loadStories();
+      this.loadProjects();
+      this.loadTaskCenter();
+      this.loadCostCenter();
+      this.loadWorkspace();
+    },
+
+    // ---- Project dashboard ----
+    async loadProjects() {
+      try {
+        const res = await fetch('/api/projects');
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        const data = await res.json();
+        this.projects = data.projects || [];
+      } catch(e) {
+        this.workspaceError = '项目加载失败: ' + e.message;
+      }
+    },
+    async loadTaskCenter() {
+      try {
+        const res = await fetch('/api/tasks');
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        const data = await res.json();
+        this.taskCenter = data;
+        this.unifiedTasks = data.tasks || [];
+      } catch(e) {
+        this.workspaceError = '任务中心加载失败: ' + e.message;
+      }
+    },
+    filteredProjects() {
+      const q = (this.projectQuery || '').trim().toLowerCase();
+      if (!q) return this.projects;
+      return this.projects.filter(project => {
+        const text = [project.title, project.description, project.source, ...(project.tags || [])].join(' ').toLowerCase();
+        return text.includes(q);
+      });
+    },
+    taskCountByStatus(status) {
+      return Number((this.taskCenter.summary || {})[status] || 0);
+    },
+    async loadCostCenter() {
+      try {
+        const params = new URLSearchParams();
+        if (this.costCenterDate) params.set('date', this.costCenterDate);
+        if ((this.costCenterProjectId || '').trim()) params.set('project_id', this.costCenterProjectId.trim());
+        const summaryRes = await fetch('/api/costs/summary' + (params.toString() ? '?' + params.toString() : ''));
+        if (!summaryRes.ok) throw new Error(await this.workspaceFailure(summaryRes));
+        const ledgerRes = await fetch('/api/costs/ledger' + (params.toString() ? '?' + params.toString() : ''));
+        if (!ledgerRes.ok) throw new Error(await this.workspaceFailure(ledgerRes));
+        const summary = await summaryRes.json();
+        const ledger = await ledgerRes.json();
+        this.costCenter = { summary: summary, entries: ledger.entries || [], date: summary.date || this.costCenterDate };
+        this.costLedger = ledger.entries || [];
+      } catch(e) {
+        this.workspaceError = '成本中心加载失败: ' + e.message;
+      }
+    },
+    costSummary() {
+      return this.costCenter.summary || {};
+    },
+    filteredCostLedger() {
+      return this.costLedger || [];
+    },
+    async openProjectWorkbench(project) {
+      this.selectedProject = project;
+      this.projectWorkbenchOpen = true;
+      await Promise.all([
+        this.loadProjectWorkspace(project.id),
+        this.loadProjectTimeline(project.id),
+      ]);
+    },
+    closeProjectWorkbench() {
+      this.projectWorkbenchOpen = false;
+      this.selectedProject = null;
+      this.projectWorkspace = emptyProjectWorkspace();
+      this.projectTimeline = [];
+      this.assetFilter = 'all';
+      this.selectedAsset = null;
+      this.packageExportStatus = {};
+      this.releaseAuditDetail = null;
+      this.closeAssetReviewDialog();
+    },
+    async loadProjectWorkspace(projectId) {
+      try {
+        const res = await fetch('/api/projects/' + encodeURIComponent(projectId));
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        const data = await res.json();
+        this.selectedProject = data.project || this.selectedProject;
+        this.projectWorkspace = this.applyProjectWorkspace(data);
+        this.assetFilter = 'all';
+        this.selectedAsset = this.projectAssets()[0] || null;
+      } catch(e) {
+        this.workspaceError = '项目工作台加载失败: ' + e.message;
+      }
+    },
+    applyProjectWorkspace(data) {
+      return {
+        ...emptyProjectWorkspace(),
+        stories: data.stories || [],
+        video_assets: data.video_assets || [],
+        assets: data.assets || [],
+        assets_summary: data.assets_summary || {},
+        production_status: data.production_status || {},
+        release_manifest: data.release_manifest || {},
+        release_history: data.release_history || [],
+        drama_sessions: data.drama_sessions || [],
+        rework_requests: data.rework_requests || [],
+        reviews: data.reviews || [],
+        operation_logs: data.operation_logs || [],
+        consistency_profiles: data.consistency_profiles || [],
+        latest_consistency_profile: data.latest_consistency_profile || null,
+        stage_summary: data.stage_summary || {},
+        next_action: data.next_action || {},
+      };
+    },
+    projectAssets() {
+      const assets = this.projectWorkspace.assets || this.projectWorkspace.video_assets;
+      return assets.length ? assets : (this.projectWorkspace.video_assets || []);
+    },
+    assetKinds() {
+      return [...new Set(this.projectAssets().map(asset => asset.kind).filter(Boolean))].sort();
+    },
+    assetSummary() {
+      return this.projectWorkspace.assets_summary || {};
+    },
+    assetSourceCounts() {
+      return Object.entries(this.assetSummary().by_source || {});
+    },
+    assetReviewCounts() {
+      return Object.entries(this.assetSummary().review || {});
+    },
+    pendingReworkRequests() {
+      return (this.projectWorkspace.rework_requests || []).filter(request => request.status === 'requested');
+    },
+    filteredProjectAssets() {
+      if (this.assetFilter === 'all') return this.projectAssets();
+      return this.projectAssets().filter(asset => asset.kind === this.assetFilter);
+    },
+    selectProjectAsset(asset) {
+      this.selectedAsset = asset;
+    },
+    projectDramaSessions() {
+      return this.projectWorkspace.drama_sessions || [];
+    },
+    stageSummary() {
+      return this.projectWorkspace.stage_summary || {};
+    },
+    workspaceNextAction() {
+      return this.projectWorkspace.next_action || {};
+    },
+    productionStatus() {
+      return this.projectWorkspace.production_status || {};
+    },
+    releaseBlockers() {
+      return this.productionStatus().release_blockers || [];
+    },
+    releaseManifest() {
+      return this.projectWorkspace.release_manifest || {};
+    },
+    releaseCostGuardrail() {
+      return this.releaseManifest().cost_guardrail || {
+        currency: 'CNY',
+        estimate: {},
+        budget: {},
+        within_budget: true,
+        configured: false,
+      };
+    },
+    releaseHistory() {
+      return this.projectWorkspace.release_history || [];
+    },
+    releaseCostLedger() {
+      return this.releaseAuditDetail?.cost_ledger || [];
+    },
+    releaseCostLedgerSummary() {
+      return this.releaseAuditDetail?.cost_ledger_summary || {
+        currency: 'CNY',
+        entry_count: 0,
+        estimated_total_cny: 0,
+        actual_total_cny: 0,
+        total_cny: 0,
+      };
+    },
+    releaseIntegrity() {
+      return this.releaseAuditDetail?.integrity || { status: '', summary: {}, checks: [] };
+    },
+    releaseIntegrityChecks() {
+      return this.releaseAuditDetail?.integrity?.checks || [];
+    },
+    async loadReleaseDetail(release) {
+      if (!release?.id || !this.selectedProject?.id) return;
+      this.releaseAuditDetail = null;
+      try {
+        const res = await fetch(
+          '/api/projects/' + encodeURIComponent(this.selectedProject.id)
+          + '/release/history/' + encodeURIComponent(release.id)
+        );
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this.releaseAuditDetail = await res.json();
+      } catch(e) {
+        alert('交付详情加载失败: ' + e.message);
+      }
+    },
+    async copyReleaseManifest() {
+      const text = JSON.stringify(this.releaseManifest(), null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch(e) {
+        window.prompt('复制清单', text);
+      }
+    },
+    downloadReleasePackage() {
+      const url = this.releaseManifest().delivery_actions?.download_url;
+      if (!url) return;
+      window.location.href = url;
+    },
+    async confirmProjectRelease() {
+      const url = this.releaseManifest().delivery_actions?.confirm_url;
+      if (!url || !this.selectedProject?.id) return;
+      try {
+        const res = await fetch(url, {method: 'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        const data = await res.json();
+        this.selectedProject = data.project || this.selectedProject;
+        this.projectWorkspace = this.applyProjectWorkspace(data);
+        await this.loadProjectTimeline(this.selectedProject.id);
+      } catch(e) {
+        alert('确认交付失败: ' + e.message);
+      }
+    },
+    recommendedDramaSession() {
+      const runId = this.productionStatus().recommended_run_id;
+      return this.projectDramaSessions().find(session => session.id === runId) || null;
+    },
+    openRecommendedDramaSession() {
+      const session = this.recommendedDramaSession();
+      if (session) {
+        this.openVideoForProject(session);
+      }
+    },
+    storyForDramaSession(session) {
+      const stories = this.projectWorkspace.stories || [];
+      if (!session?.story_path) return stories[0] || null;
+      return stories.find(story =>
+        story.body_path === session.story_path || story.path === session.story_path
+      ) || stories[0] || null;
+    },
+    packageSummary(session) {
+      return session.latest_package?.package_summary || null;
+    },
+    async exportProjectDramaPackage(session) {
+      if (!session?.id || !this.selectedProject?.id) return;
+      this.packageExportStatus[session.id] = '导出中...';
+      try {
+        const res = await fetch('/api/drama-video/package/export', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ run_id: session.id }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || '项目包导出失败');
+        this.packageExportStatus[session.id] = '已导出: ' + (data.package?.package_uri || '');
+        await this.loadProjectWorkspace(this.selectedProject.id);
+        await this.loadProjectTimeline(this.selectedProject.id);
+      } catch(e) {
+        this.packageExportStatus[session.id] = '导出失败: ' + e.message;
+        alert('项目包导出失败: ' + e.message);
+      }
+    },
+    completedReworkAsset(request) {
+      if (!request?.completed_stage_version_id) return null;
+      return this.projectAssets().find(asset =>
+        asset.source === 'stage_version' && asset.id === request.completed_stage_version_id
+      ) || null;
+    },
+    completedReworkVersion(request) {
+      const asset = this.completedReworkAsset(request);
+      return asset?.record || request?.completed_stage_version || null;
+    },
+    assetReviewDecision(asset) {
+      return asset?.review?.decision || 'unreviewed';
+    },
+    assetPreviewText(asset) {
+      if (!asset) return '';
+      const record = asset.record || {};
+      if (record.content) return record.content;
+      if (record.prompt) return record.prompt;
+      if (record.uri) return record.uri;
+      return JSON.stringify(record, null, 2);
+    },
+    async copyAssetPrompt(asset) {
+      const text = this.assetPreviewText(asset);
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch(e) {
+        window.prompt('复制文本', text);
+      }
+    },
+    openAssetReviewDialog(asset, decision) {
+      if (!asset) return;
+      this.assetReviewDialog = {
+        open: true,
+        asset: asset,
+        decision: decision,
+        comment: asset.review?.comment || '',
+        agent_instruction: asset.review?.metadata?.agent_instruction || '',
+      };
+    },
+    closeAssetReviewDialog() {
+      this.assetReviewDialog = { open: false, asset: null, decision: '', comment: '', agent_instruction: '' };
+    },
+    async submitAssetReviewDialog() {
+      const dialog = this.assetReviewDialog;
+      await this.reviewProjectAsset(dialog.asset, dialog.decision, dialog.comment, dialog.agent_instruction);
+    },
+    async reviewProjectAsset(asset, decision, comment = '', agent_instruction = '') {
+      if (!asset || !this.selectedProject?.id) return;
+      try {
+        const res = await fetch('/api/projects/' + encodeURIComponent(this.selectedProject.id) + '/assets/reviews', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            target_kind: asset.review_target_kind,
+            target_id: asset.id,
+            decision: decision,
+            comment: comment,
+            metadata: { agent_instruction: agent_instruction },
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        const data = await res.json();
+        this.selectedProject = data.project || this.selectedProject;
+        this.projectWorkspace = this.applyProjectWorkspace(data);
+        this.selectedAsset = this.projectAssets().find(item =>
+          item.id === asset.id && item.source === asset.source
+        ) || this.projectAssets()[0] || null;
+        this.closeAssetReviewDialog();
+        await this.loadProjectTimeline(this.selectedProject.id);
+      } catch(e) {
+        alert('资产审核失败: ' + e.message);
+      }
+    },
+    async executeReworkRequest(request) {
+      if (!request || !this.selectedProject?.id) return;
+      this.reworkExecution = {
+        status: 'running',
+        message: (request.stage || '阶段') + ' 正在返工',
+        content: '',
+        request: request,
+      };
+      try {
+        const res = await fetch('/api/drama-video/deepagent/revise', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            run_id: request.run_id,
+            stage: request.stage,
+            current_draft: '',
+            feedback: request.instruction || request.comment,
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        const data = await res.json();
+        this.reworkExecution = {
+          status: 'completed',
+          message: '返工完成',
+          content: data.content || '',
+          request: data.rework_request || request,
+        };
+        await this.loadProjectWorkspace(this.selectedProject.id);
+        await this.loadProjectTimeline(this.selectedProject.id);
+      } catch(e) {
+        this.reworkExecution = {
+          status: 'failed',
+          message: '执行返工失败: ' + e.message,
+          content: '',
+          request: request,
+        };
+        alert('执行返工失败: ' + e.message);
+      }
+    },
+    openCompletedReworkVersion(request) {
+      const asset = this.completedReworkAsset(request);
+      if (asset) {
+        this.selectedAsset = asset;
+        this.assetFilter = 'all';
+        return;
+      }
+      const version = this.completedReworkVersion(request);
+      if (version) {
+        this.selectedAsset = {
+          source: 'stage_version',
+          id: version.id,
+          kind: 'prompt',
+          title: (version.stage || request.stage || '阶段') + ' / ' + (version.event || 'revision'),
+          content_type: 'text/plain',
+          review_target_kind: 'stage_version',
+          record: version,
+          review: { decision: 'unreviewed' },
+        };
+      }
+    },
+    async confirmReworkVersionAsDraft(request) {
+      const version = this.completedReworkVersion(request);
+      if (!version?.content) {
+        alert('未找到可确认的返工版本');
+        return;
+      }
+      try {
+        const res = await fetch('/api/drama-video/deepagent/confirm', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            run_id: request.run_id,
+            stage: request.stage,
+            content: version.content,
+          }),
+        });
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        this.reworkExecution = {
+          status: 'completed',
+          message: '返工版本已确认为草稿',
+          content: version.content,
+          request: request,
+        };
+        await this.loadProjectWorkspace(this.selectedProject.id);
+        await this.loadProjectTimeline(this.selectedProject.id);
+      } catch(e) {
+        alert('确认返工版本失败: ' + e.message);
+      }
+    },
+    requestReworkVersionChanges(request) {
+      let asset = this.completedReworkAsset(request);
+      if (!asset && request?.completed_stage_version) {
+        const version = request.completed_stage_version;
+        asset = {
+          source: 'stage_version',
+          id: version.id,
+          kind: 'prompt',
+          title: (version.stage || request.stage || '阶段') + ' / ' + (version.event || 'revision'),
+          content_type: 'text/plain',
+          review_target_kind: 'stage_version',
+          record: version,
+          review: { decision: 'unreviewed' },
+        };
+      }
+      if (!asset) {
+        alert('未找到可再次修改的返工版本');
+        return;
+      }
+      this.selectedAsset = asset;
+      this.openAssetReviewDialog(asset, 'changes_requested');
+    },
+    async loadProjectTimeline(projectId) {
+      try {
+        const res = await fetch('/api/projects/' + encodeURIComponent(projectId) + '/timeline');
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        const data = await res.json();
+        this.projectTimeline = data.timeline || [];
+      } catch(e) {
+        this.workspaceError = '项目时间线加载失败: ' + e.message;
+      }
+    },
+    async retryUnifiedTask(task) {
+      try {
+        const res = await fetch('/api/tasks/'+encodeURIComponent(task.id)+'/retry', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadTaskCenter();
+      } catch(e) { alert('重试失败: '+e.message); }
+    },
+    async cancelUnifiedTask(task) {
+      try {
+        const res = await fetch('/api/tasks/'+encodeURIComponent(task.id)+'/cancel', {method:'POST'});
+        if (!res.ok) throw new Error(await this.workspaceFailure(res));
+        await this.loadTaskCenter();
+      } catch(e) { alert('取消失败: '+e.message); }
+    },
+    openVideoForProject(session = null) {
+      const url = new URL('/video', window.location.origin);
+      if (this.selectedProject?.id) {
+        url.searchParams.set('project_id', this.selectedProject.id);
+      }
+      const story = this.storyForDramaSession(session);
+      if (story?.body_path) {
+        url.searchParams.set('story_path', story.body_path);
+      } else if (session?.story_path) {
+        url.searchParams.set('story_path', session.story_path);
+      }
+      if (session?.id) {
+        url.searchParams.set('run_id', session.id);
+      }
+      window.location.href = url.toString();
+    },
+    formatDate(value) {
+      if (!value) return '';
+      return String(value).replace('T', ' ').slice(0, 16);
+    },
+    timelineTitle(item) {
+      const record = item.record || {};
+      if (item.kind === 'story') return record.title || '小说版本';
+      if (item.kind === 'video_asset') return record.shot_id || record.uri || '视频资产';
+      if (item.kind === 'review') return record.decision || '审核记录';
+      if (item.kind === 'drama_session') return record.status || '短剧生产会话';
+      if (item.kind === 'drama_stage_version') return (record.stage || '阶段') + ' / ' + (record.event || '版本');
+      if (item.kind === 'drama_video_run') return record.status || '视频生成任务';
+      if (item.kind === 'drama_project_package') return record.package_uri || '短剧项目包';
+      return item.id;
     },
 
     // ---- Run ----

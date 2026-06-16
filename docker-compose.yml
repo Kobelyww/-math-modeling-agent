@@ -1,17 +1,52 @@
-
 services:
-  redis-stack:
-    image: redis/redis-stack:latest
-    container_name: redis-stack
+  web:
+    build: .
     ports:
-      - "6379:6379"   # Redis
-      - "5541:8001"   # RedisInsight (管理界面，宿主机 5541 避免冲突)
+      - "8000:8000"
+    env_file:
+      - zhihu_fiction/.env.production.example
     environment:
-      REDIS_ARGS: "--requirepass ${REDIS_PASSWORD:-redis-secure}"
+      - ZH_APP_ENV=production
+      - ZH_REQUIRE_AUTH=true
+      - ZH_QUEUE_BACKEND=redis
+      - ZH_VIDEO_QUEUE_BACKEND=redis
+      - ZH_ASSET_BACKEND=minio
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+    depends_on:
+      - redis
+      - minio
+
+  video-worker:
+    build: .
+    command: ["python", "-m", "zhihu_fiction.app.services.drama_video_worker"]
+    env_file:
+      - zhihu_fiction/.env.production.example
+    environment:
+      - ZH_APP_ENV=production
+      - ZH_REQUIRE_AUTH=true
+      - ZH_QUEUE_BACKEND=redis
+      - ZH_VIDEO_QUEUE_BACKEND=redis
+      - ZH_ASSET_BACKEND=minio
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+    depends_on:
+      - redis
+      - minio
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
     volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
-
-volumes:
-  redis_data:
+      - ./.docker-data/minio:/data

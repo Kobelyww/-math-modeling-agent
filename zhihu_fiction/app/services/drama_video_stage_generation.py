@@ -1,0 +1,109 @@
+"""DeepAgent stage generation service for short-drama production."""
+from __future__ import annotations
+
+from dataclasses import replace
+from types import SimpleNamespace
+
+from fastapi import HTTPException
+
+from ...base import normalize_content
+from ...llm import create_llm
+from ...orchestrator import create_drama_video_coordinator, run_drama_video_coordinator
+from ..drama_video_stages import STAGE_LABELS, TEXT_STAGE_INSTRUCTIONS
+from .story_library import safe_story_file, story_result_from_file
+
+
+def deepseek_v4pro_settings(settings):
+    if getattr(settings, "model", "") == "deepseek-v4-pro":
+        return settings
+    try:
+        return replace(settings, model="deepseek-v4-pro")
+    except TypeError:
+        data = dict(getattr(settings, "__dict__", {}))
+        data["model"] = "deepseek-v4-pro"
+        return SimpleNamespace(**data)
+
+
+def format_stage_context(stage_drafts: dict[str, str]) -> str:
+    sections: list[str] = []
+    for stage_id, label in STAGE_LABELS.items():
+        if stage_id == "video":
+            continue
+        draft = stage_drafts.get(stage_id)
+        if draft:
+            sections.append(f"【{label}已确认稿】\n{draft}")
+    return "\n\n".join(sections) if sections else "无"
+
+
+def build_stage_prompt(result, stage: str, stage_drafts: dict[str, str]) -> str:
+    label = STAGE_LABELS[stage]
+    instruction = TEXT_STAGE_INSTRUCTIONS[stage]
+    return f"""你是 DeepSeek V4 Pro，负责把知乎/网文小说开发成可生产短剧的视频前置资产。
+
+当前要创作的生产阶段：{label}
+阶段任务：{instruction}
+
+要求：
+- 只输出当前阶段内容，不要输出寒暄。
+- 内容要能直接被短剧制作工作台编辑和确认。
+- 保持人物、剧情、风格和前序确认稿一致。
+- 如果当前阶段是人物参考图或分镜，请输出可直接给图像/视频模型使用的 Prompt。
+- 不要调用视频生成模型。
+
+小说标题：{result.topic}
+题材：{result.genre}
+
+前序已确认稿：
+{format_stage_context(stage_drafts)}
+
+发布方案参考：
+{result.synthesis or "无"}
+
+小说正文：
+{result.final_story}
+"""
+
+
+def run_stage_deepagent(
+    dependencies,
+    story_path: str,
+    stage: str,
+    stage_drafts: dict[str, str],
+    *,
+    current_draft: str = "",
+    human_feedback: str = "",
+    compat_attr=lambda name, default=None: default,
+) -> dict:
+    if stage not in TEXT_STAGE_INSTRUCTIONS:
+        raise HTTPException(400, "stage must be one of script, style, plot, character_refs, storyboard")
+
+    story_file = safe_story_file(story_path)
+    result = story_result_from_file(story_file)
+    settings = compat_attr("settings", dependencies.settings)
+    llm_settings = deepseek_v4pro_settings(settings)
+    llm_factory = compat_attr("create_llm", create_llm)
+    coordinator_factory = compat_attr("create_drama_video_coordinator", create_drama_video_coordinator)
+    coordinator_runner = compat_attr("run_drama_video_coordinator", run_drama_video_coordinator)
+    llm = llm_factory(llm_settings, temperature=0.4)
+    coordinator = coordinator_factory(llm, stage)
+    output = coordinator_runner(
+        coordinator,
+        result=result,
+        stage=stage,
+        stage_drafts=stage_drafts,
+        current_draft=current_draft,
+        human_feedback=human_feedback,
+    )
+    content = normalize_content(output.get("content", "")).strip()
+    if not content:
+        raise HTTPException(502, "DeepAgent returned empty content")
+
+    return {
+        "status": "ok",
+        "stage": stage,
+        "label": STAGE_LABELS[stage],
+        "model": "deepseek-v4-pro",
+        "agent": "deepagent",
+        "content": content,
+        "events": output.get("events", []),
+    }

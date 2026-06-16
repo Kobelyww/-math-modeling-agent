@@ -6,6 +6,8 @@ from .config import Settings
 
 
 def create_llm(settings: Settings, temperature: float | None = None) -> ChatDeepSeek:
+    if not settings.api_key:
+        raise RuntimeError("Missing DEEPSEEK_API_KEY in .env")
     kwargs: dict = {
         "model": settings.model,
         "temperature": temperature if temperature is not None else settings.temperature,

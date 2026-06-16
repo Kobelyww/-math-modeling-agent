@@ -253,6 +253,13 @@ class ZhihuPublisher:
             # Step 3 -- fill content
             self._fill_content(page, content)
 
+            # Step 3.5 -- pre-publish preview (catch bad content before it goes live)
+            preview = content[:200].replace("\n", " ")
+            print(f"  [Zhihu] Pre-publish preview: {preview}...")
+            if len(preview) < 50:
+                print(f"  [Zhihu] ⚠️  WARNING: content body is very short ({len(content)} chars).")
+                print(f"  [Zhihu]     This may indicate a parsing bug. Review before publishing.")
+
             # Step 4 -- add tags
             if tags:
                 self._add_tags(page, tags)
@@ -333,15 +340,16 @@ class ZhihuPublisher:
         )
 
     def _fill_content(self, page, content: str) -> None:
-        """Fill the article body using a multi-selector + JS fallback strategy.
+        """Fill the article body using a multi-selector + paste fallback strategy.
+
+        Draft.js editors (Zhihu) do not reliably accept ``execCommand('insertText')``
+        because it bypasses React state management.  We use the clipboard API
+        instead, which triggers proper React input events.
 
         Order:
             1. .public-DraftEditor-content
             2. div[contenteditable='true']
             3. [role='textbox']
-
-        After selecting the element, tries JavaScript ``execCommand('insertText')``
-        first, then falls back to Playwright's ``type()``.
         """
         selectors = [
             ".public-DraftEditor-content",
@@ -354,18 +362,34 @@ class ZhihuPublisher:
                 el = page.locator(selector).first
                 if el.is_visible(timeout=3000):
                     el.click()
+                    page.wait_for_timeout(300)
+
+                    # Select-all + paste via clipboard (works with Draft.js)
+                    import sys
+                    mod_key = "Meta" if sys.platform == "darwin" else "Control"
+                    page.keyboard.press(f"{mod_key}+a")
+                    page.wait_for_timeout(100)
 
                     try:
-                        el.evaluate(
-                            """(el, text) => {
-                                el.focus();
-                                document.execCommand('selectAll', false, null);
-                                document.execCommand('insertText', false, text);
+                        page.keyboard.insert_text(content)
+                    except Exception:
+                        # Fallback: clipboard API via JS (for very long content)
+                        page.evaluate(
+                            """(text) => {
+                                const ta = document.createElement('textarea');
+                                ta.value = text;
+                                ta.style.position = 'fixed';
+                                ta.style.left = '-9999px';
+                                document.body.appendChild(ta);
+                                ta.select();
+                                document.execCommand('copy');
+                                document.body.removeChild(ta);
                             }""",
                             content,
                         )
-                    except Exception:
-                        el.type(content, delay=5)
+                        page.keyboard.press(f"{mod_key}+v")
+
+                    page.wait_for_timeout(500)
 
                     print(
                         f"  [Zhihu] Content filled ({len(content)} chars) "
@@ -384,19 +408,38 @@ class ZhihuPublisher:
         """Type tags into the tag input, pressing Enter after each one."""
         tag_selectors = [
             "input[placeholder*='标签']",
+            "input[placeholder*='搜索']",
             ".TagInput input",
+            ".Editable-tag input",
+            "[class*='tag'] input",
+            ".Input-wrapper input",
             "[data-testid='article-tags'] input",
+            "[class*='Topic'] input",
         ]
 
         tag_input = None
         for selector in tag_selectors:
             try:
                 el = page.locator(selector).first
-                if el.is_visible(timeout=3000):
+                if el.is_visible(timeout=2000):
                     tag_input = el
                     break
             except Exception:
                 continue
+
+        if tag_input is None:
+            # Last resort: look for any visible input near the bottom of the page
+            try:
+                inputs = page.locator("input:visible")
+                count = inputs.count()
+                for i in range(count):
+                    inp = inputs.nth(i)
+                    placeholder = inp.get_attribute("placeholder") or ""
+                    if any(kw in placeholder for kw in ("标签", "搜索", "话题", "tag")):
+                        tag_input = inp
+                        break
+            except Exception:
+                pass
 
         if tag_input is None:
             print("  [Zhihu] Tag input not found, skipping tags")

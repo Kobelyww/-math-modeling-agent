@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .agents import create_coordinator, ReviewerAgent
+from .agents import create_coordinator, create_drama_video_coordinator, ReviewerAgent
 from .base import normalize_content
 from .config import Settings
 from .llm import create_llm
@@ -81,6 +81,8 @@ def _parse_coordinator_output(output: str) -> dict[str, str]:
     【发布方案】
     <publish plan>
     """
+    import logging
+    _log = logging.getLogger(__name__)
     result = {"story": "", "synthesis": ""}
 
     STORY_MARKER = "【小说正文】"
@@ -95,7 +97,16 @@ def _parse_coordinator_output(output: str) -> dict[str, str]:
     elif story_start >= 0:
         result["story"] = output[story_start + len(STORY_MARKER):].strip()
     else:
-        result["story"] = output
+        _log.warning("【小说正文】 marker not found — using entire output as story")
+        for sep in ("\n# 发布方案", "\n## 发布方案", "\n【发布方案】", "\n---\n"):
+            idx = output.find(sep)
+            if idx > 500:
+                result["story"] = output[:idx].strip()
+                result["synthesis"] = output[idx:].strip()
+                _log.info("Heuristic split at offset %d using %r", idx, sep)
+                break
+        else:
+            result["story"] = output
 
     return result
 
@@ -199,7 +210,11 @@ def run_coordinator(
         )
 
     # Debug: dump all message types to help trace the 0-word issue
+
+
     import logging
+
+
     _log = logging.getLogger(__name__)
     for i, m in enumerate(messages):
         mt = m.get("type", "?") if isinstance(m, dict) else getattr(m, "type", "?")
@@ -241,6 +256,140 @@ def run_coordinator(
         polished=parsed["story"], review="",
         synthesis=parsed["synthesis"],
     )
+
+
+def _format_drama_video_stage_context(stage_drafts: dict[str, str]) -> str:
+    labels = {
+        "script": "剧本",
+        "style": "风格设计",
+        "plot": "剧情设计",
+        "character_refs": "人物参考图",
+        "storyboard": "分镜",
+    }
+    sections: list[str] = []
+    for stage_id, label in labels.items():
+        draft = stage_drafts.get(stage_id)
+        if draft:
+            sections.append(f"【{label}已确认稿】\n{draft}")
+    return "\n\n".join(sections)
+
+
+def _parse_drama_video_stage_output(output: str) -> str:
+    marker = "【阶段草稿】"
+    if marker in output:
+        return output.split(marker, 1)[1].strip()
+    return output.strip()
+
+
+def run_drama_video_coordinator(
+    coordinator,
+    *,
+    result: WorkflowResult,
+    stage: str,
+    stage_drafts: dict[str, str],
+    current_draft: str = "",
+    human_feedback: str = "",
+    stream_callback: callable | None = None,
+) -> dict[str, Any]:
+    """Run the drama-video DeepAgent Coordinator for one confirmed stage."""
+    stage_labels = {
+        "script": "剧本",
+        "style": "风格设计",
+        "plot": "剧情设计",
+        "character_refs": "人物参考图",
+        "storyboard": "分镜",
+    }
+    tool_names = {
+        "script": "write_drama_script",
+        "style": "design_drama_style",
+        "plot": "design_drama_plot",
+        "character_refs": "generate_character_refs",
+        "storyboard": "build_storyboard",
+    }
+    if stage not in stage_labels:
+        raise ValueError("stage must be one of script, style, plot, character_refs, storyboard")
+
+    label = stage_labels[stage]
+    revision_section = ""
+    if current_draft or human_feedback:
+        revision_section = (
+            "\n\n【Human Loop 调整】\n"
+            f"当前阶段草稿：\n{current_draft or '无'}\n\n"
+            f"人类反馈：\n{human_feedback or '无'}\n\n"
+            "请保留已确认方向，只针对人类反馈重写当前阶段草稿。"
+        )
+
+    prompt = (
+        f"请完成短剧视频生产阶段：{label}\n\n"
+        f"请调用 {tool_names[stage]} 工具，参数包含：\n"
+        f"- story_title: {result.topic}\n"
+        f"- genre: {result.genre}\n"
+        f"- story: 小说正文\n"
+        f"- confirmed_context: 前序已确认稿\n"
+        f"- publishing_reference: 发布方案参考\n\n"
+        "工具返回后，请整合为最终阶段草稿，并使用【阶段草稿】标记输出。\n\n"
+        f"小说正文：\n{result.final_story}\n\n"
+        f"前序已确认稿：\n{_format_drama_video_stage_context(stage_drafts) or '无'}\n\n"
+        f"发布方案参考：\n{result.synthesis or '无'}"
+        f"{revision_section}"
+    )
+    input_msg = {"messages": [{"role": "user", "content": prompt}]}
+    events: list[dict[str, Any]] = []
+
+    if stream_callback is None:
+        state = coordinator.invoke(input_msg)
+        messages = state.get("messages", []) if isinstance(state, dict) else []
+    else:
+        last_state = None
+        for chunk in coordinator.stream(input_msg, stream_mode="values"):
+            last_state = chunk
+            msgs = chunk.get("messages", []) if isinstance(chunk, dict) else []
+            if not msgs:
+                continue
+            last_msg = msgs[-1]
+            msg_type = (last_msg.get("type", "") if isinstance(last_msg, dict)
+                        else getattr(last_msg, "type", ""))
+            msg_name = (last_msg.get("name", "") if isinstance(last_msg, dict)
+                        else getattr(last_msg, "name", ""))
+            content = (last_msg.get("content", "") if isinstance(last_msg, dict)
+                       else normalize_content(getattr(last_msg, "content", "") or ""))
+            if msg_type == "ai":
+                tool_calls = (last_msg.get("tool_calls", None) if isinstance(last_msg, dict)
+                              else getattr(last_msg, "tool_calls", None))
+                if tool_calls:
+                    for tool_call in tool_calls:
+                        name = tool_call.get("name", "") if isinstance(tool_call, dict) else getattr(tool_call, "name", "")
+                        args = tool_call.get("args", {}) if isinstance(tool_call, dict) else getattr(tool_call, "args", {})
+                        event = {"type": "tool_call", "name": name, "args": args}
+                        events.append(event)
+                        stream_callback(event)
+                elif content:
+                    event = {"type": "ai_text", "content": content}
+                    events.append(event)
+                    stream_callback(event)
+            elif msg_type == "tool":
+                event = {"type": "tool_result", "name": msg_name, "content": content}
+                events.append(event)
+                stream_callback(event)
+        messages = last_state.get("messages", []) if last_state else []
+
+    output = ""
+    for msg in reversed(messages):
+        content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+        content = normalize_content(content or "")
+        if "【阶段草稿】" in content:
+            output = content
+            break
+    if not output:
+        for msg in reversed(messages):
+            msg_type = msg.get("type", "") if isinstance(msg, dict) else getattr(msg, "type", "")
+            if msg_type == "ai":
+                output = normalize_content(
+                    (msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")) or ""
+                )
+                if output:
+                    break
+    return {"content": _parse_drama_video_stage_output(output), "events": events}
 
 
 def create_orchestrator(

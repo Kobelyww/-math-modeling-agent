@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>短剧视频生产 - Zhihu Fiction Studio</title>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js" defer></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --paper: #f7f3ea;
+    --paper-soft: #ede6d8;
+    --ink: #171412;
+    --ink-muted: #5f574e;
+    --line: #d8cdbc;
+    --clay: #b85c38;
+    --clay-dark: #7b341e;
+    --sand: #fffaf1;
+  }
+  [x-cloak] { display: none !important; }
+  body { background: var(--paper); color: var(--ink); letter-spacing: 0; }
+  .panel { background: var(--sand); border: 1px solid var(--line); }
+  .ink-panel { background: var(--ink); color: var(--paper); border: 1px solid #2b2520; }
+  .muted-panel { background: var(--paper-soft); border: 1px solid var(--line); }
+  .field { background: #fffdf7; border: 1px solid var(--line); color: var(--ink); }
+  .field:focus { outline: none; border-color: var(--clay); box-shadow: 0 0 0 3px rgba(184, 92, 56, 0.14); }
+  .cta { background: var(--ink); color: var(--paper); }
+  .cta:hover { background: #2a241f; }
+  .link-warm { color: var(--clay-dark); }
+  .link-warm:hover { color: var(--clay); text-decoration: underline; }
+  .stage-tab { border: 1px solid var(--line); background: var(--sand); color: var(--ink-muted); }
+  .stage-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .stage-tab.done { border-color: #166534; }
+  .timeline-dot { width: 0.75rem; height: 0.75rem; border-radius: 999px; border: 1px solid var(--line); background: var(--sand); }
+  .timeline-dot.running { background: #d97706; border-color: #d97706; }
+  .timeline-dot.completed { background: #166534; border-color: #166534; }
+  .timeline-dot.failed { background: #be123c; border-color: #be123c; }
+  .log-console { background: #171412; color: #f7f3ea; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .progress-bar { transition: width 0.35s ease; }
+  @media (prefers-reduced-motion: reduce) { .progress-bar { transition: none; } }
+</style>
+</head>
+<body class="min-h-screen" x-data="videoApp()" x-init="init()">
+
+<header class="border-b border-[#d8cdbc] bg-[#f7f3ea]/95">
+  <div class="max-w-7xl mx-auto px-5 py-4 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 bg-[#171412] text-[#f7f3ea] grid place-items-center text-sm font-semibold">VF</div>
+      <div>
+        <h1 class="text-base font-semibold">短剧视频生产</h1>
+        <p class="text-xs text-[#6b6258]">Story-to-video production workspace</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4 text-sm">
+      <button x-show="workspaceOpen" @click="closeVideoWorkspace()" class="link-warm">返回作品库</button>
+      <a href="/" class="link-warm">返回小说工作台</a>
+    </div>
+  </div>
+</header>
+
+<section class="border-b border-[#d8cdbc] bg-[#ede6d8]">
+  <div class="max-w-7xl mx-auto px-5 py-8 grid grid-cols-1 lg:grid-cols-[1.25fr_0.75fr] gap-6">
+    <div x-show="!workspaceOpen">
+      <div class="text-sm text-[#6b6258] mb-3">作品库</div>
+      <h2 class="text-4xl md:text-6xl leading-none font-semibold max-w-3xl">点击作品，进入短剧生产工作台</h2>
+      <p class="mt-5 max-w-2xl text-base leading-7 text-[#5f574e]">
+        先把小说转为剧本，再完成风格设计、剧情设计、人物参考图、分镜，最后提交视频生成任务。
+      </p>
+    </div>
+    <div x-show="workspaceOpen" x-cloak id="workspace-human-loop-dialog" class="space-y-3">
+      <div class="text-sm text-[#6b6258]">Human Loop 对话工作台</div>
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div class="min-w-0">
+          <h2 class="text-2xl md:text-3xl leading-tight font-semibold">短剧生产 Agent 调整台</h2>
+          <p class="mt-2 text-sm text-[#5f574e] truncate" x-text="selectedStory?.name"></p>
+        </div>
+        <button @click="startDeepAgentRun()" :disabled="!activeStoryPath() || !!deepAgentBusy || !!submitting || !!workspaceRestoring"
+          class="cta px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">启动 DeepAgent</button>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+        <textarea x-model="workspaceHumanLoopPrompt" rows="3" class="field w-full px-3 py-2 text-sm resize-none"
+          placeholder="告诉 Agent 这部作品的短剧方向，例如：做成强冲突悬疑短剧，降低解释性旁白。"></textarea>
+        <button @click="sendWorkspaceHumanLoopPrompt()"
+          :disabled="!workspaceHumanLoopPrompt.trim() || activeStage==='video' || !!deepAgentBusy || !!workspaceRestoring"
+          class="muted-panel px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">发送给当前阶段</button>
+      </div>
+      <div class="muted-panel p-3 text-sm text-[#5f574e]">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+          <span x-text="workspaceRestoreStatus"></span>
+          <strong class="text-[#171412]" x-text="workspaceActionHint()"></strong>
+        </div>
+        <div class="mt-1 text-xs text-[#6b6258]">打开作品后会自动恢复最近会话、阶段草稿和历史视频任务。</div>
+      </div>
+    </div>
+    <aside id="cost-guardrail" class="ink-panel p-5">
+      <div class="text-xs uppercase tracking-wider text-[#cfc4b4] mb-4">Production guardrail</div>
+      <div class="space-y-4 text-sm text-[#efe6d8]">
+        <div class="flex justify-between gap-4"><span>当前阶段</span><strong x-text="activeStageLabel()"></strong></div>
+        <div class="flex justify-between gap-4"><span>镜头上限</span><strong x-text="form.shotLimit"></strong></div>
+        <div class="flex justify-between gap-4"><span>模型</span><strong x-text="form.model"></strong></div>
+        <div id="backend-status" class="border-t border-[#3b332b] pt-4 space-y-2 text-xs text-[#cfc4b4]">
+          <div class="flex justify-between gap-4"><span>状态仓储</span><strong x-text="infrastructure.workspace_backend"></strong></div>
+          <div class="flex justify-between gap-4"><span>任务队列</span><strong x-text="infrastructure.queue_backend"></strong></div>
+          <div class="flex justify-between gap-4"><span>资产存储</span><strong x-text="infrastructure.asset_backend"></strong></div>
+        </div>
+        <p class="text-xs leading-6 text-[#cfc4b4]">
+          前五个阶段用于锁定创意资产和一致性，最后“视频生成”阶段才会调用百炼视频任务并产生成本。
+        </p>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<main class="max-w-7xl mx-auto px-5 py-6">
+  <section x-show="!workspaceOpen" x-cloak class="grid grid-cols-1 lg:grid-cols-[0.35fr_1fr] gap-5">
+    <aside class="panel p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold">作品库</h2>
+        <button @click="loadStories()" class="text-xs link-warm">刷新</button>
+      </div>
+      <input x-model="storyQuery" placeholder="搜索作品" class="field w-full px-3 py-2 text-sm">
+      <p class="text-xs text-[#6b6258] mt-3">选择一部已生成小说，进入新的短剧工作台。</p>
+    </aside>
+    <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <template x-for="s in filteredStories()" :key="s.path">
+        <button @click="openVideoWorkspace(s)"
+          class="panel text-left p-4 hover:border-[#171412] transition">
+          <div class="flex items-start justify-between gap-3 mb-3">
+            <div class="min-w-0">
+              <h3 class="font-semibold text-base truncate" x-text="s.name"></h3>
+              <p class="text-xs text-[#6b6258] mt-1" x-text="s.created_at?.slice(0,10)"></p>
+            </div>
+            <span class="text-xs link-warm shrink-0">进入短剧工作台</span>
+          </div>
+          <p class="text-sm text-[#5f574e] line-clamp-4" x-text="s.excerpt"></p>
+        </button>
+      </template>
+      <div x-show="stories.length===0" class="panel p-8 text-center text-sm text-[#6b6258] md:col-span-2 xl:col-span-3">暂无作品</div>
+    </section>
+  </section>
+
+  <section x-show="workspaceOpen" x-cloak class="grid grid-cols-1 xl:grid-cols-[0.28fr_0.42fr_0.30fr] gap-5">
+    <aside class="panel p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-semibold">生产阶段</h2>
+        <button @click="closeVideoWorkspace()" class="text-xs link-warm">返回作品库</button>
+      </div>
+      <div class="space-y-2">
+        <template x-for="stage in workflowStages" :key="stage.id">
+          <button @click="activeStage=stage.id"
+            :class="stageTabClass(stage)"
+            class="stage-tab w-full text-left p-3 transition">
+            <div class="flex items-center justify-between gap-3">
+              <span class="text-sm font-medium" x-text="stage.label"></span>
+              <span class="text-xs" x-text="stage.confirmed ? '已确认' : '待处理'"></span>
+            </div>
+            <p class="text-xs mt-1 opacity-75" x-text="stage.description"></p>
+          </button>
+        </template>
+      </div>
+    </aside>
+
+    <section class="space-y-5">
+      <div id="model-settings" class="panel p-4">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+          <div>
+            <h2 class="text-base font-semibold" x-text="activeStageLabel()"></h2>
+            <p class="text-xs text-[#6b6258] mt-1" x-text="activeStageDescription()"></p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button x-show="activeStage!=='video'"
+              @click="startDeepAgentLoop()"
+              :disabled="!activeStoryPath() || !!generatingStage || !!submitting || !!deepAgentBusy || !!workspaceRestoring"
+              class="cta px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+              <span x-show="workspaceRestoring">恢复中...</span>
+              <span x-show="!workspaceRestoring">一键生成短剧流程</span>
+            </button>
+            <button x-show="activeStage!=='video'"
+              @click="startDeepAgentRun()"
+              :disabled="!activeStoryPath() || !!generatingStage || !!submitting || !!deepAgentBusy || !!workspaceRestoring"
+              class="cta px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+              <span x-show="workspaceRestoring">恢复中...</span>
+              <span x-show="!workspaceRestoring && !deepAgentActive">DeepAgent 自动生产</span>
+              <span x-show="!workspaceRestoring && deepAgentActive && !deepAgentBusy">DeepAgent 继续</span>
+              <span x-show="deepAgentBusy">编排中...</span>
+            </button>
+            <button x-show="activeStage!=='video'"
+              @click="generateActiveStageDraft()"
+              :disabled="!activeStoryPath() || !!generatingStage || !!deepAgentBusy || !!workspaceRestoring"
+              class="muted-panel px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+              <span x-show="generatingStage!==activeStage">DeepSeek V4 Pro 创作</span>
+              <span x-show="generatingStage===activeStage">创作中...</span>
+            </button>
+            <button @click="confirmActiveStage()"
+              :disabled="!!deepAgentBusy || !!workspaceRestoring || (activeStage!=='video' && !stageDrafts[activeStage]?.trim())"
+              class="cta px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">确认并继续</button>
+          </div>
+        </div>
+        <div x-show="stageGenerationMessage" x-cloak class="muted-panel p-3 text-sm text-[#5f574e] mb-3" x-text="stageGenerationMessage"></div>
+        <div x-show="activeStage!=='video'" class="muted-panel p-3 text-sm text-[#5f574e] mb-3">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            <span x-text="stageHasDraft(activeStage) ? '当前阶段已有草稿，可编辑后确认。' : '当前阶段没有草稿，请先让 Agent 或 DeepSeek 创作。'"></span>
+            <strong class="text-[#171412]" x-text="workspaceActionHint()"></strong>
+          </div>
+        </div>
+
+        <div x-show="activeStage!=='video'" id="human-loop-chat" class="space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold">Human Loop</h3>
+            <span class="text-xs text-[#6b6258]" x-text="activeStageLabel() + ' 待确认'"></span>
+          </div>
+          <div class="muted-panel p-3 h-[31rem] overflow-y-auto space-y-3"
+            x-ref="humanLoopChat"
+            x-effect="if($refs.humanLoopChat) $refs.humanLoopChat.scrollTop=$refs.humanLoopChat.scrollHeight">
+            <template x-for="message in humanLoopMessagesForActiveStage()" :key="message.id">
+              <div :class="message.role === 'human' ? 'flex justify-end' : 'flex justify-start'">
+                <div :class="message.role === 'human' ? 'bg-[#171412] text-[#f7f3ea]' : 'bg-[#fffdf7] text-[#171412] border border-[#d8cdbc]'"
+                  class="max-w-[92%] p-3 text-sm leading-6 whitespace-pre-wrap">
+                  <div class="text-xs mb-2 opacity-70" x-text="message.role === 'human' ? '人类反馈' : 'Agent 输出'"></div>
+                  <div x-text="message.content"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+            <textarea x-model="humanLoopInput" rows="3" class="field w-full px-3 py-2 text-sm resize-none"
+              placeholder="输入人类反馈，例如：开场更短，10 秒内给出冲突；女主语气更克制。"></textarea>
+            <button @click="sendHumanLoopFeedback()"
+              :disabled="!humanLoopInput.trim() || !deepAgentRunId || !!deepAgentBusy || !!workspaceRestoring"
+              class="cta px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">要求修改</button>
+          </div>
+          <textarea x-model="stageDrafts[activeStage]" rows="7" class="field w-full px-3 py-2 text-sm resize-y"
+            :placeholder="currentStagePlaceholder()"></textarea>
+          <div x-show="activeStage==='character_refs'" class="muted-panel p-3 text-sm text-[#5f574e]">
+            人物参考图生成 API 接入后，这里会展示主角/配角参考图和一致性 Prompt。
+          </div>
+        </div>
+        <div x-show="activeStage==='video'" class="space-y-4">
+          <div x-show="!readyForVideoStages()" class="muted-panel p-3 text-sm text-[#5f574e]">
+            请先确认剧本、风格设计、剧情设计、人物参考图和分镜，再启动视频生成。
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs text-[#6b6258] mb-1">提交镜头数量</label>
+              <input x-model.number="form.shotLimit" type="number" min="1" max="20" class="field w-full px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs text-[#6b6258] mb-1">画幅</label>
+              <input x-model="form.size" disabled class="field w-full px-3 py-2 text-sm opacity-75">
+            </div>
+            <div>
+              <label class="block text-xs text-[#6b6258] mb-1">视频模型</label>
+              <input x-model="form.model" disabled class="field w-full px-3 py-2 text-sm opacity-75">
+            </div>
+          </div>
+          <button @click="startDramaVideoRun()" :disabled="!activeStoryPath() || submitting || workspaceRestoring || !readyForVideoStages()"
+            class="cta w-full px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition">
+            <span x-show="!submitting">开始视频生成流程</span>
+            <span x-show="submitting">生成中...</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="production-timeline" class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc] flex items-center justify-between">
+          <h2 class="text-sm font-semibold">生成过程</h2>
+          <span class="text-xs text-[#6b6258]" x-text="progress.progress + '%'"></span>
+        </div>
+        <div class="p-4">
+          <div class="w-full bg-[#ede6d8] h-2 mb-5">
+            <div class="bg-[#b85c38] h-2 progress-bar" :style="'width:'+progress.progress+'%'"></div>
+          </div>
+          <div class="space-y-4">
+            <template x-for="stage in stages" :key="stage.id">
+              <div class="grid grid-cols-[1rem_1fr] gap-3">
+                <div class="pt-1"><div class="timeline-dot" :class="stage.status"></div></div>
+                <div>
+                  <div class="flex items-center justify-between gap-3">
+                    <h3 class="text-sm font-medium" x-text="stage.label"></h3>
+                    <span class="text-xs text-[#6b6258]" x-text="stage.statusText"></span>
+                  </div>
+                  <p class="text-xs text-[#6b6258] mt-1" x-text="stage.message"></p>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="space-y-5">
+      <div class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc] flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="text-sm font-semibold">任务时间线</h2>
+            <div x-show="Object.keys(videoUnifiedJobSummary).length>0" x-cloak class="mt-1 flex flex-wrap gap-2 text-xs text-[#6b6258]">
+              <template x-for="([status, count]) in Object.entries(videoUnifiedJobSummary)" :key="status">
+                <span><span x-text="status"></span>: <span x-text="count"></span></span>
+              </template>
+            </div>
+          </div>
+          <button @click="loadVideoRunJobs()"
+            :disabled="!runId || videoJobsLoading"
+            class="muted-panel px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+            <span x-show="!videoJobsLoading">刷新</span>
+            <span x-show="videoJobsLoading">加载中...</span>
+          </button>
+        </div>
+        <div class="p-4">
+          <div x-show="videoJobs.length===0" class="text-sm text-[#6b6258] py-5 text-center">暂无视频任务</div>
+          <div x-show="videoJobs.length>0" x-cloak class="space-y-2">
+            <template x-for="job in videoJobs" :key="job.id">
+              <div class="border border-[#d8cdbc] bg-[#fffdf7] p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium truncate" x-text="videoJobKindLabel(job.kind)"></div>
+                    <div class="font-mono text-xs text-[#6b6258] break-all" x-text="job.shot_id || job.run_id"></div>
+                  </div>
+                  <span class="text-xs px-2 py-0.5 bg-[#ede6d8] shrink-0" x-text="job.status"></span>
+                </div>
+                <div x-show="job.error" x-cloak class="mt-2 border border-red-200 bg-red-50 text-red-700 p-2 text-xs"
+                  x-text="job.error"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div id="shot-board" class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc] flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="text-sm font-semibold">镜头提交队列</h2>
+            <div x-show="Object.keys(videoJobSummary).length>0" x-cloak class="mt-1 flex flex-wrap gap-2 text-xs text-[#6b6258]">
+              <template x-for="([status, count]) in Object.entries(videoJobSummary)" :key="status">
+                <span><span x-text="status"></span>: <span x-text="count"></span></span>
+              </template>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="text-xs text-[#6b6258]" x-text="jobs.length + ' 个任务'"></span>
+            <button @click="refreshVideoRunJobs()"
+              :disabled="!runId || refreshingJobs || jobs.length===0"
+              class="muted-panel px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+              <span x-show="!refreshingJobs">刷新状态</span>
+              <span x-show="refreshingJobs">刷新中...</span>
+            </button>
+          </div>
+        </div>
+        <div class="p-4">
+          <div class="muted-panel p-3 text-xs text-[#6b6258] mb-3">
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <span>历史视频任务</span>
+              <span x-show="loadingVideoRuns">加载中...</span>
+              <span x-show="!loadingVideoRuns" x-text="videoRunHistory.length + ' 条记录'"></span>
+            </div>
+            <div x-show="videoRunHistory.length>0" x-cloak class="space-y-1">
+              <label class="block text-[11px] text-[#6b6258]">选择历史任务</label>
+              <select x-model="selectedVideoRunId" @change="selectVideoRunHistory(selectedVideoRunId)"
+                class="field w-full px-2 py-1.5 text-xs">
+                <template x-for="item in videoRunHistory" :key="item.run.id">
+                  <option :value="item.run.id" x-text="videoRunLabel(item)"></option>
+                </template>
+              </select>
+              <div class="text-[11px] text-[#6b6258]">当前任务：<span x-text="runId || '未选择'"></span></div>
+            </div>
+          </div>
+          <div x-show="jobs.length===0" class="text-sm text-[#6b6258] py-8 text-center">等待提交镜头</div>
+          <div class="space-y-2">
+            <template x-for="job in jobs" :key="job.provider_job_id">
+              <div class="border border-[#d8cdbc] bg-[#fffdf7] p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-sm font-medium" x-text="job.shot_id"></span>
+                  <span class="text-xs px-2 py-0.5 bg-[#ede6d8]"
+                    :title="'原始状态：' + (job.raw_status || job.status || '')"
+                    x-text="job.normalized_status || job.status"></span>
+                </div>
+                <div class="font-mono text-xs text-[#6b6258] mt-2 break-all" x-text="job.provider_job_id"></div>
+                <a x-show="job.video_url" x-cloak :href="job.video_url" target="_blank" rel="noopener noreferrer"
+                  class="link-warm mt-2 inline-block text-xs">查看视频</a>
+                <div x-show="job.error" x-cloak class="mt-2 border border-red-200 bg-red-50 text-red-700 p-2 text-xs"
+                  x-text="job.error"></div>
+                <button x-show="canRetryVideoJob(job)" x-cloak
+                  @click="retryVideoRunJob(job)"
+                  :disabled="retryingJobId===job.shot_id"
+                  class="muted-panel mt-2 px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+                  <span x-show="retryingJobId!==job.shot_id">重试镜头</span>
+                  <span x-show="retryingJobId===job.shot_id">重试中...</span>
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div id="consistency-panel" class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc]">
+          <h2 class="text-sm font-semibold">一致性档案</h2>
+        </div>
+        <div class="p-4 text-xs text-[#5f574e] space-y-3">
+          <div x-show="!latestConsistencyProfile()" class="text-[#6b6258]">暂无一致性档案</div>
+          <div x-show="latestConsistencyProfile()" x-cloak class="space-y-2">
+            <div>角色：<span x-text="consistencyNames()"></span></div>
+            <div>约束：<span x-text="consistencyConstraints()"></span></div>
+            <pre class="muted-panel p-3 overflow-x-auto whitespace-pre-wrap" x-text="formatJson(latestConsistencyProfile())"></pre>
+          </div>
+        </div>
+      </div>
+
+      <div id="operation-log-panel" class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc]">
+          <h2 class="text-sm font-semibold">操作日志</h2>
+        </div>
+        <div class="p-4 text-xs text-[#5f574e] space-y-2">
+          <div x-show="projectOperationLogs().length===0" class="text-[#6b6258]">暂无操作日志</div>
+          <template x-for="log in projectOperationLogs().slice(0, 6)" :key="log.id">
+            <div class="border border-[#d8cdbc] bg-[#fffdf7] p-2">
+              <div class="flex items-center justify-between gap-2">
+                <strong x-text="log.action"></strong>
+                <span x-text="log.actor"></span>
+              </div>
+              <div class="mt-1 break-all" x-text="log.message || log.target_id"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div id="cost-coverage-panel" class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc]">
+          <h2 class="text-sm font-semibold">成本覆盖</h2>
+        </div>
+        <div class="p-4 text-xs text-[#5f574e] space-y-2">
+          <div class="flex justify-between gap-3">
+            <span>已覆盖估算</span>
+            <strong x-text="'¥' + (costCoverage().covered_estimate_total_cny || 0)"></strong>
+          </div>
+          <div class="flex justify-between gap-3">
+            <span>覆盖条目</span>
+            <strong x-text="costCoverage().covered_estimate_count || 0"></strong>
+          </div>
+          <div x-show="(costCoverage().covered_estimates || []).length===0" class="text-[#6b6258]">暂无被实际账单覆盖的估算</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc]">
+          <h2 class="text-sm font-semibold">任务日志</h2>
+        </div>
+        <div class="p-4">
+          <div x-show="error" x-cloak class="border border-red-200 bg-red-50 text-red-700 p-3 text-sm mb-3" x-text="error"></div>
+          <div x-show="result" x-cloak class="border border-green-200 bg-green-50 text-green-800 p-3 text-sm mb-3">
+            已提交 <span x-text="result?.submitted_count"></span> 个视频生成任务
+          </div>
+          <div x-show="result" x-cloak class="mb-3">
+            <div class="text-xs text-[#6b6258] mb-1">任务记录</div>
+            <div class="font-mono text-xs text-[#6b6258] break-all border border-[#d8cdbc] p-2 bg-[#ede6d8]" x-text="result?.jobs_path"></div>
+          </div>
+          <div class="log-console h-[46vh] overflow-y-auto p-3 text-xs space-y-2" x-ref="videoLog"
+            x-effect="if($refs.videoLog) $refs.videoLog.scrollTop=$refs.videoLog.scrollHeight">
+            <div x-show="videoStageLog.length===0" class="text-[#cfc4b4]">等待生成流程启动</div>
+            <template x-for="log in videoStageLog" :key="log.id">
+              <div class="grid grid-cols-[4.5rem_1fr] gap-2">
+                <span class="text-[#cfc4b4]" x-text="log.time"></span>
+                <span><span class="text-[#d6a184]" x-text="'['+log.stage+']'"></span> <span x-text="log.message"></span></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div id="version-history" class="panel">
+        <div class="px-4 py-3 border-b border-[#d8cdbc] flex items-center justify-between gap-3">
+          <h2 class="text-sm font-semibold">版本历史</h2>
+          <button @click="exportDramaProjectPackage()" :disabled="!deepAgentRunId || exportingPackage"
+            class="text-xs link-warm disabled:opacity-50 disabled:cursor-not-allowed">
+            <span x-show="!exportingPackage">导出项目包</span>
+            <span x-show="exportingPackage">导出中...</span>
+          </button>
+        </div>
+        <div class="p-4">
+          <div x-show="packageExport" x-cloak class="border border-green-200 bg-green-50 text-green-800 p-3 text-xs mb-3 break-all">
+            项目包：<span x-text="packageExport?.package?.package_uri"></span>
+          </div>
+          <div x-show="stageVersions.length===0" class="text-sm text-[#6b6258] py-6 text-center">暂无版本记录</div>
+          <div class="space-y-2 max-h-80 overflow-y-auto">
+            <template x-for="version in stageVersions" :key="version.id">
+              <button @click="restoreStageVersion(version)" class="border border-[#d8cdbc] bg-[#fffdf7] p-3 w-full text-left hover:border-[#171412]">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-sm font-medium" x-text="stageLabels[version.stage] || version.stage"></span>
+                  <span class="text-xs px-2 py-0.5 bg-[#ede6d8]" x-text="version.event"></span>
+                </div>
+                <p class="text-xs text-[#6b6258] mt-2 line-clamp-3 whitespace-pre-wrap" x-text="version.human_feedback || version.content"></p>
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script>
+function videoApp() {
+  const stageLabels = {
+    start: '启动',
+    script: '剧本',
+    style: '风格设计',
+    plot: '剧情设计',
+    character_refs: '人物参考图',
+    storyboard: '分镜',
+    video: '视频生成',
+  };
+  const timelineDefaults = [
+    { id: 'script', label: '剧本', status: '', statusText: '等待', message: '读取作品并整理短剧剧本输入。' },
+    { id: 'style', label: '风格设计', status: '', statusText: '等待', message: '生成视觉基调、角色一致性和镜头语言。' },
+    { id: 'plot', label: '剧情设计', status: '', statusText: '等待', message: '生成集数结构、反转点和集尾悬念。' },
+    { id: 'character_refs', label: '人物参考图', status: '', statusText: '等待', message: '生成角色参考图 Prompt 和一致性规则。' },
+    { id: 'storyboard', label: '分镜', status: '', statusText: '等待', message: '生成镜头表、动作和视频 Prompt 包。' },
+    { id: 'video', label: '视频生成', status: '', statusText: '等待', message: '逐镜头提交百炼异步视频任务。' },
+  ];
+  const defaultDrafts = {
+    script: '',
+    style: '',
+    plot: '',
+    character_refs: '',
+    storyboard: '',
+  };
+  const draftPlaceholders = {
+    script: '当前阶段没有草稿。点击“DeepAgent 自动生产”或“DeepSeek V4 Pro 创作”生成剧本，再在这里编辑确认。',
+    style: '当前阶段没有草稿。确认剧本后，生成视觉风格、角色一致性、镜头语言和负面风格约束。',
+    plot: '当前阶段没有草稿。确认前序稿后，生成每集钩子、反转点、情绪曲线和短视频节奏。',
+    character_refs: '当前阶段没有草稿。生成主角/配角外貌、服装、气质、参考图 Prompt 和一致性 Prompt。',
+    storyboard: '当前阶段没有草稿。生成镜头编号、人物、动作、对白、镜头运动、时长和视频 Prompt。',
+  };
+  return {
+    stageLabels,
+    stories: [],
+    selectedStory: null,
+    projectWorkspace: { consistency_profiles: [], latest_consistency_profile: null, operation_logs: [] },
+    costCenter: { summary: {} },
+    projectId: '',
+    initialStoryPath: '',
+    initialRunId: '',
+    restoredStoryPath: '',
+    workspaceOpen: false,
+    activeStage: 'script',
+    storyQuery: '',
+    submitting: false,
+    generatingStage: '',
+    deepAgentRunId: '',
+    deepAgentActive: false,
+    deepAgentBusy: false,
+    workspaceHumanLoopPrompt: '',
+    workspaceRestoreStatus: '准备就绪',
+    workspaceRestoring: false,
+    humanLoopInput: '',
+    humanLoopMessages: [],
+    stageGenerationMessage: '',
+    error: '',
+    result: null,
+    videoJobSummary: {},
+    videoJobs: [],
+    videoUnifiedJobSummary: {},
+    videoJobsLoading: false,
+    videoRunHistory: [],
+    videoRetryJobs: {},
+    selectedVideoRunId: '',
+    loadingVideoRuns: false,
+    refreshingJobs: false,
+    retryingJobId: '',
+    jobs: [],
+    runId: '',
+    videoStageLog: [],
+    logSeq: 0,
+    progress: { stage: '', status: '', message: '就绪', progress: 0 },
+    infrastructure: { workspace_backend: 'loading', queue_backend: 'loading', asset_backend: 'loading' },
+    stageVersions: [],
+    packageExport: null,
+    exportingPackage: false,
+    deepAgentPollTimer: null,
+    workflowStages: [
+      { id: 'script', label: '剧本', description: '小说转短剧剧本', confirmed: false },
+      { id: 'style', label: '风格设计', description: '视觉风格和一致性规则', confirmed: false },
+      { id: 'plot', label: '剧情设计', description: '节奏、反转和情绪曲线', confirmed: false },
+      { id: 'character_refs', label: '人物参考图', description: '角色形象和参考图 Prompt', confirmed: false },
+      { id: 'storyboard', label: '分镜', description: '镜头表和视频 Prompt', confirmed: false },
+      { id: 'video', label: '视频生成', description: '逐镜头提交视频任务', confirmed: false },
+    ],
+    stageDrafts: { ...defaultDrafts },
+    stages: timelineDefaults.map(stage => ({ ...stage })),
+    form: { shotLimit: 1, model: 'wanx2.1-t2v-turbo', size: '1280*720' },
+
+    async requestJsonWithCostConfirmation(url, payload) {
+      const body = { ...(payload || {}) };
+      const first = await this.postJson(url, body);
+      if (first.ok || !this.isCostConfirmationResponse(first.data)) return first;
+      if (!this.confirmCostOverride(first.data.detail.cost_guardrail)) {
+        return {
+          ok: false,
+          status: first.status,
+          data: { error: '已取消付费视频生成' },
+        };
+      }
+      return this.postJson(url, { ...body, confirm_cost: true });
+    },
+    async postJson(url, payload) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload || {}),
+      });
+      const data = await res.json();
+      return { ok: res.ok, status: res.status, data };
+    },
+    isCostConfirmationResponse(data) {
+      const detail = data?.detail;
+      return !!(detail && detail.requires_confirmation && detail.cost_guardrail);
+    },
+    confirmCostOverride(costGuardrail) {
+      const estimate = costGuardrail?.estimate || {};
+      const budget = costGuardrail?.budget || {};
+      const total = Number(estimate.estimated_total_cny || 0).toFixed(2);
+      const remaining = Number(budget.remaining_today_cny || 0).toFixed(2);
+      const shots = estimate.shot_count || this.form.shotLimit || 1;
+      return window.confirm(`预算不足，是否继续生成视频？\n\n预计成本：${total} 元\n今日剩余额度：${remaining} 元\n镜头数量：${shots}\n\n确认后将提交付费视频生成任务。`);
+    },
+    responseError(data, fallbackMessage) {
+      const detail = data?.detail;
+      if (typeof detail === 'string') return detail;
+      if (detail?.message) return detail.message;
+      return data?.error || fallbackMessage;
+    },
+
+    async init() {
+      const params = new URLSearchParams(window.location.search);
+      this.projectId = params.get('project_id') || '';
+      this.initialStoryPath = params.get('story_path') || '';
+      this.initialRunId = params.get('run_id') || '';
+      await this.loadInfrastructureStatus();
+      await this.loadProjectWorkspace();
+      await this.loadCostCoverage();
+      await this.loadStories();
+      if (this.initialRunId) {
+        await this.openInitialRunWorkspace(this.initialRunId);
+        return;
+      }
+      await this.openInitialStoryWorkspace();
+    },
+    async loadInfrastructureStatus() {
+      try {
+        const res = await fetch('/api/drama-video/infrastructure');
+        const data = await res.json();
+        if (res.ok) this.infrastructure = data;
+      } catch(e) {
+        this.infrastructure = { workspace_backend: 'local', queue_backend: 'local', asset_backend: 'local' };
+      }
+    },
+    async loadProjectWorkspace() {
+      if (!this.projectId) return;
+      try {
+        const res = await fetch('/api/projects/' + encodeURIComponent(this.projectId));
+        const data = await res.json();
+        if (res.ok) {
+          this.projectWorkspace = {
+            consistency_profiles: data.consistency_profiles || [],
+            latest_consistency_profile: data.latest_consistency_profile || null,
+            operation_logs: data.operation_logs || [],
+          };
+        }
+      } catch(e) {}
+    },
+    async loadCostCoverage() {
+      try {
+        const params = new URLSearchParams();
+        if (this.projectId) params.set('project_id', this.projectId);
+        const res = await fetch('/api/costs/summary' + (params.toString() ? '?' + params.toString() : ''));
+        const data = await res.json();
+        if (res.ok) this.costCenter = { summary: data };
+      } catch(e) {}
+    },
+    async loadStories() {
+      try {
+        this.stories = await (await fetch('/api/stories')).json();
+      } catch(e) {
+        this.error = '作品列表加载失败：' + e.message;
+      }
+    },
+    filteredStories() {
+      const q = this.storyQuery.trim().toLowerCase();
+      if (!q) return this.stories;
+      return this.stories.filter(s => (s.name + s.excerpt).toLowerCase().includes(q));
+    },
+    storyForPath(path) {
+      if (!path) return null;
+      return this.stories.find(story => story.path === path || story.body_path === path) || null;
+    },
+    activeStoryPath() {
+      return this.selectedStory?.path || this.selectedStory?.body_path || this.restoredStoryPath || this.initialStoryPath;
+    },
+    async openInitialRunWorkspace(runId) {
+      if (!runId || this.workspaceOpen) return;
+      this.resetVideoWorkspaceState(null);
+      this.workspaceOpen = true;
+      this.workspaceRestoreStatus = '正在恢复指定 DeepAgent 会话...';
+      this.workspaceRestoring = true;
+      try {
+        await this.restoreDeepAgentSessionByRunId(runId);
+        await Promise.allSettled([
+          this.loadVideoRunHistory(),
+          this.loadProjectWorkspace(),
+          this.loadCostCoverage(),
+        ]);
+        if (!this.error && this.workspaceRestoreStatus === '正在恢复指定 DeepAgent 会话...') {
+          this.workspaceRestoreStatus = '准备就绪';
+        }
+      } finally {
+        this.workspaceRestoring = false;
+      }
+    },
+    async openInitialStoryWorkspace() {
+      if (!this.initialStoryPath || this.workspaceOpen) return;
+      const story = this.storyForPath(this.initialStoryPath);
+      if (story) {
+        await this.openVideoWorkspace(story);
+      }
+    },
+    async openVideoWorkspace(story) {
+      this.resetVideoWorkspaceState(story);
+      try {
+        const restoreSession = this.restoreLatestDeepAgentSession();
+        await Promise.allSettled([restoreSession, this.loadVideoRunHistory(), this.loadProjectWorkspace(), this.loadCostCoverage()]);
+        if (!this.error && this.workspaceRestoreStatus === '正在恢复工作台...') {
+          this.workspaceRestoreStatus = '准备就绪';
+        }
+      } finally {
+        this.workspaceRestoring = false;
+      }
+    },
+    resetVideoWorkspaceState(story) {
+      this.selectedStory = story;
+      this.projectWorkspace = { consistency_profiles: [], latest_consistency_profile: null, operation_logs: [] };
+      this.costCenter = { summary: {} };
+      this.restoredStoryPath = story?.path || story?.body_path || '';
+      this.workspaceOpen = true;
+      this.activeStage = 'script';
+      this.generatingStage = '';
+      this.deepAgentRunId = '';
+      this.deepAgentActive = false;
+      this.deepAgentBusy = false;
+      this.workspaceHumanLoopPrompt = '';
+      this.workspaceRestoreStatus = '正在恢复工作台...';
+      this.workspaceRestoring = true;
+      this.humanLoopInput = '';
+      this.humanLoopMessages = [];
+      this.stageGenerationMessage = '';
+      this.error = '';
+      this.result = null;
+      this.videoJobSummary = {};
+      this.videoJobs = [];
+      this.videoUnifiedJobSummary = {};
+      this.videoJobsLoading = false;
+      this.videoRunHistory = [];
+      this.videoRetryJobs = {};
+      this.selectedVideoRunId = '';
+      this.loadingVideoRuns = false;
+      this.refreshingJobs = false;
+      this.retryingJobId = '';
+      this.jobs = [];
+      this.runId = '';
+      this.videoStageLog = [];
+      this.stageVersions = [];
+      this.packageExport = null;
+      this.stopDeepAgentPolling();
+      this.progress = { stage: '', status: '', message: '就绪', progress: 0 };
+      this.workflowStages = this.workflowStages.map(stage => ({ ...stage, confirmed: false }));
+      this.stageDrafts = { ...defaultDrafts };
+    },
+    closeVideoWorkspace() {
+      this.stopDeepAgentPolling();
+      this.workspaceOpen = false;
+      this.selectedStory = null;
+    },
+    stageTabClass(stage) {
+      return [
+        this.activeStage === stage.id ? 'active' : '',
+        stage.confirmed ? 'done' : '',
+      ].join(' ');
+    },
+    activeStageLabel() {
+      return this.workflowStages.find(stage => stage.id === this.activeStage)?.label || '作品库';
+    },
+    activeStageDescription() {
+      return this.workflowStages.find(stage => stage.id === this.activeStage)?.description || '';
+    },
+    stageHasDraft(stage) {
+      return !!(this.stageDrafts[stage] || '').trim();
+    },
+    currentStagePlaceholder() {
+      return draftPlaceholders[this.activeStage] || '当前阶段没有草稿。';
+    },
+    latestConsistencyProfile() {
+      return this.projectWorkspace.latest_consistency_profile || null;
+    },
+    consistencyNames() {
+      const characters = this.latestConsistencyProfile()?.characters || [];
+      return characters.map(item => item.name || item.id || '').filter(Boolean).join('、') || '暂无';
+    },
+    consistencyConstraints() {
+      const constraints = this.latestConsistencyProfile()?.narrative_constraints || [];
+      return constraints.join('；') || '暂无';
+    },
+    projectOperationLogs() {
+      return this.projectWorkspace.operation_logs || [];
+    },
+    costCoverage() {
+      return this.costCenter.summary || {};
+    },
+    formatJson(value) {
+      return JSON.stringify(value || {}, null, 2);
+    },
+    workspaceActionHint() {
+      if (this.submitting) return '视频生成流程运行中';
+      if (this.deepAgentBusy || this.generatingStage) return '正在生成，请等待';
+      if (this.activeStage === 'video') {
+        return this.readyForVideoStages() ? '可以开始视频生成' : '先确认前五个阶段';
+      }
+      if (!this.deepAgentRunId) return '建议先启动 DeepAgent';
+      if (!this.stageHasDraft(this.activeStage)) return '请生成当前阶段草稿';
+      return '编辑满意后确认本阶段';
+    },
+    humanLoopMessagesForActiveStage() {
+      return this.humanLoopMessages.filter(message => message.stage === this.activeStage);
+    },
+    pushHumanLoopMessage(stage, role, content) {
+      const text = (content || '').trim();
+      if (!text) return;
+      const last = this.humanLoopMessages[this.humanLoopMessages.length - 1];
+      if (last && last.stage === stage && last.role === role && last.content === text) return;
+      this.humanLoopMessages.push({
+        id: ++this.logSeq,
+        stage,
+        role,
+        content: text,
+      });
+    },
+    readyForVideoStages() {
+      return this.workflowStages
+        .filter(stage => stage.id !== 'video')
+        .every(stage => stage.confirmed);
+    },
+    confirmedStageDrafts() {
+      return this.workflowStages
+        .filter(stage => stage.id !== 'video' && stage.confirmed)
+        .reduce((drafts, stage) => {
+          const value = this.stageDrafts[stage.id];
+          if (value && value.trim()) drafts[stage.id] = value.trim();
+          return drafts;
+        }, {});
+    },
+    generationContextDrafts() {
+      const activeIndex = this.workflowStages.findIndex(stage => stage.id === this.activeStage);
+      return this.workflowStages
+        .filter((stage, index) => stage.id !== 'video' && stage.confirmed && index < activeIndex)
+        .reduce((drafts, stage) => {
+          const value = this.stageDrafts[stage.id];
+          if (value && value.trim()) drafts[stage.id] = value.trim();
+          return drafts;
+        }, {});
+    },
+    async startDeepAgentLoop() {
+      const storyPath = this.activeStoryPath();
+      if (!storyPath || this.deepAgentBusy || this.submitting) return;
+      this.error = '';
+      this.result = null;
+      this.deepAgentBusy = true;
+      this.generatingStage = this.activeStage !== 'video' ? this.activeStage : 'script';
+      this.stageGenerationMessage = 'DeepAgent 正在生成首个确认点...';
+      try {
+        const res = await fetch('/api/drama-video/deepagent/loop', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            story_path: storyPath,
+            project_id: this.projectId || '',
+            shot_limit: this.form.shotLimit || 1,
+            stage_drafts: this.confirmedStageDrafts(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'DeepAgent 一键流程启动失败');
+        this.deepAgentRunId = data.run_id;
+        this.deepAgentActive = true;
+        this.activeStage = data.stage || data.pending_stage || 'script';
+        if (data.content || data.draft) {
+          this.stageDrafts[this.activeStage] = data.content || data.draft;
+          this.pushHumanLoopMessage(this.activeStage, 'agent', data.content || data.draft);
+        }
+        await this.loadDeepAgentVersions();
+        this.stageGenerationMessage = `${data.label || this.activeStageLabel()}草稿已生成，请编辑并确认。`;
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: 'DeepAgent',
+          message: '一键流程已生成首个确认点',
+        });
+      } catch(e) {
+        this.error = e.message;
+        this.stageGenerationMessage = '';
+      } finally {
+        this.generatingStage = '';
+        this.deepAgentBusy = false;
+      }
+    },
+    async startDeepAgentRun() {
+      const storyPath = this.activeStoryPath();
+      if (!storyPath || this.deepAgentBusy || this.submitting) return;
+      this.error = '';
+      this.result = null;
+      if (!this.deepAgentRunId) {
+        try {
+          this.deepAgentBusy = true;
+          this.stageGenerationMessage = 'DeepAgent 正在建立短剧生产会话...';
+          const res = await fetch('/api/drama-video/deepagent/run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              story_path: storyPath,
+              project_id: this.projectId || '',
+              shot_limit: this.form.shotLimit || 1,
+              stage_drafts: this.confirmedStageDrafts(),
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || data.error || 'DeepAgent 启动失败');
+          this.deepAgentRunId = data.run_id;
+          this.deepAgentActive = true;
+          await this.loadDeepAgentVersions();
+          this.videoStageLog.push({
+            id: ++this.logSeq,
+            time: new Date().toLocaleTimeString(),
+            stage: 'DeepAgent',
+            message: '短剧生产会话已启动',
+          });
+        } catch(e) {
+          this.error = e.message;
+          this.stageGenerationMessage = '';
+          this.deepAgentBusy = false;
+          return;
+        } finally {
+          this.deepAgentBusy = false;
+        }
+      }
+      await this.advanceDeepAgent();
+    },
+    async advanceDeepAgent() {
+      if (!this.deepAgentRunId || this.deepAgentBusy || this.submitting) return;
+      this.deepAgentBusy = true;
+      this.generatingStage = this.activeStage !== 'video' ? this.activeStage : '';
+      this.stageGenerationMessage = `${this.activeStageLabel()}正在由 DeepAgent 调用 DeepSeek V4 Pro 创作...`;
+      this.error = '';
+      try {
+        const res = await fetch('/api/drama-video/deepagent/advance', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ run_id: this.deepAgentRunId, background: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'DeepAgent 推进失败');
+        if (data.status === 'generating') {
+          this.activeStage = data.stage;
+          this.stageGenerationMessage = `${data.label}正在后台调用 DeepSeek V4 Pro 创作，可继续查看日志，完成后会自动展示草稿。`;
+          this.videoStageLog.push({
+            id: ++this.logSeq,
+            time: new Date().toLocaleTimeString(),
+            stage: data.label || stageLabels[data.stage] || data.stage,
+            message: 'DeepAgent 已进入后台生成',
+          });
+          this.startDeepAgentPolling();
+          return;
+        }
+        if (data.stage === 'video' && data.video_run_id) {
+          this.activeStage = 'video';
+          this.stageGenerationMessage = '分镜已确认，DeepAgent 已进入视频生成流程。';
+          this.submitting = true;
+          this.resetStages();
+          this.runId = data.video_run_id;
+          this.connectVideoStream(data.video_run_id);
+          return;
+        }
+        this.activeStage = data.stage;
+        this.stageDrafts[data.stage] = data.content || '';
+        this.pushHumanLoopMessage(data.stage, 'agent', data.content || '');
+        await this.loadDeepAgentVersions();
+        this.stageGenerationMessage = `${data.label}草稿已生成，请编辑并确认。`;
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: data.label || stageLabels[data.stage] || data.stage,
+          message: 'DeepAgent 已生成阶段草稿，等待确认',
+        });
+      } catch(e) {
+        this.error = e.message;
+        this.stageGenerationMessage = '';
+      } finally {
+        this.generatingStage = '';
+        if (!this.deepAgentPollTimer) this.deepAgentBusy = false;
+      }
+    },
+    async generateActiveStageDraft() {
+      const storyPath = this.activeStoryPath();
+      if (!storyPath || this.activeStage === 'video' || this.generatingStage) return;
+      this.generatingStage = this.activeStage;
+      this.stageGenerationMessage = `${this.activeStageLabel()}正在调用 DeepSeek V4 Pro 创作...`;
+      this.error = '';
+      try {
+        const res = await fetch('/api/drama-video/stage', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            story_path: storyPath,
+            stage: this.activeStage,
+            stage_drafts: this.generationContextDrafts(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || '阶段创作失败');
+        this.stageDrafts[this.activeStage] = data.content;
+        this.pushHumanLoopMessage(this.activeStage, 'agent', data.content || '');
+        this.stageGenerationMessage = `${data.label}已由 ${data.model} 生成，可编辑后确认。`;
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: data.label,
+          message: `${data.model} 已生成阶段草稿`,
+        });
+      } catch(e) {
+        this.error = e.message;
+        this.stageGenerationMessage = '';
+      } finally {
+        this.generatingStage = '';
+      }
+    },
+    async confirmActiveStage() {
+      if (this.deepAgentActive && this.deepAgentRunId && this.activeStage !== 'video') {
+        await this.confirmDeepAgentStage();
+        return;
+      }
+      this.workflowStages = this.workflowStages.map(stage =>
+        stage.id === this.activeStage ? { ...stage, confirmed: true } : stage
+      );
+      const index = this.workflowStages.findIndex(stage => stage.id === this.activeStage);
+      const next = this.workflowStages[index + 1];
+      if (next) this.activeStage = next.id;
+    },
+    async confirmDeepAgentStage() {
+      if (!this.deepAgentRunId || this.deepAgentBusy || this.activeStage === 'video') return;
+      const stage = this.activeStage;
+      const content = (this.stageDrafts[stage] || '').trim();
+      if (!content) {
+        this.error = '请先生成或填写当前阶段草稿';
+        return;
+      }
+      this.deepAgentBusy = true;
+      this.error = '';
+      try {
+        const response = await this.requestJsonWithCostConfirmation(
+          '/api/drama-video/deepagent/confirm',
+          { run_id: this.deepAgentRunId, stage, content },
+        );
+        const data = response.data;
+        if (!response.ok) throw new Error(this.responseError(data, '阶段确认失败'));
+        this.workflowStages = this.workflowStages.map(item =>
+          item.id === stage ? { ...item, confirmed: true } : item
+        );
+        await this.loadDeepAgentVersions();
+        await this.loadProjectWorkspace();
+        await this.loadCostCoverage();
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: stageLabels[stage] || stage,
+          message: '阶段已确认',
+        });
+        if (data.status === 'video_started') {
+          this.activeStage = 'video';
+          this.workflowStages = this.workflowStages.map(item =>
+            item.id === 'video' ? { ...item, confirmed: false } : item
+          );
+          this.stageGenerationMessage = '分镜已确认，DeepAgent 正在进入视频生成流程。';
+          this.submitting = true;
+          this.resetStages();
+          this.runId = data.video_run_id;
+          this.connectVideoStream(data.video_run_id);
+          return;
+        }
+        this.activeStage = data.next_stage || stage;
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.deepAgentBusy = false;
+      }
+      await this.advanceDeepAgent();
+    },
+    async sendHumanLoopFeedback() {
+      if (!this.deepAgentRunId || this.deepAgentBusy || this.activeStage === 'video') return;
+      const feedback = this.humanLoopInput.trim();
+      if (!feedback) return;
+      const stage = this.activeStage;
+      const currentDraft = (this.stageDrafts[stage] || '').trim();
+      this.pushHumanLoopMessage(stage, 'human', feedback);
+      this.humanLoopInput = '';
+      this.deepAgentBusy = true;
+      this.generatingStage = stage;
+      this.error = '';
+      this.stageGenerationMessage = `${this.activeStageLabel()}正在根据人类反馈调整...`;
+      try {
+        const res = await fetch('/api/drama-video/deepagent/revise', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            run_id: this.deepAgentRunId,
+            stage,
+            current_draft: currentDraft,
+            feedback,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'Human Loop 调整失败');
+        this.stageDrafts[stage] = data.content || '';
+        this.pushHumanLoopMessage(stage, 'agent', data.content || '');
+        await this.loadDeepAgentVersions();
+        await this.loadProjectWorkspace();
+        this.stageGenerationMessage = `${data.label || stageLabels[stage]}已根据人类反馈调整，请确认或继续反馈。`;
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: data.label || stageLabels[stage] || stage,
+          message: 'Human Loop 反馈已应用',
+        });
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.generatingStage = '';
+        this.deepAgentBusy = false;
+      }
+    },
+    async sendWorkspaceHumanLoopPrompt() {
+      const prompt = this.workspaceHumanLoopPrompt.trim();
+      if (!prompt || this.activeStage === 'video') return;
+      if (!this.deepAgentRunId) {
+        await this.startDeepAgentRun();
+      }
+      if (!this.deepAgentRunId || this.deepAgentBusy) return;
+      this.humanLoopInput = prompt;
+      this.workspaceHumanLoopPrompt = '';
+      await this.sendHumanLoopFeedback();
+    },
+    async loadDeepAgentVersions() {
+      if (!this.deepAgentRunId) return;
+      this.stageVersions = await this.loadDeepAgentVersionsForRun(this.deepAgentRunId);
+    },
+    async loadDeepAgentVersionsForRun(runId) {
+      if (!runId) return [];
+      try {
+        const res = await fetch('/api/drama-video/deepagent/' + encodeURIComponent(runId) + '/versions');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || '版本历史加载失败');
+        return data.versions || [];
+      } catch(e) {
+        this.stageVersions = [];
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: '版本历史',
+          message: '版本历史加载失败：' + e.message,
+        });
+        return [];
+      }
+    },
+    applyDeepAgentSession(session, versions = [], nextStage = '', restoreMessage = '已恢复 DeepAgent 会话。') {
+      if (!session) {
+        this.workspaceRestoreStatus = '没有历史 DeepAgent 会话，可以从剧本阶段开始。';
+        return;
+      }
+      this.deepAgentRunId = session.id;
+      this.deepAgentActive = true;
+      this.stageVersions = versions || [];
+      this.projectId = session.project_id || this.projectId;
+      this.restoredStoryPath = session.story_path || this.restoredStoryPath;
+      const sessionStory = this.storyForPath(session.story_path);
+      if (sessionStory) {
+        this.selectedStory = sessionStory;
+      }
+      this.stageDrafts = { ...defaultDrafts, ...(session.stage_drafts || {}), ...(session.drafts || {}) };
+      const confirmed = new Set(session.confirmed_stages || []);
+      this.workflowStages = this.workflowStages.map(stage => ({
+        ...stage,
+        confirmed: confirmed.has(stage.id),
+      }));
+      const pendingStage = session.pending_stage || nextStage || 'script';
+      this.activeStage = session.status === 'video_started' ? 'video' : pendingStage;
+      if (session.video_run_id) this.runId = session.video_run_id;
+      if (session.status === 'generating') {
+        this.workspaceRestoreStatus = '已恢复生成中的 DeepAgent 会话。';
+        this.stageGenerationMessage = `${stageLabels[pendingStage] || pendingStage}正在后台生成，完成后会自动展示草稿。`;
+        this.startDeepAgentPolling();
+      } else if (session.status === 'awaiting_confirmation' && (session.drafts || {})[pendingStage]) {
+        this.workspaceRestoreStatus = '已恢复待确认阶段草稿。';
+        this.stageGenerationMessage = `${stageLabels[pendingStage] || pendingStage}草稿已恢复，请编辑并确认。`;
+        this.pushHumanLoopMessage(pendingStage, 'agent', (session.drafts || {})[pendingStage]);
+      } else if (session.status === 'ready_for_next_stage') {
+        this.workspaceRestoreStatus = '已恢复会话，等待继续生成下一阶段。';
+        this.stageGenerationMessage = `${stageLabels[pendingStage] || pendingStage}等待 DeepAgent 继续生成。`;
+      } else if (session.status === 'failed') {
+        this.workspaceRestoreStatus = '已恢复失败会话，可调整后重新生成。';
+        this.error = session.error || 'DeepAgent 上次生成失败';
+      } else {
+        this.workspaceRestoreStatus = restoreMessage;
+      }
+    },
+    async restoreDeepAgentSessionByRunId(runId) {
+      if (runId) this.initialRunId = runId;
+      if (!this.initialRunId) return;
+      this.workspaceRestoreStatus = '正在恢复指定 DeepAgent 会话...';
+      try {
+        const sessionRes = await fetch('/api/drama-video/deepagent/' + encodeURIComponent(this.initialRunId));
+        const sessionData = await sessionRes.json();
+        if (!sessionRes.ok) throw new Error(sessionData.detail || sessionData.error || 'DeepAgent 会话恢复失败');
+        this.applyDeepAgentSession(
+          sessionData.session,
+          [],
+          sessionData.next_stage || '',
+          '已恢复指定 DeepAgent 会话。'
+        );
+        this.stageVersions = await this.loadDeepAgentVersionsForRun(this.initialRunId);
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: 'DeepAgent',
+          message: '已按 run_id 恢复短剧生产会话',
+        });
+      } catch(e) {
+        this.workspaceRestoreStatus = '工作台恢复失败，请刷新或重新启动 DeepAgent。';
+        this.error = e.message;
+      }
+    },
+    async restoreLatestDeepAgentSession() {
+      const storyPath = this.activeStoryPath();
+      if (!storyPath) return;
+      this.workspaceRestoreStatus = '正在恢复最近 DeepAgent 会话...';
+      try {
+        const res = await fetch('/api/drama-video/deepagent/latest?story_path=' + encodeURIComponent(storyPath));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'DeepAgent 会话恢复失败');
+        const session = data.session;
+        if (!session) {
+          this.workspaceRestoreStatus = '没有历史 DeepAgent 会话，可以从剧本阶段开始。';
+          return;
+        }
+        this.applyDeepAgentSession(
+          session,
+          data.versions || [],
+          data.next_stage || '',
+          '已恢复最近 DeepAgent 会话。'
+        );
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: 'DeepAgent',
+          message: '已恢复该作品最近的短剧生产会话',
+        });
+      } catch(e) {
+        this.workspaceRestoreStatus = '工作台恢复失败，请刷新或重新启动 DeepAgent。';
+        this.error = e.message;
+      }
+    },
+    startDeepAgentPolling() {
+      this.stopDeepAgentPolling();
+      this.deepAgentBusy = true;
+      this.generatingStage = this.activeStage;
+      this.deepAgentPollTimer = window.setInterval(() => this.pollDeepAgentSession(), 2500);
+      this.pollDeepAgentSession();
+    },
+    stopDeepAgentPolling() {
+      if (this.deepAgentPollTimer) {
+        window.clearInterval(this.deepAgentPollTimer);
+        this.deepAgentPollTimer = null;
+      }
+    },
+    async pollDeepAgentSession() {
+      if (!this.deepAgentRunId) {
+        this.stopDeepAgentPolling();
+        this.deepAgentBusy = false;
+        this.generatingStage = '';
+        return;
+      }
+      try {
+        const res = await fetch('/api/drama-video/deepagent/' + encodeURIComponent(this.deepAgentRunId));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'DeepAgent 状态加载失败');
+        const session = data.session || {};
+        await this.loadDeepAgentVersions();
+        if (session.status === 'failed') {
+          this.error = session.error || 'DeepAgent 生成失败';
+          this.stageGenerationMessage = '';
+          this.stopDeepAgentPolling();
+          this.deepAgentBusy = false;
+          this.generatingStage = '';
+          return;
+        }
+        const pendingStage = session.pending_stage || this.activeStage;
+        const draft = (session.drafts || {})[pendingStage];
+        if (session.status === 'awaiting_confirmation' && draft) {
+          this.activeStage = pendingStage;
+          this.stageDrafts[pendingStage] = draft;
+          this.pushHumanLoopMessage(pendingStage, 'agent', draft);
+          this.stageGenerationMessage = `${stageLabels[pendingStage] || pendingStage}草稿已生成，请编辑并确认。`;
+          this.videoStageLog.push({
+            id: ++this.logSeq,
+            time: new Date().toLocaleTimeString(),
+            stage: stageLabels[pendingStage] || pendingStage,
+            message: 'DeepAgent 后台生成完成，等待确认',
+          });
+          this.stopDeepAgentPolling();
+          this.deepAgentBusy = false;
+          this.generatingStage = '';
+        }
+      } catch(e) {
+        this.error = e.message;
+      }
+    },
+    restoreStageVersion(version) {
+      if (!version || !version.stage || version.stage === 'video') return;
+      this.activeStage = version.stage;
+      this.stageDrafts[version.stage] = version.content || '';
+      this.pushHumanLoopMessage(version.stage, 'agent', version.content || '');
+      this.stageGenerationMessage = `${stageLabels[version.stage] || version.stage}已恢复到历史版本，可继续调整或确认。`;
+    },
+    async exportDramaProjectPackage() {
+      if (!this.deepAgentRunId || this.exportingPackage) return;
+      this.exportingPackage = true;
+      this.error = '';
+      try {
+        const res = await fetch('/api/drama-video/package/export', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ run_id: this.deepAgentRunId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || '项目包导出失败');
+        this.packageExport = data;
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.exportingPackage = false;
+      }
+    },
+    resetStages() {
+      this.progress = { stage: '', status: '', message: '就绪', progress: 0 };
+      this.videoStageLog = [];
+      this.jobs = [];
+      this.videoJobSummary = {};
+      this.refreshingJobs = false;
+      this.stages = timelineDefaults.map(stage => ({
+        ...stage,
+        status: '',
+        statusText: '等待',
+      }));
+    },
+    updateStage(data) {
+      const index = this.stages.findIndex(stage => stage.id === data.stage);
+      if (index >= 0) {
+        this.stages[index] = {
+          ...this.stages[index],
+          status: data.status,
+          statusText: data.status === 'completed' ? '完成' : data.status === 'failed' ? '失败' : '进行中',
+          message: data.message,
+        };
+      }
+      if (data.job) {
+        const exists = this.jobs.some(job => job.provider_job_id === data.job.provider_job_id);
+        if (!exists) this.jobs.push(data.job);
+      }
+    },
+    async loadVideoRunHistory() {
+      const storyPath = this.activeStoryPath();
+      if (!storyPath || this.loadingVideoRuns) return;
+      this.loadingVideoRuns = true;
+      try {
+        const res = await fetch('/api/drama-video/runs?story_path=' + encodeURIComponent(storyPath));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || '历史视频任务加载失败');
+        this.videoRunHistory = data.runs || [];
+        if (data.latest) {
+          this.applyVideoRunHistory(data.latest);
+        } else if (!this.deepAgentRunId) {
+          this.videoStageLog.push({
+            id: ++this.logSeq,
+            time: new Date().toLocaleTimeString(),
+            stage: '历史视频任务',
+            message: '该作品还没有视频任务记录',
+          });
+        }
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.loadingVideoRuns = false;
+      }
+    },
+    applyVideoRunHistory(item) {
+      if (!item || !item.run) return;
+      this.runId = item.run.id || '';
+      this.selectedVideoRunId = this.runId;
+      this.jobs = item.jobs || [];
+      this.videoJobSummary = item.state_summary?.normalized || item.summary || {};
+      this.loadVideoRunJobs();
+      this.result = {
+        ...(this.result || {}),
+        ...item.run,
+        jobs: this.jobs,
+      };
+      this.form.shotLimit = item.run.shot_limit || this.form.shotLimit;
+      if (item.run.status === 'completed') {
+        this.workflowStages = this.workflowStages.map(stage =>
+          stage.id === 'video' ? { ...stage, confirmed: true } : stage
+        );
+      }
+      this.videoStageLog.push({
+        id: ++this.logSeq,
+        time: new Date().toLocaleTimeString(),
+        stage: '历史视频任务',
+        message: '已恢复最近一次视频任务',
+      });
+    },
+    selectVideoRunHistory(runId) {
+      const item = this.videoRunHistory.find(entry => entry.run?.id === runId);
+      if (!item) return;
+      this.applyVideoRunHistory(item);
+      this.videoStageLog.push({
+        id: ++this.logSeq,
+        time: new Date().toLocaleTimeString(),
+        stage: '历史视频任务',
+        message: '已切换当前任务：' + runId,
+      });
+    },
+    videoRunLabel(item) {
+      const run = item?.run || {};
+      const count = (item?.jobs || []).length || run.submitted_count || 0;
+      const time = (run.updated_at || run.created_at || '').slice(0, 19).replace('T', ' ');
+      return [run.status || 'unknown', count + ' 镜头', time || run.id].join(' / ');
+    },
+    canRetryVideoJob(job) {
+      const status = (job?.status || '').toUpperCase();
+      return !!this.runId && !!job?.shot_id && (status === 'FAILED' || status === 'ERROR');
+    },
+    async retryVideoRunJob(job) {
+      if (!this.canRetryVideoJob(job) || this.retryingJobId) return;
+      this.retryingJobId = job.shot_id;
+      this.error = '';
+      try {
+        const response = await this.requestJsonWithCostConfirmation(
+          '/api/drama-video/run/' + encodeURIComponent(this.runId) + '/retry',
+          { shot_id: job.shot_id },
+        );
+        const data = response.data;
+        if (!response.ok) throw new Error(this.responseError(data, '镜头重试失败'));
+        if (data.status === 'queued') {
+          this.videoRetryJobs[data.retry_job_id] = data;
+          await this.loadVideoRunJobs();
+          this.videoStageLog.push({
+            id: ++this.logSeq,
+            time: new Date().toLocaleTimeString(),
+            stage: '镜头重试',
+            message: '镜头重试已入队：' + job.shot_id,
+          });
+          return;
+        }
+        this.applyVideoRetryResult(data);
+        await this.loadVideoRunJobs();
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: '镜头重试',
+          message: '已重新提交镜头：' + job.shot_id,
+        });
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.retryingJobId = '';
+      }
+    },
+    async loadVideoRetryJob(retryJobId) {
+      if (!retryJobId) return null;
+      const res = await fetch('/api/drama-video/retry/' + encodeURIComponent(retryJobId));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || '镜头重试状态加载失败');
+      this.videoRetryJobs[retryJobId] = data;
+      if (data.status === 'completed' && data.result) {
+        this.applyVideoRetryResult(data.result);
+      }
+      return data;
+    },
+    applyVideoRetryResult(data) {
+      this.jobs = data.jobs || this.jobs;
+      this.videoJobSummary = data.state_summary?.normalized || data.summary || {};
+      if (data.run) {
+        this.result = { ...(this.result || {}), ...data.run, jobs: this.jobs };
+      }
+    },
+    videoJobKindLabel(kind) {
+      return {
+        generate_video: '生成视频',
+        refresh_status: '刷新状态',
+        retry_shot: '重试镜头',
+      }[kind] || kind || '视频任务';
+    },
+    async loadVideoRunJobs() {
+      if (!this.runId) return;
+      this.videoJobsLoading = true;
+      try {
+        const res = await fetch('/api/drama-video/jobs?run_id=' + encodeURIComponent(this.runId));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || '任务时间线加载失败');
+        this.videoJobs = data.jobs || [];
+        this.videoUnifiedJobSummary = data.state_summary?.normalized || data.summary || {};
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.videoJobsLoading = false;
+      }
+    },
+    async refreshVideoRunJobs() {
+      if (!this.runId || this.refreshingJobs) return;
+      this.refreshingJobs = true;
+      this.error = '';
+      try {
+        const res = await fetch('/api/drama-video/run/' + encodeURIComponent(this.runId) + '/refresh', {
+          method: 'POST',
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || '视频状态刷新失败');
+        this.jobs = data.jobs || [];
+        this.videoJobSummary = data.state_summary?.normalized || data.summary || {};
+        if (data.run) {
+          this.result = { ...(this.result || {}), ...data.run, jobs: this.jobs };
+        }
+        await this.loadVideoRunJobs();
+        if (data.status === 'completed') {
+          this.workflowStages = this.workflowStages.map(stage =>
+            stage.id === 'video' ? { ...stage, confirmed: true } : stage
+          );
+        }
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: '视频状态刷新',
+          message: '已刷新镜头任务状态',
+        });
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.refreshingJobs = false;
+      }
+    },
+    async startDramaVideoRun() {
+      const storyPath = this.activeStoryPath();
+      if (!storyPath || this.submitting || !this.readyForVideoStages()) return;
+      this.activeStage = 'video';
+      this.submitting = true;
+      this.error = '';
+      this.result = null;
+      this.videoJobSummary = {};
+      this.videoJobs = [];
+      this.videoUnifiedJobSummary = {};
+      this.resetStages();
+      try {
+        const response = await this.requestJsonWithCostConfirmation(
+          '/api/drama-video/run',
+          {
+            story_path: storyPath,
+            project_id: this.projectId || '',
+            shot_limit: this.form.shotLimit || 1,
+            stage_drafts: this.confirmedStageDrafts(),
+          },
+        );
+        const data = response.data;
+        if (!response.ok) throw new Error(this.responseError(data, '启动失败'));
+        this.runId = data.run_id;
+        await this.loadVideoRunJobs();
+        this.connectVideoStream(data.run_id);
+      } catch(e) {
+        this.error = e.message;
+        this.submitting = false;
+      }
+    },
+    connectVideoStream(runId) {
+      const es = new EventSource('/api/drama-video/stream/' + encodeURIComponent(runId));
+      es.addEventListener('stage_update', e => {
+        const data = JSON.parse(e.data);
+        this.progress = data;
+        this.updateStage(data);
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: stageLabels[data.stage] || data.stage,
+          message: data.message,
+        });
+      });
+      es.addEventListener('complete', e => {
+        const data = JSON.parse(e.data);
+        this.progress = data;
+        this.submitting = false;
+        if (data.status === 'completed') {
+          this.result = data;
+          this.jobs = data.jobs || this.jobs;
+          this.loadVideoRunJobs();
+          this.workflowStages = this.workflowStages.map(stage =>
+            stage.id === 'video' ? { ...stage, confirmed: true } : stage
+          );
+          this.videoStageLog.push({
+            id: ++this.logSeq,
+            time: new Date().toLocaleTimeString(),
+            stage: '完成',
+            message: data.message || '视频任务已提交',
+          });
+        } else {
+          this.error = data.message || data.error || '生成失败';
+          this.videoStageLog.push({
+            id: ++this.logSeq,
+            time: new Date().toLocaleTimeString(),
+            stage: '失败',
+            message: this.error,
+          });
+        }
+        es.close();
+      });
+      es.onerror = () => {};
+    },
+  }
+}
+</script>
+</body>
+</html>

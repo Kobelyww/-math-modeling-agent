@@ -123,6 +123,9 @@ def current_time() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+# Legacy standalone tools — the Coordinator uses tool factories from agents.py instead.
+# These are kept for potential standalone/script usage but are not wired into the
+# main DeepAgent workflow.
 TOOLS = [
     scrape_hot,
     search_topic,

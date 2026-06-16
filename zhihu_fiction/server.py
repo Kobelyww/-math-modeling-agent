@@ -1,430 +1,278 @@
-"""zhihu_fiction Web 服务器 — FastAPI + SSE 流式推送."""
+"""Compatibility entrypoint for the Zhihu Fiction FastAPI application."""
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
-import threading
-import time
-from datetime import datetime
-from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-
-from .config import APP_ROOT, load_settings
+from .app.dependencies import AppDependencies
+from .app.factory import create_app
+from .app.services import drama_video_runtime
+from .app.services.pipeline_runtime import execute_pipeline_in_background, read_runs
+from .app.state import AppState
+from .config import APP_ROOT
+from .drama import DramaAdapter, DramaAdapterError, DramaExporter
+from .drama.video import BailianVideoProvider, DramaVideoError, VideoJobStore, create_video_provider
 from .exporter import Exporter
 from .llm import create_llm
-from .orchestrator import create_orchestrator, run_coordinator as _orig_run_coordinator
+from .orchestrator import (
+    StageResult,
+    WorkflowResult,
+    create_drama_video_coordinator,
+    create_orchestrator,
+    run_drama_video_coordinator,
+)
 from .pipeline import Pipeline, RUN_DIR
 from .skills_store import SkillsStore
 from .workspace.queue import WorkspaceQueue
+from .workspace.queue_backends import create_queue_backend
 from .workspace.repositories import WorkspaceRepository
 from .workspace.services import WorkspaceService
-from .workspace_routes import create_workspace_router
 
-logger = logging.getLogger("zhihu_fiction.server")
+dependencies = AppDependencies()
+runtime_state = AppState()
+app = create_app(dependencies=dependencies, state=runtime_state)
 
-app = FastAPI(title="Zhihu Fiction Studio", version="1.0")
+settings = dependencies.settings
+skills_store = dependencies.skills_store
+workspace_repo = dependencies.workspace_repo
+workspace_service = dependencies.workspace_service
+queue_backend = dependencies.queue_backend
+workspace_queue = dependencies.workspace_queue
 
-# ---- Middleware ----
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.add_middleware(GZipMiddleware, minimum_size=500)
-
-
-class TimingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        start = time.time()
-        response = await call_next(request)
-        elapsed = time.time() - start
-        logger.info(
-            "%s %s — %d (%.2fs)",
-            request.method, request.url.path, response.status_code, elapsed,
-        )
-        return response
-
-
-app.add_middleware(TimingMiddleware)
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc)
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        status_code=500,
-        content={"error": str(exc), "path": str(request.url.path)},
-    )
 OUTPUT_DIR = APP_ROOT / "output"
 
-settings = load_settings()
-skills_store = SkillsStore()
+_run_events = runtime_state.run_events
+_run_progress = runtime_state.run_progress
+_video_events = runtime_state.video_events
+_video_progress = runtime_state.video_progress
+_video_specs = runtime_state.video_specs
+_video_deepagent_specs = runtime_state.video_deepagent_specs
+_video_deepagent_stage_tasks = runtime_state.video_deepagent_stage_tasks
+_video_lock = runtime_state.video_lock
+_video_deepagent_lock = runtime_state.video_deepagent_lock
+_active_lock = runtime_state.active_lock
 
-# ---- 全局运行状态 ----
-_run_events: dict[str, asyncio.Queue] = {}
-_run_progress: dict[str, dict] = {}
-_active_lock = threading.Lock()
-_active_run_id: str | None = None
-
-_scheduler_pipeline: Pipeline | None = None
+_VIDEO_STAGE_DRAFT_LABELS = drama_video_runtime.VIDEO_STAGE_DRAFT_LABELS
+_VIDEO_DEEPAGENT_STAGES = drama_video_runtime.VIDEO_DEEPAGENT_STAGES
+_VIDEO_TEXT_STAGE_INSTRUCTIONS = drama_video_runtime.VIDEO_TEXT_STAGE_INSTRUCTIONS
 
 
 class _NoopPublisher:
-    """Placeholder publisher that skips actual publishing.
-
-    Real publishing is done via the CLI /autopublish command or
-    by calling ZhihuPublisher directly from the frontend's
-    scheduler tab.
-    """
     def publish(self, title: str, content: str, tags=None, genre: str = "") -> dict:
-        return {"success": True, "url": "", "message": "publish skipped (use /autopublish or scheduler)"}
+        return {
+            "success": True,
+            "url": "",
+            "message": "publish skipped (use /autopublish or scheduler)",
+        }
 
 
 def _create_pipeline() -> Pipeline:
-    coordinator, reviewer, llm = create_orchestrator(settings, skills_store=skills_store)
-    return Pipeline(
-        coordinator=coordinator, reviewer=reviewer, llm=llm,
-        publisher=_NoopPublisher(),
-        quality_threshold=6.0, max_rewrites=2,
-    )
-
-
-workspace_repo = WorkspaceRepository()
-workspace_service = WorkspaceService(workspace_repo)
-workspace_queue = WorkspaceQueue(
-    workspace_repo,
-    workspace_service,
-    pipeline_factory=_create_pipeline,
-)
-workspace_queue.repair_stale_running()
+    return dependencies.create_pipeline()
 
 
 def _create_exporter() -> Exporter:
-    return Exporter(create_llm(settings, temperature=0.3))
+    return dependencies.create_exporter()
 
-
-app.include_router(create_workspace_router(workspace_service, workspace_queue, _create_exporter))
-
-
-# ============================================================
-# Helpers
-# ============================================================
 
 def _read_runs(limit: int = 50) -> list[dict]:
-    runs_file = RUN_DIR / "runs.jsonl"
-    if not runs_file.exists():
-        return []
-    runs: list[dict] = []
-    with open(runs_file, encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                try:
-                    runs.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    runs.reverse()
-    return runs[:limit]
+    return read_runs(limit)
 
 
 def _list_story_dirs() -> list[dict]:
-    if not OUTPUT_DIR.exists():
-        return []
-    stories: list[dict] = []
-    for d in sorted(OUTPUT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if d.is_dir() and not d.name.startswith("."):
-            story_file = d / "小说正文.md"
-            if story_file.exists():
-                content = story_file.read_text(encoding="utf-8")
-                lines = content.strip().split("\n")
-                excerpt = next(
-                    (l for l in lines if l.strip() and not l.startswith("#") and not l.startswith(">")),
-                    ""
-                )[:200]
-                stories.append({
-                    "name": d.name,
-                    "path": str(story_file.relative_to(APP_ROOT)),
-                    "excerpt": excerpt,
-                    "created_at": datetime.fromtimestamp(story_file.stat().st_mtime).isoformat(),
-                })
-    return stories
+    from .app.services.story_library import list_story_dirs
+
+    return list_story_dirs()
 
 
-def _patch_for_progress(pipeline: Pipeline, run_id: str):
-    """Monkey-patch pipeline components to emit progress events."""
-    q = _run_events.get(run_id)
-    if q is None:
-        return
+def _story_result_from_file(story_file):
+    from .app.services.story_library import story_result_from_file
 
-    async def _emit(stage: str, status: str, message: str, progress: int, **extra):
-        await q.put({
-            "type": "stage_update",
-            "data": {"run_id": run_id, "stage": stage, "status": status,
-                     "message": message, "progress": progress, **extra},
-        })
-
-    _orig_scraper = pipeline._scraper
-    def _scraper_wrapper():
-        asyncio.run(_emit("scrape", "running", "正在抓取知乎热榜...", 10))
-        try:
-            items = _orig_scraper()
-            asyncio.run(_emit("scrape", "completed", f"抓取到 {len(items)} 条热榜", 20, items=len(items)))
-            return items
-        except Exception as e:
-            asyncio.run(_emit("scrape", "failed", str(e), -1))
-            raise
-    pipeline._scraper = _scraper_wrapper
-
-    _orig_selector = pipeline._selector
-    def _selector_wrapper(hot_items, llm):
-        asyncio.run(_emit("select_topic", "running", "正在分析选题...", 25))
-        try:
-            result = _orig_selector(hot_items, llm)
-            asyncio.run(_emit("select_topic", "completed", f"选定: {result['topic']}", 30,
-                              selected=result['topic'], genre=result.get('genre', '')))
-            return result
-        except Exception as e:
-            asyncio.run(_emit("select_topic", "failed", str(e), -1))
-            raise
-    pipeline._selector = _selector_wrapper
-
-    # Patch orchestrator.run_coordinator
-    import zhihu_fiction.orchestrator as orch_mod
-    _orig_coord = orch_mod.run_coordinator
-
-    def _make_stream_cb():
-        def _cb(event: dict):
-            asyncio.run(q.put({
-                "type": "agent_event",
-                "data": {"run_id": run_id, **event},
-            }))
-        return _cb
-
-    def _coord_wrapper(*args, **kwargs):
-        asyncio.run(_emit("create", "running", "正在创作 (DeepAgent 协调中)...", 35))
-        kwargs["stream_callback"] = _make_stream_cb()
-        try:
-            result = _orig_coord(*args, **kwargs)
-            word_count = len(result.final_story)
-            asyncio.run(_emit("create", "completed", f"创作完成，{word_count} 字", 80, words=word_count))
-            return result
-        except Exception as e:
-            asyncio.run(_emit("create", "failed", str(e), -1))
-            raise
-    orch_mod.run_coordinator = _coord_wrapper
+    return story_result_from_file(story_file)
 
 
-def _unpatch_pipeline(pipeline: Pipeline):
-    import zhihu_fiction.orchestrator as orch_mod
-    orch_mod.run_coordinator = _orig_run_coordinator
+def _extract_web_story_body(text: str) -> tuple[str, str]:
+    from .app.services.story_library import extract_web_story_body
+
+    return extract_web_story_body(text)
 
 
-async def _execute_in_background(run_id: str, pipeline: Pipeline, topic: str | None, genre: str | None,
-                                 chapters: int = 1):
-    global _active_run_id
-    q = _run_events.setdefault(run_id, asyncio.Queue())
-    try:
-        await q.put({"type": "stage_update", "data": {
-            "run_id": run_id, "stage": "start", "status": "running",
-            "message": "流水线启动中...", "progress": 0,
-        }})
+def _safe_story_file(story_path: str):
+    from .app.services.story_library import safe_story_file
 
-        _patch_for_progress(pipeline, run_id)
-
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, lambda: pipeline.run(topic=topic, genre=genre, chapters=chapters))
-
-        await q.put({"type": "complete", "data": {
-            "run_id": run_id, "status": "completed",
-            "message": "运行完成", "progress": 100,
-            "topic": result.topic, "genre": result.genre,
-            "stages": {
-                name: {"status": s.status, "duration_s": s.duration_s, **s.extra}
-                for name, s in result.stages.items()
-            },
-            "total_duration_s": result.total_duration_s,
-            "published_url": result.published_url,
-        }})
-    except Exception as exc:
-        await q.put({"type": "complete", "data": {
-            "run_id": run_id, "status": "failed",
-            "message": str(exc), "progress": 0, "error": str(exc),
-        }})
-    finally:
-        _unpatch_pipeline(pipeline)
-        _run_progress[run_id] = {"status": "done"}
-        with _active_lock:
-            if _active_run_id == run_id:
-                _active_run_id = None
+    return safe_story_file(story_path)
 
 
-# ============================================================
-# Routes — Static
-# ============================================================
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    static_file = APP_ROOT / "static" / "index.html"
-    if not static_file.exists():
-        return HTMLResponse("<h2>index.html not found. Create static/index.html first.</h2>", status_code=404)
-    return HTMLResponse(static_file.read_text(encoding="utf-8"))
+def _parse_shot_limit(value) -> int:
+    return drama_video_runtime.parse_shot_limit(value)
 
 
-# ============================================================
-# Routes — Pipeline Run
-# ============================================================
-
-@app.post("/api/run")
-async def trigger_run(req: Request):
-    global _active_run_id
-    body = await req.json() if req.headers.get("content-type") == "application/json" else {}
-    topic = (body.get("topic") or "").strip() or None
-    genre = (body.get("genre") or "").strip() or None
-    chapters = body.get("chapters", 1)
-
-    with _active_lock:
-        if _active_run_id:
-            raise HTTPException(409, "已有运行正在执行，请等待完成")
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _active_run_id = run_id
-
-    pipeline = _create_pipeline()
-    _run_events[run_id] = asyncio.Queue()
-    _run_progress[run_id] = {"status": "starting"}
-
-    asyncio.create_task(_execute_in_background(run_id, pipeline, topic, genre, chapters))
-    return {"run_id": run_id, "status": "started"}
+def _parse_video_stage_drafts(value) -> dict[str, str]:
+    return drama_video_runtime.parse_video_stage_drafts(value)
 
 
-@app.get("/api/stream/{run_id}")
-async def stream_run(run_id: str):
-    q = _run_events.get(run_id)
-    if q is None:
-        raise HTTPException(404, "运行未找到")
-
-    async def generate():
-        while True:
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=15)
-            except asyncio.TimeoutError:
-                yield "event: heartbeat\ndata: \n\n"
-                continue
-            if event["type"] == "stage_update":
-                payload = json.dumps(event["data"], ensure_ascii=False)
-                yield f"event: stage_update\ndata: {payload}\n\n"
-            elif event["type"] == "agent_event":
-                payload = json.dumps(event["data"], ensure_ascii=False)
-                yield f"event: agent_event\ndata: {payload}\n\n"
-            elif event["type"] == "complete":
-                payload = json.dumps(event["data"], ensure_ascii=False)
-                yield f"event: complete\ndata: {payload}\n\n"
-                break
-
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+def _merge_video_stage_drafts(result: WorkflowResult, stage_drafts: dict[str, str]) -> WorkflowResult:
+    return drama_video_runtime.merge_video_stage_drafts(result, stage_drafts)
 
 
-@app.post("/api/run/continue")
-async def continue_chapter(req: Request):
-    body = await req.json() if req.headers.get("content-type") == "application/json" else {}
-    topic = body.get("topic", "")
-    genre = body.get("genre", "")
-    existing_story = body.get("existing_story", "")
-    chapter_count = body.get("chapter_count", 1)
-
-    pipeline = _create_pipeline()
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, lambda: pipeline.continue_chapter(topic, genre, existing_story, chapter_count))
-    return result.published_url if hasattr(result, "published_url") else {"status": "ok"}
+def _deepseek_v4pro_settings():
+    return drama_video_runtime.deepseek_v4pro_settings(settings)
 
 
-# ============================================================
-# Routes — History
-# ============================================================
-
-@app.get("/api/runs")
-async def list_runs(limit: int = Query(50, ge=1, le=500)):
-    return _read_runs(limit)
+def _format_video_stage_context(stage_drafts: dict[str, str]) -> str:
+    return drama_video_runtime.format_video_stage_context(stage_drafts)
 
 
-@app.get("/api/runs/{run_id}")
-async def get_run(run_id: str):
-    for run in _read_runs(500):
-        if run.get("run_id") == run_id:
-            return run
-    raise HTTPException(404, "运行未找到")
+def _build_video_stage_prompt(result: WorkflowResult, stage: str, stage_drafts: dict[str, str]) -> str:
+    return drama_video_runtime.build_video_stage_prompt(result, stage, stage_drafts)
 
 
-# ============================================================
-# Routes — Stories
-# ============================================================
-
-@app.get("/api/stories")
-async def list_stories():
-    return _list_story_dirs()
-
-
-@app.get("/api/stories/{story_path:path}")
-async def get_story(story_path: str):
-    full_path = APP_ROOT / story_path
-    if not full_path.exists() or not full_path.is_file():
-        raise HTTPException(404, "故事未找到")
-    return {"path": story_path, "content": full_path.read_text(encoding="utf-8")}
-
-
-# ============================================================
-# Routes — Skills
-# ============================================================
-
-@app.get("/api/skills/genres")
-async def list_genres():
-    return skills_store.list_genres()
+def _run_video_stage_deepagent(
+    story_path: str,
+    stage: str,
+    stage_drafts: dict[str, str],
+    current_draft: str = "",
+    human_feedback: str = "",
+) -> dict:
+    return drama_video_runtime.run_video_stage_deepagent(
+        dependencies,
+        story_path,
+        stage,
+        stage_drafts,
+        current_draft=current_draft,
+        human_feedback=human_feedback,
+    )
 
 
-@app.get("/api/skills/{genre}")
-async def get_skill(genre: str):
-    content = skills_store.get_skill(genre)
-    if content is None:
-        raise HTTPException(404, f"未找到流派 '{genre}' 的技能卡")
-    return {"genre": genre, "content": content}
+def _generate_video_stage_draft(story_path: str, stage: str, stage_drafts: dict[str, str]) -> dict:
+    return drama_video_runtime.generate_video_stage_draft(
+        dependencies,
+        story_path,
+        stage,
+        stage_drafts,
+    )
 
 
-# ============================================================
-# Routes — Scheduler
-# ============================================================
-
-@app.get("/api/scheduler")
-async def scheduler_status():
-    global _scheduler_pipeline
-    if _scheduler_pipeline is None:
-        return {"active": False}
-    status = _scheduler_pipeline.schedule_status()
-    return status or {"active": False}
+def _new_video_run_id(prefix: str) -> str:
+    return drama_video_runtime.new_video_run_id(prefix)
 
 
-@app.post("/api/scheduler/start")
-async def start_scheduler(req: Request):
-    global _scheduler_pipeline
-    body = await req.json() if req.headers.get("content-type") == "application/json" else {}
-    interval = body.get("interval", 360)
-    _scheduler_pipeline = _create_pipeline()
-    _scheduler_pipeline.run_scheduled(interval_minutes=interval)
-    return {"status": "started", "interval": interval}
+def _start_drama_video_spec(story_path: str, shot_limit: int, stage_drafts: dict[str, str]) -> str:
+    return drama_video_runtime.start_drama_video_spec(
+        runtime_state,
+        story_path,
+        shot_limit,
+        stage_drafts,
+    )
 
 
-@app.post("/api/scheduler/stop")
-async def stop_scheduler():
-    global _scheduler_pipeline
-    if _scheduler_pipeline:
-        _scheduler_pipeline.stop_scheduled()
-    return {"status": "stopped"}
+def _next_video_deepagent_stage(spec: dict) -> str | None:
+    return drama_video_runtime.next_video_deepagent_stage(spec)
+
+
+def _assert_video_deepagent_previous_stages_confirmed(spec: dict, stage: str) -> None:
+    drama_video_runtime.assert_video_deepagent_previous_stages_confirmed(spec, stage)
+
+
+def _session_to_spec(session):
+    return drama_video_runtime.session_to_spec(session)
+
+
+def _persist_video_deepagent_session(run_id: str, spec: dict, status: str, error: str = ""):
+    return drama_video_runtime.persist_video_deepagent_session(
+        dependencies,
+        run_id,
+        spec,
+        status,
+        error=error,
+    )
+
+
+def _record_drama_stage_version(
+    run_id: str,
+    stage: str,
+    content: str,
+    event: str,
+    *,
+    human_feedback: str = "",
+    metadata: dict | None = None,
+):
+    return drama_video_runtime.record_drama_stage_version(
+        dependencies,
+        run_id,
+        stage,
+        content,
+        event,
+        human_feedback=human_feedback,
+        metadata=metadata,
+    )
+
+
+def _get_video_deepagent_spec(run_id: str) -> dict | None:
+    return drama_video_runtime.get_video_deepagent_spec(dependencies, runtime_state, run_id)
+
+
+def _infrastructure_status() -> dict:
+    return drama_video_runtime.infrastructure_status(dependencies)
+
+
+async def _generate_video_deepagent_stage_in_background(run_id: str, stage: str) -> None:
+    await drama_video_runtime.generate_video_deepagent_stage_in_background(
+        dependencies,
+        runtime_state,
+        run_id,
+        stage,
+    )
+
+
+def _drama_video_payload(
+    story_path: str,
+    shot_limit: int,
+    stage_drafts: dict[str, str] | None = None,
+    emit=None,
+) -> dict:
+    return drama_video_runtime.drama_video_payload(
+        dependencies,
+        story_path,
+        shot_limit,
+        stage_drafts=stage_drafts,
+        emit=emit,
+    )
+
+
+async def _execute_drama_video_in_background(
+    run_id: str,
+    story_path: str,
+    shot_limit: int,
+    stage_drafts: dict[str, str] | None = None,
+):
+    await drama_video_runtime.execute_drama_video_in_background(
+        dependencies,
+        runtime_state,
+        run_id,
+        story_path,
+        shot_limit,
+        stage_drafts=stage_drafts,
+    )
+
+
+async def _execute_in_background(
+    run_id: str,
+    pipeline: Pipeline,
+    topic: str | None,
+    genre: str | None,
+    chapters: int = 1,
+):
+    await execute_pipeline_in_background(
+        runtime_state,
+        run_id,
+        pipeline,
+        topic,
+        genre,
+        chapters,
+    )
+
+
+for _name in (
+    "_run_video_stage_deepagent",
+    "_generate_video_stage_draft",
+):
+    globals()[_name]._runtime_delegate = True

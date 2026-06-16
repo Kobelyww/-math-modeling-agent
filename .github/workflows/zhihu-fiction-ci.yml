@@ -1,0 +1,37 @@
+name: zhihu-fiction-ci
+
+on:
+  push:
+    paths:
+      - "zhihu_fiction/**"
+      - "docs/release/**"
+      - ".github/workflows/zhihu-fiction-ci.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+  pull_request:
+    paths:
+      - "zhihu_fiction/**"
+      - "docs/release/**"
+      - ".github/workflows/zhihu-fiction-ci.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r zhihu_fiction/requirements.txt
+          python -m pip install redis minio
+      - name: Run release artifact tests
+        run: python -m pytest zhihu_fiction/tests/test_release_artifacts.py -q
+      - name: Run zhihu_fiction tests
+        run: python -m pytest zhihu_fiction/tests -q

@@ -24,6 +24,7 @@ from pathlib import Path
 from .config import APP_ROOT, load_settings
 from .distiller import Distiller
 from .drama import DramaAdapter, DramaAdapterError, DramaExporter
+from .drama.video import BailianVideoProvider, DramaVideoError, VideoJobStore, create_video_provider
 from .exporter import DEFAULT_PLATFORMS, Exporter
 from .llm import create_llm
 from .orchestrator import OrchestratorCompat, WorkflowResult, create_orchestrator
@@ -58,6 +59,7 @@ HELP_TEXT = """
 ║  /publish        导出最近创作到多平台发布包            ║
 ║  /publish <主题> 创作并导出多平台发布包                ║
 ║  /drama         将最近/已加载小说转成短剧视频Prompt包   ║
+║  /drama_video [数量]  生成Prompt包并提交百炼视频任务    ║
 ║  /autopublish    浏览器自动化发布（需安装 playwright）  ║
 ║  /mode <模式>    设置创作模式 (fast/polish/full)      ║
 ║  /genre <题材>   设置目标题材 (如: 悬疑/言情/职场)    ║
@@ -347,29 +349,21 @@ class CLI:
         print(f"加载文件: {filepath.name}")
         text = filepath.read_text(encoding="utf-8")
 
-        lines = text.split("\n")
+        from .base import extract_story_body
+
+        # Parse topic / genre from the header
         topic = ""
         genre = ""
-        story_start = 0
-        story_end = len(lines)
-
-        for i, line in enumerate(lines):
+        for line in text.split("\n"):
             stripped = line.strip()
             if stripped.startswith("# ") and not topic:
                 topic = stripped[2:].strip()
-                continue
-            if stripped.startswith("> 题材：") and not genre:
+            elif stripped.startswith("> 题材：") and not genre:
                 genre = stripped[4:].strip()
-                continue
-            if stripped == "---" and topic and story_start == 0:
-                continue
-            if story_start == 0 and topic and not stripped.startswith("#") and not stripped.startswith(">"):
-                story_start = i
-            if story_start > 0 and stripped == "---":
-                story_end = i
+            if topic and genre:
                 break
 
-        story = "\n".join(lines[story_start:story_end]).strip()
+        story, synthesis = extract_story_body(text)
 
         from .orchestrator import StageResult
         self.last_result = WorkflowResult(
@@ -380,7 +374,7 @@ class CLI:
             draft=StageResult("初稿创作智能体", ""),
             polished=story,
             review="从文件加载",
-            synthesis="从文件加载",
+            synthesis=synthesis or "从文件加载",
         )
         print(f"已加载: {self.last_result.topic}")
         print(f"题材: {self.last_result.genre}")
@@ -394,10 +388,12 @@ class CLI:
             return
 
         story = self.last_result.final_story
-        chapters = [l for l in story.split("\n") if l.strip().startswith("## 第") and "章" in l]
+        import re as _re
+        _chapter_pattern = _re.compile(r"^#{1,4}\s*第\s*[\d一二三四五六七八九十百千]+\s*章")
+        chapters = [l for l in story.split("\n") if _chapter_pattern.match(l.strip())]
         chapter_count = len(chapters)
         if chapter_count == 0:
-            chapter_count = 1  # 至少认为是第1章
+            chapter_count = 1  # at least chapter 1
 
         print(f"\n当前已写 {chapter_count} 章，正在续写第 {chapter_count + 1} 章...")
         print(f"主题: {self.last_result.topic}")
@@ -504,6 +500,59 @@ class CLI:
             print(f"  error: {failure_dir / 'error.txt'}")
         except Exception as exc:
             print(f"\n[错误] 短剧 Prompt 包生成失败: {exc}")
+
+    def cmd_drama_video(self, limit_arg: str | None = None) -> None:
+        """将最近或已加载的小说转成短剧 Prompt 包，并提交百炼视频生成任务。"""
+        if self.last_result is None:
+            print("没有可转换的视频源小说。请先运行 /create <主题> 或 /load <文件名>。")
+            return
+
+        shot_limit = self._parse_drama_video_limit(limit_arg)
+        print(f"\n[短剧视频] 正在将「{self.last_result.topic}」转换为短剧视频任务...")
+        print(f"[短剧视频] 本次最多提交 {shot_limit} 个镜头，避免一次性消耗过多额度。")
+
+        exporter = DramaExporter()
+        try:
+            llm = create_llm(self.settings, temperature=0.3)
+            project = DramaAdapter(llm).adapt_result(self.last_result)
+            output_dir = exporter.export(project)
+            provider = create_video_provider()
+            store = VideoJobStore(output_dir / "video_jobs.jsonl")
+
+            shots = [shot for episode in project.episodes for shot in episode.shots]
+            submitted = []
+            for shot in shots[:shot_limit]:
+                job = provider.submit_shot(shot)
+                store.append(job)
+                submitted.append(job)
+                print(f"  - {shot.id}: {job.provider_job_id} ({job.status})")
+
+            print(f"\n已提交 {len(submitted)} 个视频生成任务。")
+            print(f"短剧 Prompt 包：{output_dir}")
+            print(f"任务记录：{output_dir / 'video_jobs.jsonl'}")
+            print("后续可根据 provider_job_id 查询百炼任务状态并下载视频。")
+        except DramaAdapterError as exc:
+            failure_dir = exporter.export_failure(
+                source_title=self.last_result.topic,
+                raw_output=exc.raw_output,
+                error=str(exc),
+            )
+            print(f"\n[错误] 短剧视频任务生成失败: {exc}")
+            print(f"原始输出和错误信息已保存：{failure_dir}")
+        except DramaVideoError as exc:
+            print(f"\n[错误] 百炼视频任务提交失败: {exc}")
+        except Exception as exc:
+            print(f"\n[错误] 短剧视频任务生成失败: {exc}")
+
+    @staticmethod
+    def _parse_drama_video_limit(limit_arg: str | None) -> int:
+        if not limit_arg:
+            return 1
+        try:
+            limit = int(limit_arg.strip())
+        except ValueError:
+            return 1
+        return max(1, min(limit, 20))
 
     def cmd_autopublish(self) -> None:
         """通过浏览器自动化直接发布到各平台"""
@@ -708,6 +757,8 @@ class CLI:
                 self.cmd_publish(arg if arg else None)
             elif cmd == "/drama":
                 self.cmd_drama()
+            elif cmd == "/drama_video":
+                self.cmd_drama_video(arg if arg else None)
             elif cmd == "/autopublish":
                 self.cmd_autopublish()
             elif cmd == "/auto":

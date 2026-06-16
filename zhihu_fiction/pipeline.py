@@ -1,7 +1,7 @@
 """End-to-end autonomous fiction pipeline with scheduling."""
 from __future__ import annotations
 
-import json
+import logging
 import re
 import threading
 import time
@@ -13,10 +13,13 @@ from typing import Any, Callable, Protocol
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .config import APP_ROOT
+from .pipeline_storage import PipelineStorage
 from .scraper import scrape_zhihu_hot
 
 RUN_DIR = APP_ROOT / "output" / ".pipeline"
 SCHEDULE_FILE = RUN_DIR / "schedule.json"
+CHECKPOINT_DIR = RUN_DIR / "checkpoints"
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -161,6 +164,7 @@ class Pipeline:
         topic_selector=select_topic,
         quality_threshold: float = 6.0,
         max_rewrites: int = 2,
+        skills_store=None,
     ) -> None:
         self.coordinator = coordinator
         self.reviewer = reviewer
@@ -170,16 +174,27 @@ class Pipeline:
         self._selector = topic_selector
         self.quality_threshold = quality_threshold
         self.max_rewrites = max_rewrites
+        self._skills_store = skills_store
 
         self._schedule_thread: threading.Thread | None = None
         self._schedule_stop = threading.Event()
+        self._storage = PipelineStorage(RUN_DIR)
 
-        RUN_DIR.mkdir(parents=True, exist_ok=True)
+        self._storage.ensure()
 
     def run(self, topic: str | None = None, genre: str | None = None,
-            chapters: int = 1) -> RunResult:
-        """Execute one full pipeline run. chapters>1 enables multi-chapter mode."""
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            chapters: int = 1, stream_callback: Callable | None = None,
+            on_progress: Callable | None = None,
+            _resume_state: dict | None = None) -> RunResult:
+        """Execute one full pipeline run. chapters>1 enables multi-chapter mode.
+
+        Args:
+            stream_callback: SSE event callback forwarded to run_coordinator.
+            on_progress: stage progress callback(stage, status, message, progress, **extra).
+            _resume_state: internal — resume from a previously saved checkpoint.
+        """
+        checkpoint_run_id = _resume_state.get("run_id") if _resume_state else None
+        run_id = checkpoint_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
         result = RunResult(
             run_id=run_id,
             trigger="manual" if topic else "scheduled",
@@ -189,7 +204,10 @@ class Pipeline:
         )
         start_time = time.time()
 
+        emit = on_progress or (lambda *a, **kw: None)
+
         # Stage 1: Scrape
+        emit("scrape", "running", "正在抓取知乎热榜...", 10)
         t0 = time.time()
         hot_items: list[dict] = []
         try:
@@ -199,12 +217,14 @@ class Pipeline:
                 duration_s=round(time.time() - t0, 1),
                 extra={"items": len(hot_items)},
             )
+            emit("scrape", "completed", f"抓取到 {len(hot_items)} 条热榜", 20, items=len(hot_items))
         except Exception as exc:
             result.stages["scrape"] = StageRecord(
                 status="failed",
                 duration_s=round(time.time() - t0, 1),
                 extra={"error": str(exc)},
             )
+            emit("scrape", "failed", str(exc), -1)
             result.total_duration_s = round(time.time() - start_time, 1)
             result.error = f"scrape failed: {exc}"
             self._append_run(result)
@@ -212,6 +232,7 @@ class Pipeline:
 
         # Stage 2: Select topic
         if not topic:
+            emit("select_topic", "running", "正在分析选题...", 25)
             t0 = time.time()
             try:
                 selection = self._selector(hot_items, self.llm)
@@ -224,6 +245,8 @@ class Pipeline:
                     duration_s=round(time.time() - t0, 1),
                     extra={"selected": topic, "genre": genre or ""},
                 )
+                emit("select_topic", "completed", f"选定: {topic}", 30,
+                     selected=topic, genre=genre or "")
             except Exception as exc:
                 topic = hot_items[0]["title"]
                 result.topic = topic
@@ -232,6 +255,7 @@ class Pipeline:
                     duration_s=round(time.time() - t0, 1),
                     extra={"selected": topic, "error": str(exc)},
                 )
+                emit("select_topic", "failed", str(exc), -1)
         else:
             result.stages["select_topic"] = StageRecord(
                 status="ok", duration_s=0, extra={"selected": topic}
@@ -250,7 +274,13 @@ class Pipeline:
             extra={"topic_moderated": topic != original_topic},
         )
 
+        # Checkpoint: topic selected, ready for creation
+        self._save_checkpoint(run_id, topic=topic, genre=result.genre,
+                              chapters=total_chapters if 'total_chapters' in dir() else 1,
+                              stage="pre_create", hot_items=hot_items)
+
         # Stage 3: Create (Coordinator + Review loop)
+        emit("create", "running", "正在创作 (DeepAgent 协调中)...", 35)
         t0 = time.time()
         hot_summary = self._format_hot_summary(hot_items)
 
@@ -268,6 +298,7 @@ class Pipeline:
                     topic=topic, hot_trends=hot_summary, genre=genre,
                     chapter_index=ch_idx, total_chapters=total_chapters,
                     existing_story=existing,
+                    stream_callback=stream_callback,
                 )
                 all_chapters.append(wf_result.final_story)
 
@@ -276,23 +307,25 @@ class Pipeline:
                 wf_result = run_coordinator(
                     self.llm, self.coordinator,
                     topic=topic, hot_trends=hot_summary, genre=genre,
+                    stream_callback=stream_callback,
                 )
                 all_chapters = [wf_result.final_story]
 
-            # Quality gate: review + targeted retry
+            full_story = "\n\n".join(all_chapters)
+
+            # Quality gate: review full combined story
             review_rounds = 0
             review = {"total_score": 0.0, "full_report": ""}
 
             for round_num in range(self.max_rewrites + 1):
-                review = self.reviewer.review(wf_result.final_story, topic)
+                review = self.reviewer.review(full_story, topic)
                 score = review["total_score"]
                 review_rounds += 1
 
                 if score >= self.quality_threshold:
-                    break  # 达标，通过
+                    break
 
                 if round_num < self.max_rewrites:
-                    # 不达标：只重写 draft + polish，不重新跑全流程
                     feedback = (
                         f"【评审分数】{score:.1f}/10 (门槛 {self.quality_threshold})\n\n"
                         f"【评审意见】\n{review['full_report']}\n\n"
@@ -302,27 +335,34 @@ class Pipeline:
                         self.llm, self.coordinator,
                         topic=topic, hot_trends=hot_summary, genre=genre,
                         revision_feedback=feedback,
-                        chapter_index=ch_idx, total_chapters=total_chapters,
-                        existing_story=existing,
+                        total_chapters=total_chapters,
+                        existing_story="" if total_chapters <= 1 else full_story,
+                        stream_callback=stream_callback,
                     )
+                    full_story = wf_result.final_story
 
             result.stages["create"] = StageRecord(
                 status="ok",
                 duration_s=round(time.time() - t0, 1),
-                extra={"words": len(wf_result.final_story)},
+                extra={"words": len(full_story)},
             )
             result.stages["review"] = StageRecord(
                 status="ok",
                 duration_s=0,
-                extra={"score": review["total_score"], "rounds": review_rounds},
+                extra={"score": review["total_score"], "rounds": review_rounds,
+                       "chapters": total_chapters},
             )
+            emit("create", "completed", f"创作完成，{len(full_story)} 字", 80, words=len(full_story))
 
-            # Save story to output directory (all chapters)
-            full_story = "\n\n".join(all_chapters)
             story_path = self._save_story(
                 run_id=run_id, topic=topic, genre=result.genre,
                 story=full_story, synthesis=wf_result.synthesis,
             )
+            # Checkpoint: story created, ready for publish
+            self._save_checkpoint(run_id, topic=topic, genre=result.genre,
+                                  chapters=total_chapters, stage="pre_publish",
+                                  story_path=str(story_path),
+                                  score=review["total_score"])
             result.published_url = str(story_path)
 
             # Skip publish if quality too low
@@ -337,6 +377,7 @@ class Pipeline:
                 return result
 
         except Exception as exc:
+            emit("create", "failed", str(exc), -1)
             result.stages["create"] = StageRecord(
                 status="failed",
                 duration_s=round(time.time() - t0, 1),
@@ -351,10 +392,10 @@ class Pipeline:
         t0 = time.time()
         try:
             pub_result = self.publisher.publish(
-                title=wf_result.topic,
-                content=wf_result.final_story,
+                title=topic,
+                content=full_story,
                 tags=[],
-                genre=wf_result.genre,
+                genre=result.genre,
             )
             result.stages["publish"] = StageRecord(
                 status="ok" if pub_result.get("success") else "failed",
@@ -362,6 +403,22 @@ class Pipeline:
                 extra={"url": pub_result.get("url", ""), "message": pub_result.get("message", "")},
             )
             result.published_url = pub_result.get("url", "")
+
+            # Closed-loop learning: feed successful story back into skill cards
+            if pub_result.get("success") and self._skills_store is not None:
+                try:
+                    from .distiller import Distiller
+                    from .config import load_settings
+                    d = Distiller(load_settings())
+                    d.learn_from_story(
+                        title=topic, genre=result.genre,
+                        story_text=full_story, skills_store=self._skills_store,
+                    )
+                    result.stages["learn"] = StageRecord(status="ok", duration_s=0,
+                                                         extra={"genre": result.genre})
+                except Exception as exc:
+                    result.stages["learn"] = StageRecord(status="failed", duration_s=0,
+                                                         extra={"error": str(exc)})
         except Exception as exc:
             result.stages["publish"] = StageRecord(
                 status="failed",
@@ -371,6 +428,7 @@ class Pipeline:
 
         result.total_duration_s = round(time.time() - start_time, 1)
         self._append_run(result)
+        self._clear_checkpoint(run_id)
         return result
 
     def run_scheduled(self, interval_minutes: int = 360) -> threading.Event:
@@ -382,7 +440,7 @@ class Pipeline:
                 try:
                     self.run(topic=None)
                 except Exception as exc:
-                    print(f"[pipeline] scheduled run failed: {exc}")
+                    logger.exception("scheduled run failed: %s", exc)
 
                 deadline = time.time() + interval_minutes * 60
                 while time.time() < deadline and not self._schedule_stop.is_set():
@@ -391,12 +449,11 @@ class Pipeline:
         self._schedule_thread = threading.Thread(target=_loop, daemon=True)
         self._schedule_thread.start()
 
-        SCHEDULE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        SCHEDULE_FILE.write_text(json.dumps({
+        self._storage.save_schedule({
             "active": True,
             "interval_minutes": interval_minutes,
             "started_at": datetime.now().isoformat(),
-        }, ensure_ascii=False, indent=2))
+        })
 
         return self._schedule_stop
 
@@ -404,16 +461,14 @@ class Pipeline:
         """Stop the background schedule."""
         self._schedule_stop.set()
         if SCHEDULE_FILE.exists():
-            data = json.loads(SCHEDULE_FILE.read_text())
-            data["active"] = False
-            data["stopped_at"] = datetime.now().isoformat()
-            SCHEDULE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+            self._storage.update_schedule({
+                "active": False,
+                "stopped_at": datetime.now().isoformat(),
+            })
 
     def schedule_status(self) -> dict | None:
         """Get current schedule status."""
-        if not SCHEDULE_FILE.exists():
-            return None
-        return json.loads(SCHEDULE_FILE.read_text())
+        return self._storage.read_schedule()
 
     def _format_hot_summary(self, hot_items: list[dict]) -> str:
         lines: list[str] = []
@@ -427,7 +482,7 @@ class Pipeline:
         return "\n".join(lines)
 
     def continue_chapter(self, topic: str, genre: str, existing_story: str,
-                         chapter_count: int) -> RunResult:
+                         chapter_count: int, stream_callback: Callable | None = None) -> RunResult:
         """Continue an existing story with one more chapter. Returns quickly (no scrape)."""
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         result = RunResult(run_id=run_id, trigger="manual", topic=topic, genre=genre,
@@ -439,6 +494,7 @@ class Pipeline:
             topic=topic, genre=genre,
             chapter_index=chapter_count + 1, total_chapters=0,
             existing_story=existing_story,
+            stream_callback=stream_callback,
         )
         new_chapter = wf_result.final_story
         full_story = existing_story + "\n\n" + new_chapter
@@ -471,9 +527,46 @@ class Pipeline:
         return story_file
 
     def _append_run(self, result: RunResult) -> None:
-        runs_file = RUN_DIR / "runs.jsonl"
         try:
-            with open(runs_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(result.to_json(), ensure_ascii=False) + "\n")
-        except Exception:
-            pass
+            self._storage.append_run(result)
+        except OSError:
+            logger.exception("failed to append pipeline run: %s", result.run_id)
+
+    # ---- checkpoint / resume ----
+
+    def _checkpoint_path(self, run_id: str) -> Path:
+        return self._storage.checkpoint_path(run_id)
+
+    def _save_checkpoint(self, run_id: str, **state) -> None:
+        """Persist pipeline state so a crashed run can resume."""
+        try:
+            self._storage.save_checkpoint(run_id, **state)
+        except OSError:
+            logger.exception("failed to save pipeline checkpoint: %s", run_id)
+
+    def _load_checkpoint(self, run_id: str) -> dict | None:
+        """Load a previous checkpoint, or None if it doesn't exist."""
+        return self._storage.load_checkpoint(run_id)
+
+    def _clear_checkpoint(self, run_id: str) -> None:
+        """Remove checkpoint after successful completion."""
+        try:
+            self._storage.clear_checkpoint(run_id)
+        except OSError:
+            logger.exception("failed to clear pipeline checkpoint: %s", run_id)
+
+    def list_checkpoints(self) -> list[dict]:
+        """List all saved checkpoints."""
+        return self._storage.list_checkpoints()
+
+    def resume_checkpoint(self, run_id: str) -> RunResult | None:
+        """Resume a run from a saved checkpoint."""
+        state = self._load_checkpoint(run_id)
+        if state is None:
+            return None
+        topic = state.get("topic", "")
+        genre = state.get("genre", "")
+        print(f"[resume] Restoring checkpoint {run_id}: topic={topic[:40]}, genre={genre}")
+        return self.run(topic=topic, genre=genre,
+                        chapters=state.get("chapters", 1),
+                        _resume_state=state)
