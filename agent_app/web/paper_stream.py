@@ -8,6 +8,7 @@ from agent_app.config import Settings
 from agent_app.deepagent.runner import CompetitionPaperRunner
 from agent_app.domain.models import RunSpec, RunStatus
 from agent_app.domain.serialization import to_json_dict
+from agent_app.services.stage_review_service import StageDependencyRef, StageReviewService
 from agent_app.tools.competition import make_competition_tools
 
 
@@ -57,6 +58,8 @@ class EventDrivingCoordinator:
         self.run_store = run_store
         self.emit = emit
         self.tools = {tool.name: tool for tool in make_competition_tools(run_store=run_store)}
+        self.stage_reviews = StageReviewService(run_store)
+        self._latest_review_by_stage: dict[str, StageDependencyRef] = {}
 
     def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
         run_id = payload["run_id"]
@@ -151,9 +154,74 @@ class EventDrivingCoordinator:
         self.emit({"type": "tool", "stage": stage, "name": tool_name, "status": "running"})
         result = self.tools[tool_name].invoke(payload)
         self.emit({"type": "tool", "stage": stage, "name": tool_name, "status": "completed", "result": self._preview(result)})
+        review = self._create_stage_review(stage, label, payload, result)
+        self.emit(review.to_event())
         self.emit({"type": "stage", "stage": stage, "label": label, "status": "completed"})
         self._emit_artifact_paths(stage, result)
         return result
+
+
+    def _create_stage_review(self, stage: str, label: str, payload: dict[str, Any], result: dict[str, Any]):
+        depends_on = list(self._latest_review_by_stage.values())
+        review_payload = self._review_payload(result)
+        artifacts = self._artifact_refs(result)
+        review = self.stage_reviews.create_review(
+            run_id=payload["run_id"],
+            stage=stage,
+            stage_label=label,
+            status="awaiting_user",
+            summary=self._stage_summary(label, review_payload, artifacts),
+            review_payload=review_payload,
+            input_payload={"stage": stage, "payload": payload, "depends_on": [dep.output_id for dep in depends_on]},
+            depends_on=depends_on,
+            artifacts=artifacts,
+            quality_reports=self._quality_reports(result),
+        )
+        self._latest_review_by_stage[stage] = review.dependency_ref()
+        return review
+
+    def _review_payload(self, result: dict[str, Any]) -> dict[str, Any]:
+        preview = self._preview(result)
+        if "problem_brief" in result and isinstance(result["problem_brief"], dict):
+            return result["problem_brief"]
+        if "data_audit" in result and isinstance(result["data_audit"], dict):
+            return result["data_audit"]
+        if "modeling_plan" in result and isinstance(result["modeling_plan"], dict):
+            return result["modeling_plan"]
+        if "experiment_result" in result and isinstance(result["experiment_result"], dict):
+            return result["experiment_result"]
+        if "paper_draft" in result and isinstance(result["paper_draft"], dict):
+            return result["paper_draft"]
+        if "quality_report" in result and isinstance(result["quality_report"], dict):
+            return result["quality_report"]
+        if "package_manifest" in result and isinstance(result["package_manifest"], dict):
+            return result["package_manifest"]
+        return preview
+
+    def _stage_summary(self, label: str, review_payload: dict[str, Any], artifacts: list[dict[str, Any]]) -> str:
+        keys = list(review_payload)[:4]
+        key_text = "、".join(keys) if keys else "结构化结果"
+        artifact_text = f"，生成 {len(artifacts)} 个产物" if artifacts else ""
+        return f"{label}已生成，可审阅字段：{key_text}{artifact_text}。"
+
+    def _artifact_refs(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        artifacts: list[dict[str, Any]] = []
+        for key, value in result.items():
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                if isinstance(item, str) and self._looks_like_artifact_path(item):
+                    path = Path(item)
+                    artifacts.append({
+                        "name": path.name,
+                        "path": item,
+                        "kind": path.suffix.lstrip(".") or "file",
+                        "source_field": key,
+                    })
+        return artifacts
+
+    def _quality_reports(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        report = result.get("quality_report")
+        return [report] if isinstance(report, dict) else []
 
     def _emit_artifact_paths(self, stage: str, result: dict[str, Any]) -> None:
         for key, value in result.items():

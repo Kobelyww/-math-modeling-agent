@@ -174,3 +174,28 @@ def test_paper_chat_start_endpoint_rejects_empty_question():
 
     assert response.status_code == 400
     assert response.json()["error"] == "问题不能为空"
+
+
+def test_event_driving_coordinator_emits_stage_review_created_events(tmp_path):
+    data_file = tmp_path / "traffic.csv"
+    data_file.write_text("flow,speed\n10,40\n", encoding="utf-8")
+    collector = EventCollector()
+
+    streamer = PaperChatStreamer(
+        output_root=tmp_path / "runs",
+        coordinator_factory=lambda run_store, **_: EventDrivingCoordinator(run_store, collector),
+    )
+    streamer.run(RunSpec(question="建立交通流预测模型", data_files=[data_file]), emit=collector)
+
+    review_events = [event for event in collector.events if event.get("type") == "stage_review_created"]
+    assert review_events
+    assert [event["stage"] for event in review_events[:3]] == [
+        "ingest_inputs",
+        "understand_problem",
+        "audit_data",
+    ]
+    assert all(event.get("output_id") for event in review_events)
+    assert all(event.get("summary") for event in review_events)
+    plan_event = next(event for event in review_events if event["stage"] == "plan_modeling")
+    assert plan_event["status"] == "awaiting_user"
+    assert "selected_model" in plan_event["review_payload"]

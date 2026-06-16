@@ -2,6 +2,7 @@ let paperWs = null;
 let paperTaskId = null;
 let chatMessages = [];
 let artifactRecords = [];
+let stageReviewRecords = [];
 
 const STAGE_LABELS = {
   deepagent_reasoning: 'DeepAgent 编排',
@@ -26,6 +27,19 @@ function simpleMarkdown(text) {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\n\n/g, '</p><p>')
     .replace(/\n/g, '<br>');
+}
+
+function escapeHTML(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function classToken(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'unknown';
 }
 
 function setStatus(msg, color) {
@@ -56,8 +70,10 @@ function clearChat() {
   if (log) log.innerHTML = '';
   chatMessages = [];
   artifactRecords = [];
+  stageReviewRecords = [];
   renderStages({});
   renderArtifacts();
+  renderStageReviews();
   document.getElementById('btn-followup').disabled = true;
   document.getElementById('btn-download-all').disabled = true;
 }
@@ -90,7 +106,7 @@ function renderStages(stageStatus) {
   const stages = Array.from(new Set([...Object.keys(STAGE_LABELS), ...Object.keys(stageStatus)]));
   el.innerHTML = stages.map(stage => {
     const status = stageStatus[stage] || 'pending';
-    return '<div class="stage-row ' + status + '">' +
+    return '<div class="stage-row ' + classToken(status) + '">' +
       '<span>' + (STAGE_LABELS[stage] || stage) + '</span>' +
       '<strong>' + status + '</strong>' +
       '</div>';
@@ -133,6 +149,55 @@ function addArtifact(event) {
   });
   renderArtifacts();
   document.getElementById('btn-download-all').disabled = false;
+}
+
+function addStageReview(event) {
+  const index = stageReviewRecords.findIndex(item => item.output_id === event.output_id);
+  if (index >= 0) {
+    stageReviewRecords[index] = { ...stageReviewRecords[index], ...event };
+  } else {
+    stageReviewRecords.push(event);
+  }
+  renderStageReviews();
+}
+
+function markStageReviewInvalidated(event) {
+  const index = stageReviewRecords.findIndex(item => item.output_id === event.output_id);
+  if (index >= 0) {
+    stageReviewRecords[index] = { ...stageReviewRecords[index], ...event, status: 'stale' };
+  } else {
+    stageReviewRecords.push({ ...event, status: 'stale' });
+  }
+  updateStage(event.stage, 'stale');
+  renderStageReviews();
+}
+
+function renderStageReviews() {
+  const list = document.getElementById('stage-review-list');
+  if (!list) return;
+  if (!stageReviewRecords.length) {
+    list.innerHTML = '<div class="artifact-note">阶段产物生成后会在这里进入审阅队列。</div>';
+    return;
+  }
+  list.innerHTML = stageReviewRecords.map(item => {
+    const payload = item.review_payload || {};
+    const keys = Object.keys(payload).slice(0, 5);
+    const fields = keys.length
+      ? '<dl>' + keys.map(key => {
+          const value = Array.isArray(payload[key]) ? payload[key].join(', ') :
+            (typeof payload[key] === 'object' && payload[key] !== null ? JSON.stringify(payload[key]) : payload[key]);
+          return '<dt>' + escapeHTML(key) + '</dt><dd>' + escapeHTML(String(value || '')) + '</dd>';
+        }).join('') + '</dl>'
+      : '<small>暂无结构化字段</small>';
+    const staleNote = item.status === 'stale'
+      ? '<div class="stage-review-stale">已过期，仅供对比</div>'
+      : '';
+    return '<article class="stage-review-card ' + classToken(item.status) + '">' +
+      '<div class="stage-review-head"><strong>' + escapeHTML(item.stage_label || STAGE_LABELS[item.stage] || item.stage || '阶段产物') + '</strong>' +
+      '<span>v' + escapeHTML(item.version || '') + ' · ' + escapeHTML(item.status || '') + '</span></div>' +
+      '<p>' + escapeHTML(item.summary || '') + '</p>' + staleNote + fields +
+      '</article>';
+  }).join('');
 }
 
 async function startPaperRun() {
@@ -226,6 +291,15 @@ function handlePaperEvent(msg) {
       break;
     case 'quality_gate':
       appendEvent('质量门 ' + msg.gate_name + '：' + (msg.passed ? '通过' : '未通过') + '，得分 ' + msg.score, msg.stage);
+      break;
+    case 'stage_review_created':
+    case 'stage_review_updated':
+      addStageReview(msg);
+      appendEvent('阶段产物待审阅：' + (msg.stage_label || STAGE_LABELS[msg.stage] || msg.stage || ''), msg.stage);
+      break;
+    case 'stage_invalidated':
+      markStageReviewInvalidated(msg);
+      appendEvent('阶段产物已过期：' + (msg.stage_label || STAGE_LABELS[msg.stage] || msg.stage || ''), msg.stage);
       break;
     case 'message':
       appendChat(msg.role || 'assistant', msg.content || '');
