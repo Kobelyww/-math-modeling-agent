@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数模 DeepAgent 论文生产系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <div>
+      <h1>数模 DeepAgent 论文生产系统</h1>
+      <p>Paper Chat Console</p>
+    </div>
+    <span class="badge">DeepAgent · Streaming Workflow</span>
+  </header>
+
+  <div class="console-shell paper-shell">
+    <aside class="control-rail">
+      <div class="panel">
+        <div class="panel-label">Paper Run</div>
+        <label for="question">赛题 / 研究任务</label>
+        <textarea id="question" rows="8" placeholder="例如：根据交通流量数据建立预测模型，并完成竞赛论文提交包"></textarea>
+
+        <label for="data-files">数据文件路径（位于 agent_app/data/paper_inputs 下，每行一个）</label>
+        <textarea id="data-files" rows="3" placeholder="data/traffic.csv"></textarea>
+
+        <label for="reference-files">参考文件路径（每行一个）</label>
+        <textarea id="reference-files" rows="3" placeholder="references/modeling-paper.pdf"></textarea>
+
+        <div class="upload-row">
+          <label for="pdf-file" class="btn-secondary">上传 PDF 题目</label>
+          <input type="file" id="pdf-file" accept=".pdf" onchange="onPDFSelected()" class="sr-only">
+          <span id="pdf-name" class="upload-hint"></span>
+        </div>
+        <div id="upload-status" class="status-text"></div>
+
+        <button id="btn-paper" onclick="startPaperRun()">开始论文生产</button>
+        <div id="status" class="status-text">等待任务输入</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-label">RAG</div>
+        <div id="rag-status">{{ '已就绪' if rag_ready else '未构建' }}</div>
+        <input id="rag-query" placeholder="检索论文或方法...">
+        <div class="button-row">
+          <button onclick="searchRAG()">检索</button>
+          <button class="btn-secondary" onclick="rebuildRAG()">重建索引</button>
+        </div>
+        <div id="rag-results"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-label">Nature Skills</div>
+        <div id="skills-list">加载中...</div>
+      </div>
+    </aside>
+
+    <main class="chat-workspace">
+      <section class="loop-overview">
+        <div>
+          <div class="panel-label">Conversation</div>
+          <h2>论文智能体对话流</h2>
+        </div>
+        <div id="run-state" class="run-state">Idle</div>
+      </section>
+
+      <section id="chat-log" class="chat-log">
+        <div class="chat-empty">输入赛题后，DeepAgent 会以阶段事件、工具调用、质量门和产物列表持续更新。</div>
+      </section>
+
+      <section class="followup-bar">
+        <input id="followup-input" placeholder="继续对话：例如 补充灵敏度分析，并把摘要改成国赛风格">
+        <button id="btn-followup" onclick="sendFollowup()" disabled>发送后续指令</button>
+      </section>
+    </main>
+
+    <aside class="artifact-rail" id="artifact-rail">
+      <div class="panel">
+        <div class="panel-label">Stages</div>
+        <div id="stage-list" class="stage-list"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-label">Artifacts</div>
+        <div id="artifact-list" class="artifact-list">
+          <div class="artifact-note">完成后会显示论文、代码、报告和 run.json。</div>
+        </div>
+        <button class="btn-secondary" id="btn-download-all" onclick="downloadAll()" disabled>导出当前对话</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
