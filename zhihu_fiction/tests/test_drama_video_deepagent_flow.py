@@ -3,14 +3,19 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from zhihu_fiction.app.services.drama_video_deepagent_flow import (
     advance_deepagent,
     confirm_stage,
     revise_stage,
+    retry_failed_stage,
     start_deepagent_run,
     start_deepagent_video_loop,
 )
 from zhihu_fiction.app.state import AppState
+from zhihu_fiction.workspace.models import DramaProjectSession
 from zhihu_fiction.workspace.repositories import WorkspaceRepository
 
 
@@ -435,3 +440,244 @@ def test_revise_stage_marks_matching_rework_request_completed(tmp_path):
     assert request["status"] == "completed"
     assert request["completed_stage_version_id"]
     assert response["rework_request"] == request
+
+
+def test_retry_failed_stage_regenerates_pending_stage_without_skipping_confirmation(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "project_id": "project_1",
+        "shot_limit": 1,
+        "stage_drafts": {"script": "confirmed script"},
+        "drafts": {"style": "stale failed draft"},
+        "confirmed_stages": ["script"],
+        "pending_stage": "style",
+        "video_run_id": "",
+    }
+    repo.save_drama_session(
+        DramaProjectSession(
+            id="run_1",
+            story_path="故事.md",
+            project_id="project_1",
+            shot_limit=1,
+            stage_drafts={"script": "confirmed script"},
+            drafts={"style": "stale failed draft"},
+            confirmed_stages=["script"],
+            pending_stage="style",
+            status="failed",
+            error="model timeout",
+        )
+    )
+
+    response = retry_failed_stage(
+        deps,
+        state,
+        "run_1",
+        generator=lambda story_path, stage, drafts: {
+            "stage": stage,
+            "label": "风格设计",
+            "model": "deepseek-v4-pro",
+            "content": "retried style draft",
+            "events": [{"type": "ai_text", "content": "retry"}],
+        },
+    )
+
+    assert response["status"] == "awaiting_confirmation"
+    assert response["stage"] == "style"
+    assert response["content"] == "retried style draft"
+    assert state.video_deepagent_specs["run_1"]["drafts"]["style"] == "retried style draft"
+    assert state.video_deepagent_specs["run_1"]["confirmed_stages"] == ["script"]
+    session = repo.get_drama_session("run_1")
+    assert session.status == "awaiting_confirmation"
+    assert session.pending_stage == "style"
+    assert session.error == ""
+    assert session.stage_drafts == {"script": "confirmed script"}
+    versions = repo.list_drama_stage_versions("run_1")
+    assert [(version.stage, version.event, version.content) for version in versions] == [
+        ("style", "restore", "retried style draft")
+    ]
+
+
+def test_retry_failed_stage_rejects_non_failed_session(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {"script": "draft"},
+        "confirmed_stages": [],
+        "pending_stage": "script",
+        "video_run_id": "",
+    }
+    repo.save_drama_session(
+        DramaProjectSession(
+            id="run_1",
+            story_path="故事.md",
+            drafts={"script": "draft"},
+            pending_stage="script",
+            status="awaiting_confirmation",
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        retry_failed_stage(
+            deps,
+            state,
+            "run_1",
+            generator=lambda story_path, stage, drafts: {"content": "new draft"},
+        )
+
+    assert exc.value.status_code == 409
+    assert "只有失败" in exc.value.detail
+
+
+def test_retry_failed_stage_requires_persisted_failed_session(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {"script": "draft"},
+        "confirmed_stages": [],
+        "pending_stage": "script",
+        "video_run_id": "",
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        retry_failed_stage(
+            deps,
+            state,
+            "run_1",
+            generator=lambda story_path, stage, drafts: {"content": "new draft"},
+        )
+
+    assert exc.value.status_code == 409
+    assert "只有失败" in exc.value.detail
+
+
+def test_retry_failed_stage_rejects_already_confirmed_pending_stage(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {"script": "confirmed script", "style": "confirmed style"},
+        "drafts": {"style": "failed style draft"},
+        "confirmed_stages": ["script", "style"],
+        "pending_stage": "style",
+        "video_run_id": "",
+    }
+    repo.save_drama_session(
+        DramaProjectSession(
+            id="run_1",
+            story_path="故事.md",
+            stage_drafts={"script": "confirmed script", "style": "confirmed style"},
+            drafts={"style": "failed style draft"},
+            confirmed_stages=["script", "style"],
+            pending_stage="style",
+            status="failed",
+            error="model timeout",
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        retry_failed_stage(
+            deps,
+            state,
+            "run_1",
+            generator=lambda story_path, stage, drafts: {"content": "new style"},
+        )
+
+    assert exc.value.status_code == 409
+    assert "已确认" in exc.value.detail
+    assert repo.get_drama_session("run_1").status == "failed"
+
+
+def test_retry_failed_stage_keeps_session_failed_when_generator_fails(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "project_id": "project_1",
+        "shot_limit": 1,
+        "stage_drafts": {"script": "confirmed script"},
+        "drafts": {"style": "failed style draft"},
+        "confirmed_stages": ["script"],
+        "pending_stage": "style",
+        "video_run_id": "",
+    }
+    repo.save_drama_session(
+        DramaProjectSession(
+            id="run_1",
+            story_path="故事.md",
+            project_id="project_1",
+            stage_drafts={"script": "confirmed script"},
+            drafts={"style": "failed style draft"},
+            confirmed_stages=["script"],
+            pending_stage="style",
+            status="failed",
+            error="model timeout",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        retry_failed_stage(
+            deps,
+            state,
+            "run_1",
+            generator=lambda story_path, stage, drafts: (_ for _ in ()).throw(
+                RuntimeError("provider unavailable")
+            ),
+        )
+
+    session = repo.get_drama_session("run_1")
+    assert session.status == "failed"
+    assert session.pending_stage == "style"
+    assert session.error == "provider unavailable"
+    assert session.stage_drafts == {"script": "confirmed script"}
+
+
+def test_advance_deepagent_rejects_failed_session_until_retry(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {"script": "confirmed script"},
+        "drafts": {"style": "failed style draft"},
+        "confirmed_stages": ["script"],
+        "pending_stage": "style",
+        "video_run_id": "",
+    }
+    repo.save_drama_session(
+        DramaProjectSession(
+            id="run_1",
+            story_path="故事.md",
+            stage_drafts={"script": "confirmed script"},
+            drafts={"style": "failed style draft"},
+            confirmed_stages=["script"],
+            pending_stage="style",
+            status="failed",
+            error="model timeout",
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        advance_deepagent(
+            deps,
+            state,
+            "run_1",
+            generator=lambda story_path, stage, drafts: {"content": "bypass draft"},
+        )
+
+    assert exc.value.status_code == 409
+    assert "请先重试失败阶段" in exc.value.detail

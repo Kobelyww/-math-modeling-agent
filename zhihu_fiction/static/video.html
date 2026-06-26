@@ -170,14 +170,14 @@
           <div class="flex flex-wrap items-center gap-2">
             <button x-show="activeStage!=='video'"
               @click="startDeepAgentLoop()"
-              :disabled="!activeStoryPath() || !!generatingStage || !!submitting || !!deepAgentBusy || !!workspaceRestoring"
+              :disabled="!activeStoryPath() || !!generatingStage || !!submitting || !!deepAgentBusy || !!workspaceRestoring || !!deepAgentFailed"
               class="cta px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
               <span x-show="workspaceRestoring">恢复中...</span>
               <span x-show="!workspaceRestoring">一键生成短剧流程</span>
             </button>
             <button x-show="activeStage!=='video'"
               @click="startDeepAgentRun()"
-              :disabled="!activeStoryPath() || !!generatingStage || !!submitting || !!deepAgentBusy || !!workspaceRestoring"
+              :disabled="!activeStoryPath() || !!generatingStage || !!submitting || !!deepAgentBusy || !!workspaceRestoring || !!deepAgentFailed"
               class="cta px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
               <span x-show="workspaceRestoring">恢复中...</span>
               <span x-show="!workspaceRestoring && !deepAgentActive">DeepAgent 自动生产</span>
@@ -190,6 +190,13 @@
               class="muted-panel px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
               <span x-show="generatingStage!==activeStage">DeepSeek V4 Pro 创作</span>
               <span x-show="generatingStage===activeStage">创作中...</span>
+            </button>
+            <button x-show="activeStage!=='video' && deepAgentFailed"
+              @click="retryFailedDeepAgentStage()"
+              :disabled="!deepAgentRunId || !!deepAgentBusy || !!workspaceRestoring"
+              class="muted-panel px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+              <span x-show="!deepAgentBusy">重试失败阶段</span>
+              <span x-show="deepAgentBusy">重试中...</span>
             </button>
             <button @click="confirmActiveStage()"
               :disabled="!!deepAgentBusy || !!workspaceRestoring || (activeStage!=='video' && !stageDrafts[activeStage]?.trim())"
@@ -549,6 +556,7 @@ function videoApp() {
     deepAgentRunId: '',
     deepAgentActive: false,
     deepAgentBusy: false,
+    deepAgentFailed: false,
     workspaceHumanLoopPrompt: '',
     workspaceRestoreStatus: '准备就绪',
     workspaceRestoring: false,
@@ -746,6 +754,7 @@ function videoApp() {
       this.deepAgentRunId = '';
       this.deepAgentActive = false;
       this.deepAgentBusy = false;
+      this.deepAgentFailed = false;
       this.workspaceHumanLoopPrompt = '';
       this.workspaceRestoreStatus = '正在恢复工作台...';
       this.workspaceRestoring = true;
@@ -819,6 +828,7 @@ function videoApp() {
     },
     workspaceActionHint() {
       if (this.submitting) return '视频生成流程运行中';
+      if (this.deepAgentFailed) return '当前阶段失败，可重试或调整反馈';
       if (this.deepAgentBusy || this.generatingStage) return '正在生成，请等待';
       if (this.activeStage === 'video') {
         return this.readyForVideoStages() ? '可以开始视频生成' : '先确认前五个阶段';
@@ -871,6 +881,7 @@ function videoApp() {
       if (!storyPath || this.deepAgentBusy || this.submitting) return;
       this.error = '';
       this.result = null;
+      this.deepAgentFailed = false;
       this.deepAgentBusy = true;
       this.generatingStage = this.activeStage !== 'video' ? this.activeStage : 'script';
       this.stageGenerationMessage = 'DeepAgent 正在生成首个确认点...';
@@ -933,6 +944,7 @@ function videoApp() {
           if (!res.ok) throw new Error(data.detail || data.error || 'DeepAgent 启动失败');
           this.deepAgentRunId = data.run_id;
           this.deepAgentActive = true;
+          this.deepAgentFailed = false;
           await this.loadDeepAgentVersions();
           this.videoStageLog.push({
             id: ++this.logSeq,
@@ -954,6 +966,7 @@ function videoApp() {
     async advanceDeepAgent() {
       if (!this.deepAgentRunId || this.deepAgentBusy || this.submitting) return;
       this.deepAgentBusy = true;
+      this.deepAgentFailed = false;
       this.generatingStage = this.activeStage !== 'video' ? this.activeStage : '';
       this.stageGenerationMessage = `${this.activeStageLabel()}正在由 DeepAgent 调用 DeepSeek V4 Pro 创作...`;
       this.error = '';
@@ -1183,6 +1196,7 @@ function videoApp() {
       }
       this.deepAgentRunId = session.id;
       this.deepAgentActive = true;
+      this.deepAgentFailed = session.status === 'failed';
       this.stageVersions = versions || [];
       this.projectId = session.project_id || this.projectId;
       this.restoredStoryPath = session.story_path || this.restoredStoryPath;
@@ -1211,7 +1225,7 @@ function videoApp() {
         this.workspaceRestoreStatus = '已恢复会话，等待继续生成下一阶段。';
         this.stageGenerationMessage = `${stageLabels[pendingStage] || pendingStage}等待 DeepAgent 继续生成。`;
       } else if (session.status === 'failed') {
-        this.workspaceRestoreStatus = '已恢复失败会话，可调整后重新生成。';
+        this.workspaceRestoreStatus = '已恢复失败会话，可重试失败阶段。';
         this.error = session.error || 'DeepAgent 上次生成失败';
       } else {
         this.workspaceRestoreStatus = restoreMessage;
@@ -1301,6 +1315,8 @@ function videoApp() {
         await this.loadDeepAgentVersions();
         if (session.status === 'failed') {
           this.error = session.error || 'DeepAgent 生成失败';
+          this.deepAgentFailed = true;
+          this.workspaceRestoreStatus = 'DeepAgent 阶段生成失败，可重试失败阶段。';
           this.stageGenerationMessage = '';
           this.stopDeepAgentPolling();
           this.deepAgentBusy = false;
@@ -1310,6 +1326,7 @@ function videoApp() {
         const pendingStage = session.pending_stage || this.activeStage;
         const draft = (session.drafts || {})[pendingStage];
         if (session.status === 'awaiting_confirmation' && draft) {
+          this.deepAgentFailed = false;
           this.activeStage = pendingStage;
           this.stageDrafts[pendingStage] = draft;
           this.pushHumanLoopMessage(pendingStage, 'agent', draft);
@@ -1326,6 +1343,45 @@ function videoApp() {
         }
       } catch(e) {
         this.error = e.message;
+      }
+    },
+    async retryFailedDeepAgentStage() {
+      if (!this.deepAgentRunId || this.deepAgentBusy || this.activeStage === 'video') return;
+      const stage = this.activeStage;
+      this.deepAgentBusy = true;
+      this.generatingStage = stage;
+      this.error = '';
+      this.stageGenerationMessage = `${this.activeStageLabel()}正在重试...`;
+      try {
+        const res = await fetch('/api/drama-video/deepagent/retry', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ run_id: this.deepAgentRunId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(this.responseError(data, '失败阶段重试失败'));
+        const retriedStage = data.stage || stage;
+        this.activeStage = retriedStage;
+        this.stageDrafts[retriedStage] = data.content || '';
+        this.pushHumanLoopMessage(retriedStage, 'agent', data.content || '');
+        this.deepAgentFailed = false;
+        await this.loadDeepAgentVersions();
+        await this.loadProjectWorkspace();
+        this.stageGenerationMessage = 'DeepAgent 失败阶段已重新生成，等待确认。';
+        this.workspaceRestoreStatus = '失败阶段已恢复，请确认或继续反馈。';
+        this.videoStageLog.push({
+          id: ++this.logSeq,
+          time: new Date().toLocaleTimeString(),
+          stage: data.label || stageLabels[retriedStage] || retriedStage,
+          message: '失败阶段已重试并生成新草稿',
+        });
+      } catch(e) {
+        this.error = e.message;
+        this.deepAgentFailed = true;
+        this.stageGenerationMessage = '重试失败，请调整反馈后再试。';
+      } finally {
+        this.generatingStage = '';
+        this.deepAgentBusy = false;
       }
     },
     restoreStageVersion(version) {

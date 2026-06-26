@@ -167,6 +167,9 @@ def advance_deepagent(
     spec = get_session_spec(dependencies, state, run_id)
     if spec is None:
         raise HTTPException(404, "DeepAgent 会话未找到")
+    session = dependencies.workspace_repo.get_drama_session(run_id)
+    if session is not None and session.status == "failed":
+        raise HTTPException(409, "DeepAgent 会话已失败，请先重试失败阶段")
 
     stage = next_unconfirmed_stage(spec)
     if stage is None:
@@ -194,7 +197,6 @@ def advance_deepagent(
             "events": [],
         }
 
-    session = dependencies.workspace_repo.get_drama_session(run_id)
     if background:
         running_task = state.video_deepagent_stage_tasks.get(run_id)
         if running_task is None or running_task.done():
@@ -375,6 +377,76 @@ def revise_stage(
     if completed_rework is not None:
         response["rework_request"] = completed_rework
     return response
+
+
+def retry_failed_stage(
+    dependencies,
+    state,
+    run_id: str,
+    *,
+    generator: Callable,
+) -> dict:
+    spec = get_session_spec(dependencies, state, run_id)
+    if spec is None:
+        raise HTTPException(404, "DeepAgent 会话未找到")
+
+    session = dependencies.workspace_repo.get_drama_session(run_id)
+    if session is None or session.status != "failed":
+        raise HTTPException(409, "只有失败的 DeepAgent 会话可以重试")
+
+    stage = str(spec.get("pending_stage") or "") or next_unconfirmed_stage(spec)
+    if stage not in DEEPAGENT_STAGES:
+        raise HTTPException(409, "失败会话没有可重试的阶段")
+    if stage in set(spec.get("confirmed_stages") or []):
+        raise HTTPException(409, f"{STAGE_LABELS[stage]}已确认，不能重试覆盖")
+    assert_previous_stages_confirmed(spec, stage)
+
+    try:
+        draft = generator(spec["story_path"], stage, spec.get("stage_drafts") or {})
+        if isinstance(draft, dict):
+            content = str(draft.get("content") or "")
+            events = draft.get("events") or []
+        else:
+            content = str(draft)
+            events = []
+        if not content.strip():
+            raise RuntimeError("DeepAgent 重试未返回内容")
+
+        spec["pending_stage"] = stage
+        spec.setdefault("drafts", {})[stage] = content
+        record_stage_version(
+            dependencies,
+            run_id,
+            stage,
+            content,
+            "restore",
+            project_id=spec.get("project_id") or "",
+            metadata={"events": events, "retry": True},
+        )
+        store_session_spec(dependencies, state, run_id, spec, "awaiting_confirmation")
+        record_operation_log(
+            dependencies,
+            spec.get("project_id") or "",
+            "system",
+            "recover_task",
+            "drama_session",
+            run_id,
+            metadata={"run_id": run_id, "stage": stage},
+        )
+        return {
+            "run_id": run_id,
+            "status": "awaiting_confirmation",
+            "stage": stage,
+            "label": STAGE_LABELS[stage],
+            "model": "deepseek-v4-pro",
+            "agent": "deepagent",
+            "content": content,
+            "events": events,
+        }
+    except Exception as exc:
+        spec["pending_stage"] = stage
+        store_session_spec(dependencies, state, run_id, spec, "failed", error=str(exc))
+        raise
 
 
 def _complete_rework_request(spec: dict, stage: str, feedback: str, version_id: str) -> dict | None:

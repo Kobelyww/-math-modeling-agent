@@ -1611,6 +1611,79 @@ def test_drama_video_deepagent_session_and_versions_api(monkeypatch, tmp_path):
     assert versions.json()["versions"][-1]["human_feedback"] == "更强冲突"
 
 
+def test_drama_video_deepagent_retry_failed_stage_endpoint(monkeypatch, tmp_path):
+    story_dir = tmp_path / "失败重试主题"
+    story_dir.mkdir()
+    (story_dir / "小说正文.md").write_text("# 失败重试主题\n\n正文", encoding="utf-8")
+
+    def fake_generate(story_path, stage, stage_drafts):
+        return {
+            "status": "ok",
+            "stage": stage,
+            "label": server_mod._VIDEO_STAGE_DRAFT_LABELS[stage],
+            "model": "deepseek-v4-pro",
+            "content": f"{stage} retried draft",
+            "events": [{"type": "ai_text", "content": "retry"}],
+        }
+
+    monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path)
+    monkeypatch.setattr(server_mod, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(server_mod, "_generate_video_stage_draft", fake_generate)
+    server_mod.workspace_repo.save_drama_session(
+        DramaProjectSession(
+            id="deepagent_failed",
+            story_path="失败重试主题/小说正文.md",
+            project_id="project_1",
+            shot_limit=2,
+            stage_drafts={"script": "confirmed script"},
+            drafts={"style": "failed style draft"},
+            confirmed_stages=["script"],
+            pending_stage="style",
+            status="failed",
+            error="model timeout",
+        )
+    )
+
+    client = TestClient(server_mod.app)
+    response = client.post(
+        "/api/drama-video/deepagent/retry",
+        json={"run_id": "deepagent_failed"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "awaiting_confirmation"
+    assert data["stage"] == "style"
+    assert data["content"] == "style retried draft"
+    session = server_mod.workspace_repo.get_drama_session("deepagent_failed")
+    assert session.status == "awaiting_confirmation"
+    assert session.pending_stage == "style"
+    assert session.error == ""
+    assert session.confirmed_stages == ["script"]
+    assert server_mod.workspace_repo.list_drama_stage_versions("deepagent_failed")[-1].event == "restore"
+
+
+def test_drama_video_deepagent_retry_rejects_non_failed_session(tmp_path):
+    server_mod.workspace_repo.save_drama_session(
+        DramaProjectSession(
+            id="deepagent_waiting",
+            story_path="故事/小说正文.md",
+            drafts={"script": "draft"},
+            pending_stage="script",
+            status="awaiting_confirmation",
+        )
+    )
+
+    client = TestClient(server_mod.app)
+    response = client.post(
+        "/api/drama-video/deepagent/retry",
+        json={"run_id": "deepagent_waiting"},
+    )
+
+    assert response.status_code == 409
+    assert "只有失败" in response.json()["detail"]
+
+
 def test_drama_video_project_package_export_persists_asset(monkeypatch, tmp_path):
     story_dir = tmp_path / "测试主题"
     story_dir.mkdir()

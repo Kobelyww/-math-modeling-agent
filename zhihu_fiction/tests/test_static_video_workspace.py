@@ -122,6 +122,20 @@ def test_video_workspace_confirms_cost_guardrail_overrides():
     assert "'/api/drama-video/deepagent/confirm'," in html
 
 
+def test_video_workspace_can_retry_failed_deepagent_stage():
+    html = _html()
+
+    assert "deepAgentFailed: false" in html
+    assert "retryFailedDeepAgentStage()" in html
+    assert "'/api/drama-video/deepagent/retry'" in html
+    assert "重试失败阶段" in html
+    assert "DeepAgent 失败阶段已重新生成，等待确认" in html
+    assert "this.deepAgentFailed = session.status === 'failed'" in html
+    assert "!!deepAgentFailed" in html
+    assert "this.stageGenerationMessage = '重试失败，请调整反馈后再试。'" in html
+    assert html.count("this.deepAgentFailed = false") >= 5
+
+
 def test_video_workspace_mentions_consistency_and_human_loop_controls():
     html = _html()
 

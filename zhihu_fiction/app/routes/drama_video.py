@@ -168,6 +168,25 @@ async def revise_drama_video_deepagent_stage(req: Request):
     )
 
 
+@router.post("/api/drama-video/deepagent/retry")
+async def retry_drama_video_deepagent_stage(req: Request):
+    deps = req.app.state.dependencies
+    state = req.app.state.runtime
+    body = await json_body(req)
+    run_id = require_stripped(body, "run_id")
+    return deepagent_flow.retry_failed_stage(
+        deps,
+        state,
+        run_id,
+        generator=lambda story_path, stage, stage_drafts: runtime.generate_video_stage_draft(
+            deps,
+            story_path,
+            stage,
+            stage_drafts,
+        ),
+    )
+
+
 @router.get("/api/drama-video/deepagent/latest")
 async def get_latest_drama_video_deepagent_session(
     req: Request,
