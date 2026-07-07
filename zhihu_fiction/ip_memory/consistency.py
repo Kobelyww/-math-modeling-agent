@@ -139,7 +139,7 @@ def _contradicts_modern_yuncheng(output: str) -> bool:
     normalized = re.sub(r"\s+", "", output)
     if "古代" in output:
         return True
-    if "民国" in normalized and "运城" in normalized:
+    if re.search(r"民国的?(运城|北京|上海)", normalized):
         return True
     if re.search(r"现代的?(北京|上海)", normalized):
         return True

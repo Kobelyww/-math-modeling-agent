@@ -258,6 +258,8 @@ def test_consistency_review_flags_modern_yuncheng_time_and_place_contradictions(
         "故事发生在现代的北京。",
         "故事发生在现代 的 上海。",
         "故事发生在民国运城。",
+        "故事发生在民国北京。",
+        "故事发生在民国上海。",
     ]:
         review = review_consistency(stage="storyboard", output=output, memory=memory)
 
