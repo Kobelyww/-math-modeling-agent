@@ -24,7 +24,6 @@ from zhihu_fiction.ip_memory.models import (
 
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_SAFE_CHAR_RE = re.compile(r"[A-Za-z0-9._-]")
 
 
 class IPMemoryRepository:
@@ -86,10 +85,26 @@ class IPMemoryRepository:
                 NarrativeMemory,
             )
 
-        _append_models(memory.characters, patch_data.get("characters"), CharacterCard)
-        _append_models(memory.world_facts, patch_data.get("world_facts"), WorldFact)
-        _append_models(memory.foreshadowing, patch_data.get("foreshadowing"), Foreshadowing)
-        _append_models(memory.asset_bindings, patch_data.get("asset_bindings"), AssetBinding)
+        _append_models(
+            memory.characters,
+            _validated_patch_list(patch_data, "characters"),
+            CharacterCard,
+        )
+        _append_models(
+            memory.world_facts,
+            _validated_patch_list(patch_data, "world_facts"),
+            WorldFact,
+        )
+        _append_models(
+            memory.foreshadowing,
+            _validated_patch_list(patch_data, "foreshadowing"),
+            Foreshadowing,
+        )
+        _append_models(
+            memory.asset_bindings,
+            _validated_patch_list(patch_data, "asset_bindings"),
+            AssetBinding,
+        )
 
         patch_note = str(patch_data.get("patch_note", "patch"))
         return self.save(memory, patch_note=patch_note)
@@ -108,12 +123,11 @@ class IPMemoryRepository:
     @staticmethod
     def _safe_project_id(project_id: str) -> str:
         raw = str(project_id or "").strip()
-        if not _SAFE_CHAR_RE.search(raw):
-            return "default"
-        safe_id = _SAFE_ID_RE.sub("_", raw)[:120]
-        if safe_id in {"", ".", ".."}:
-            return "default"
-        return safe_id
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+        prefix = _SAFE_ID_RE.sub("-", raw).strip("._-") or "default"
+        max_prefix = 120 - len(digest) - 1
+        prefix = prefix[:max_prefix].strip("._-") or "default"
+        return f"{prefix}-{digest}"
 
     @staticmethod
     def _version_name() -> str:
@@ -137,14 +151,26 @@ class IPMemoryRepository:
         temp_path.replace(path)
 
 
-def _append_models(target: list[Any], values: Any, model: type[Any]) -> None:
+def _validated_patch_list(patch: dict[str, Any], key: str) -> list[dict[str, Any]] | None:
+    if key not in patch:
+        return None
+    values = patch[key]
+    if not isinstance(values, list):
+        raise ValueError(f"{key} must be a list of objects")
+    for index, item in enumerate(values):
+        if not isinstance(item, dict):
+            raise ValueError(f"{key}[{index}] must be an object")
+    return values
+
+
+def _append_models(
+    target: list[Any],
+    values: list[dict[str, Any]] | None,
+    model: type[Any],
+) -> None:
     if values is None:
         return
-    items = values if isinstance(values, list) else [values]
-    target.extend(
-        item if isinstance(item, model) else model.from_dict(item)
-        for item in items
-    )
+    target.extend(model.from_dict(item) for item in values)
 
 
 def _merge_model(current: Any, patch: dict[str, Any], model: type[Any]) -> Any:

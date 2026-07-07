@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from zhihu_fiction.ip_memory.models import (
     CharacterCard,
     IPMemory,
@@ -59,8 +61,69 @@ def test_repository_saves_memory_and_version_patch(tmp_path: Path):
 
     assert restored is not None
     assert restored.story_bible.title == "A"
-    assert (tmp_path / "project-a" / "memory.json").exists()
-    assert list((tmp_path / "project-a" / "versions").glob("*.json"))
+    assert repo.memory_path("project-a").exists()
+    assert list((repo.project_dir("project-a") / "versions").glob("*.json"))
+
+
+def test_repository_keeps_distinct_non_ascii_project_ids(tmp_path: Path):
+    repo = IPMemoryRepository(tmp_path)
+    first = IPMemory(project_id="雨夜重生", story_bible=StoryBible(title="A"))
+    second = IPMemory(project_id="家族阴谋", story_bible=StoryBible(title="B"))
+
+    repo.save(first)
+    repo.save(second)
+
+    assert repo.project_dir(first.project_id) != repo.project_dir(second.project_id)
+    assert repo.load(first.project_id).story_bible.title == "A"
+    assert repo.load(second.project_id).story_bible.title == "B"
+
+
+def test_repository_keeps_unsafe_ids_inside_root_and_distinct(tmp_path: Path):
+    repo = IPMemoryRepository(tmp_path)
+    first_id = "../secret"
+    second_id = "..?secret"
+
+    repo.save(IPMemory(project_id=first_id, story_bible=StoryBible(title="A")))
+    repo.save(IPMemory(project_id=second_id, story_bible=StoryBible(title="B")))
+
+    first_dir = repo.project_dir(first_id).resolve()
+    second_dir = repo.project_dir(second_id).resolve()
+
+    assert first_dir.parent == tmp_path.resolve()
+    assert second_dir.parent == tmp_path.resolve()
+    assert first_dir != second_dir
+    assert repo.load(first_id).story_bible.title == "A"
+    assert repo.load(second_id).story_bible.title == "B"
+
+
+def test_repository_avoids_generated_name_collisions(tmp_path: Path):
+    repo = IPMemoryRepository(tmp_path)
+    unsafe_id = "a/b"
+    generated_name = repo.project_dir(unsafe_id).name
+
+    repo.save(IPMemory(project_id=unsafe_id, story_bible=StoryBible(title="A")))
+    repo.save(IPMemory(project_id=generated_name, story_bible=StoryBible(title="B")))
+
+    assert repo.project_dir(unsafe_id) != repo.project_dir(generated_name)
+    assert repo.load(unsafe_id).story_bible.title == "A"
+    assert repo.load(generated_name).story_bible.title == "B"
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["characters", "world_facts", "foreshadowing", "asset_bindings"],
+)
+def test_repository_rejects_malformed_patch_list_fields(
+    tmp_path: Path,
+    field_name: str,
+):
+    repo = IPMemoryRepository(tmp_path)
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a list of objects"):
+        repo.apply_patch("project-a", {field_name: "bad"})
+
+    with pytest.raises(ValueError, match=rf"{field_name}\[0\] must be an object"):
+        repo.apply_patch("project-a", {field_name: ["bad"]})
 
 
 def test_render_memory_context_is_compact_and_sectioned():
