@@ -33,12 +33,19 @@ def review_consistency(stage: str, output: str, memory: IPMemory | None) -> dict
 
 def _character_identity_warnings(output: str, memory: IPMemory) -> list[str]:
     warnings: list[str] = []
+    known_names = [card.name for card in memory.characters if card.name]
     for card in memory.characters:
         if not card.name or card.name not in output or not card.visual_identity:
             continue
         conflicts = []
+        other_names = [name for name in known_names if name != card.name]
         for clause in _clauses_containing(output, card.name):
-            conflicts.extend(_visual_conflicts(card.visual_identity, clause))
+            for local_context in _local_contexts_after_name(
+                clause,
+                card.name,
+                other_names,
+            ):
+                conflicts.extend(_visual_conflicts(card.visual_identity, local_context))
         if conflicts:
             detail = "、".join(_dedupe(conflicts))
             warnings.append(
@@ -53,6 +60,28 @@ def _clauses_containing(output: str, name: str) -> list[str]:
         for clause in _CLAUSE_SPLIT_RE.split(output)
         if name in clause
     ]
+
+
+def _local_contexts_after_name(
+    clause: str,
+    name: str,
+    other_names: list[str],
+) -> list[str]:
+    contexts: list[str] = []
+    search_from = 0
+    while (start := clause.find(name, search_from)) >= 0:
+        context = clause[start:]
+        next_name_index = min(
+            [
+                index
+                for other_name in other_names
+                if (index := context.find(other_name, len(name))) >= 0
+            ],
+            default=len(context),
+        )
+        contexts.append(context[:next_name_index])
+        search_from = start + len(name)
+    return contexts
 
 
 def _visual_conflicts(identity: str, output: str) -> list[str]:
@@ -87,15 +116,16 @@ def _is_modern_yuncheng_fact(text: str) -> bool:
 
 
 def _contradicts_modern_yuncheng(output: str) -> bool:
+    normalized = re.sub(r"\s+", "", output)
     if "古代" in output:
         return True
-    if "民国" in output and "运城" in output:
+    if "民国" in normalized and "运城" in normalized:
         return True
-    if "现代北京" in output or "现代上海" in output:
+    if re.search(r"现代的?(北京|上海)", normalized):
         return True
-    if "未来上海" in output:
+    if "未来上海" in normalized:
         return True
-    return "未来" in output and "上海" in output
+    return "未来" in normalized and "上海" in normalized
 
 
 def _dedupe(values: list[str]) -> list[str]:

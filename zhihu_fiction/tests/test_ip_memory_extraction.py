@@ -186,6 +186,26 @@ def test_consistency_review_checks_character_identity_per_clause():
     assert not any("林晚" in warning for warning in review["warnings"])
 
 
+def test_consistency_review_does_not_attribute_next_character_visual_to_previous():
+    memory = IPMemory(
+        project_id="p",
+        story_bible=StoryBible(title="A"),
+        characters=[
+            CharacterCard(id="char_linwan", name="林晚", visual_identity="黑色长发"),
+            CharacterCard(id="char_zhoulan", name="周岚"),
+        ],
+    )
+
+    review = review_consistency(
+        stage="storyboard",
+        output="林晚看见周岚是金发短发。",
+        memory=memory,
+    )
+
+    assert review["status"] == "ok"
+    assert not any("林晚" in warning for warning in review["warnings"])
+
+
 def test_consistency_review_flags_extracted_modern_yuncheng_fact():
     memory = extract_ip_memory_from_story(
         project_id="story-rain",
@@ -216,6 +236,8 @@ def test_consistency_review_flags_modern_yuncheng_time_and_place_contradictions(
     for output in [
         "故事发生在现代北京。",
         "故事发生在现代上海。",
+        "故事发生在现代的北京。",
+        "故事发生在现代 的 上海。",
         "故事发生在民国运城。",
     ]:
         review = review_consistency(stage="storyboard", output=output, memory=memory)
