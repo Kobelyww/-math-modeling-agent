@@ -103,6 +103,45 @@ def test_run_stage_deepagent_passes_rendered_ip_memory_to_coordinator(tmp_path, 
     assert "林晚" in captured["memory_context"]
 
 
+def test_run_stage_deepagent_loads_pipeline_memory_by_run_id_from_story_path(tmp_path, monkeypatch):
+    story_file = tmp_path / "output" / "雨夜重生_20260707_153000" / "小说正文.md"
+    story_file.parent.mkdir(parents=True)
+    story_file.write_text(
+        "# 雨夜重生\n> 题材：悬疑\n\n林晚发现录音证据。\n\n# 发布方案\n短剧发布。",
+        encoding="utf-8",
+    )
+    patch_app_root(monkeypatch, tmp_path)
+
+    repo = IPMemoryRepository(tmp_path / "ip_memory")
+    repo.save(make_memory(project_id="20260707_153000"))
+    captured: dict[str, str] = {}
+
+    def compat_attr(name, default=None):
+        replacements = {
+            "create_llm": lambda settings, temperature=0.4: "llm",
+            "create_drama_video_coordinator": lambda llm, stage: "coordinator",
+            "run_drama_video_coordinator": fake_run_drama_video_coordinator,
+        }
+        return replacements.get(name, default)
+
+    def fake_run_drama_video_coordinator(coordinator, **kwargs):
+        captured["memory_context"] = kwargs.get("memory_context", "")
+        return {"content": "阶段草稿", "events": []}
+
+    deps = SimpleNamespace(settings=SimpleNamespace(model="deepseek-chat"), ip_memory_repo=repo)
+
+    stage_generation.run_stage_deepagent(
+        deps,
+        str(story_file.relative_to(tmp_path)),
+        "storyboard",
+        {},
+        compat_attr=compat_attr,
+    )
+
+    assert "【IP记忆】" in captured["memory_context"]
+    assert "林晚" in captured["memory_context"]
+
+
 def test_run_stage_deepagent_supports_runner_without_memory_context(tmp_path, monkeypatch):
     story_file = tmp_path / "output" / "rain" / "小说正文.md"
     story_file.parent.mkdir(parents=True)

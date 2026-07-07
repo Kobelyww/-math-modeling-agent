@@ -61,10 +61,10 @@ class AgentTraceEvent:
 class AgentTraceStore:
     def __init__(self, root: str | Path):
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
 
     def append(self, event: AgentTraceEvent) -> AgentTraceEvent:
         path = self._path_for_run(event.run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
         return event

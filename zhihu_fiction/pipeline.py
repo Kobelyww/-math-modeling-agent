@@ -166,6 +166,7 @@ class Pipeline:
         quality_threshold: float = 6.0,
         max_rewrites: int = 2,
         skills_store=None,
+        ip_memory_repo: IPMemoryRepository | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.reviewer = reviewer
@@ -180,7 +181,7 @@ class Pipeline:
         self._schedule_thread: threading.Thread | None = None
         self._schedule_stop = threading.Event()
         self._storage = PipelineStorage(RUN_DIR)
-        self._ip_memory_repo = IPMemoryRepository(APP_ROOT / "data" / "ip_memory")
+        self._ip_memory_repo = ip_memory_repo or IPMemoryRepository(APP_ROOT / "data" / "ip_memory")
 
         self._storage.ensure()
 

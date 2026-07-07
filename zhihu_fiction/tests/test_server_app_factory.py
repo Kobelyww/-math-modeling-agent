@@ -51,6 +51,8 @@ def test_app_state_can_store_asyncio_queues():
 
 def test_app_dependencies_create_workspace_services():
     from zhihu_fiction.app.dependencies import AppDependencies
+    from zhihu_fiction.ip_memory.repository import IPMemoryRepository
+    from zhihu_fiction.ip_memory.trace import AgentTraceStore
 
     deps = AppDependencies()
 
@@ -60,7 +62,40 @@ def test_app_dependencies_create_workspace_services():
     assert deps.workspace_service is not None
     assert deps.workspace_queue is not None
     assert deps.queue_backend is not None
+    assert isinstance(deps.ip_memory_repo, IPMemoryRepository)
+    assert isinstance(deps.agent_trace_store, AgentTraceStore)
     assert deps.infrastructure_status()["workspace_backend"] in {"jsonl", "sqlite"}
+
+
+def test_app_dependencies_does_not_create_trace_directory_on_init(tmp_path):
+    from zhihu_fiction.app.dependencies import AppDependencies
+    from zhihu_fiction.ip_memory.trace import AgentTraceStore
+
+    trace_root = tmp_path / "agent_traces"
+
+    AppDependencies(agent_trace_store=AgentTraceStore(trace_root))
+
+    assert not trace_root.exists()
+
+
+def test_app_dependencies_pipeline_reuses_shared_ip_memory_repo(monkeypatch):
+    from zhihu_fiction.app.dependencies import AppDependencies
+    from zhihu_fiction.config import Settings
+
+    monkeypatch.setattr(
+        "zhihu_fiction.orchestrator.create_orchestrator",
+        lambda settings, skills_store=None: ("coordinator", "reviewer", "llm"),
+    )
+    deps = AppDependencies(settings=Settings(
+        api_key="",
+        api_base=None,
+        model="deepseek-v4-pro",
+        temperature=0.7,
+    ))
+
+    pipeline = deps.create_pipeline()
+
+    assert pipeline._ip_memory_repo is deps.ip_memory_repo
 
 
 def test_app_dependencies_create_exporter_requires_model_credentials(monkeypatch):

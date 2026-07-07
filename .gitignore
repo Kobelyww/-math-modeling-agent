@@ -55,6 +55,8 @@ zhihu_fiction/data/skills/*
 zhihu_fiction/data/workspace/
 zhihu_fiction/data/objects/
 zhihu_fiction/data/debug/
+zhihu_fiction/data/ip_memory/
+zhihu_fiction/data/agent_traces/
 
 # Local databases and queues
 *.sqlite

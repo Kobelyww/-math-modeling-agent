@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import re
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from .story_library import safe_story_file, story_result_from_file
 
 
 logger = logging.getLogger(__name__)
+_PIPELINE_RUN_ID_RE = re.compile(r"\d{8}_\d{6}")
 
 
 def deepseek_v4pro_settings(settings):
@@ -79,6 +81,28 @@ def build_stage_prompt(result, stage: str, stage_drafts: dict[str, str], ip_memo
 """
 
 
+def memory_project_candidates(story_path: str, story_file, result) -> list[str]:
+    candidates: list[str] = []
+
+    def add(value) -> None:
+        text = str(value or "").strip()
+        if text and text not in candidates:
+            candidates.append(text)
+
+    add(story_path)
+    add(story_file)
+    add(_pipeline_run_id_from_text(story_path))
+    add(_pipeline_run_id_from_text(getattr(story_file, "parent", "")))
+    add(_pipeline_run_id_from_text(story_file))
+    add(getattr(result, "topic", ""))
+    return candidates
+
+
+def _pipeline_run_id_from_text(value) -> str:
+    match = _PIPELINE_RUN_ID_RE.search(str(value or ""))
+    return match.group(0) if match else ""
+
+
 def _runner_accepts_memory_context(coordinator_runner) -> bool:
     try:
         signature = inspect.signature(coordinator_runner)
@@ -114,9 +138,7 @@ def run_stage_deepagent(
     ip_memory = None
     ip_memory_repo = getattr(dependencies, "ip_memory_repo", None)
     if ip_memory_repo is not None:
-        for project_id in (story_path, str(story_file), getattr(result, "topic", "")):
-            if not project_id:
-                continue
+        for project_id in memory_project_candidates(story_path, story_file, result):
             try:
                 ip_memory = ip_memory_repo.load(str(project_id))
             except Exception:

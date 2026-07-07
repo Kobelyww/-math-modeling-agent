@@ -4,8 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import load_settings
+from ..config import APP_ROOT, load_settings
 from ..exporter import Exporter
+from ..ip_memory.repository import IPMemoryRepository
+from ..ip_memory.trace import AgentTraceStore
 from ..llm import create_llm
 from ..pipeline import Pipeline
 from ..skills_store import SkillsStore
@@ -36,6 +38,12 @@ class AppDependencies:
     web_settings: WebSettings = field(default_factory=load_web_settings)
     skills_store: SkillsStore = field(default_factory=SkillsStore)
     workspace_repo: WorkspaceRepository = field(default_factory=WorkspaceRepository)
+    ip_memory_repo: IPMemoryRepository = field(
+        default_factory=lambda: IPMemoryRepository(APP_ROOT / "data" / "ip_memory")
+    )
+    agent_trace_store: AgentTraceStore = field(
+        default_factory=lambda: AgentTraceStore(APP_ROOT / "data" / "agent_traces")
+    )
 
     def __post_init__(self) -> None:
         self.scheduler_pipeline: Pipeline | None = None
@@ -63,6 +71,7 @@ class AppDependencies:
             publisher=_NoopPublisher(),
             quality_threshold=6.0,
             max_rewrites=2,
+            ip_memory_repo=self.ip_memory_repo,
         )
 
     def create_exporter(self) -> Exporter:
