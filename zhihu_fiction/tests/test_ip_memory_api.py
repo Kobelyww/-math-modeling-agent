@@ -117,6 +117,47 @@ def test_extract_ip_memory_api_rejects_path_traversal(tmp_path: Path, isolated_s
     assert response.status_code == 400
 
 
+def test_extract_ip_memory_api_rejects_absolute_path_outside_app_root(
+    tmp_path: Path,
+    isolated_story_roots,
+):
+    outside_story = tmp_path / "outside.md"
+    outside_story.write_text("不应读取的外部正文", encoding="utf-8")
+    app = create_app(dependencies=Deps(tmp_path))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ip-memory/project-a/extract",
+        json={"story_path": str(outside_story)},
+    )
+
+    assert response.status_code == 400
+    assert "不应读取的外部正文" not in response.text
+
+
+def test_extract_ip_memory_api_does_not_expand_tilde_story_path(
+    monkeypatch,
+    tmp_path: Path,
+    isolated_story_roots,
+):
+    fake_home = tmp_path / "home"
+    ssh_dir = fake_home / ".ssh"
+    ssh_dir.mkdir(parents=True)
+    private_key = ssh_dir / "id_rsa"
+    private_key.write_text("FAKE PRIVATE KEY CONTENT", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(fake_home))
+    app = create_app(dependencies=Deps(tmp_path))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ip-memory/project-a/extract",
+        json={"story_path": "~/.ssh/id_rsa"},
+    )
+
+    assert response.status_code in {400, 404}
+    assert "FAKE PRIVATE KEY CONTENT" not in response.text
+
+
 def test_patch_ip_memory_api_rejects_malformed_payload(tmp_path: Path):
     app = create_app(dependencies=Deps(tmp_path))
     client = TestClient(app)
