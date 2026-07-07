@@ -4,13 +4,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
-from dataclasses import dataclass, field
-from typing import Iterable
 
 from zhihu_fiction.ip_memory.models import (
     CharacterCard,
     IPMemory,
     MemorySource,
+    NarrativeDetail,
     NarrativeMemory,
     StoryBible,
     StyleGuide,
@@ -27,6 +26,21 @@ _NAME_BOUNDARY_RE = (
     r"(?=赶出|篡改|带着|发誓|归来|醒来|变成|"
     r"在|被|说|问|。|，|、|；|：|\s|$)"
 )
+_BROAD_SUBJECT_NAME_RE = (
+    r"(?:^|[。！？!?；;，,\n]\s*)"
+    r"([\u4e00-\u9fff]{2,3})(?=在|被|带着|发誓|归来|醒来|变成)"
+)
+_NON_NAME_FRAGMENTS = {
+    "故事",
+    "发生",
+    "醒来",
+    "她醒来",
+    "他醒来",
+    "事发生",
+    "现代",
+    "医院",
+}
+_PRONOUN_PREFIXES = ("她", "他", "它", "我", "你", "您")
 _STOP_NAMES = {
     "山西",
     "运城",
@@ -45,57 +59,6 @@ _STOP_NAMES = {
     "遗嘱",
     "家门",
 }
-
-
-@dataclass(slots=True)
-class NarrativeEntry:
-    id: str = ""
-    text: str = ""
-    source: MemorySource = field(default_factory=MemorySource)
-
-    def to_dict(self) -> dict[str, str | dict[str, str]]:
-        return {
-            "id": self.id,
-            "text": self.text,
-            "source": self.source.to_dict(),
-        }
-
-
-class ExtractedNarrativeMemory(NarrativeMemory):
-    """Narrative memory that is still compatible with the Task 1 model."""
-
-    __slots__ = ("items",)
-
-    def __init__(
-        self,
-        *,
-        summary: str = "",
-        current_state: str = "",
-        timeline: list[str] | None = None,
-        open_threads: list[str] | None = None,
-        resolved_threads: list[str] | None = None,
-        continuity_notes: list[str] | None = None,
-        source: MemorySource | None = None,
-        items: list[NarrativeEntry] | None = None,
-    ):
-        super().__init__(
-            summary=summary,
-            current_state=current_state,
-            timeline=timeline or [],
-            open_threads=open_threads or [],
-            resolved_threads=resolved_threads or [],
-            continuity_notes=continuity_notes or [],
-            source=source or MemorySource(),
-        )
-        self.items = items or []
-
-    def __iter__(self) -> Iterable[NarrativeEntry]:
-        return iter(self.items)
-
-    def to_dict(self) -> dict:
-        payload = super().to_dict()
-        payload["items"] = [item.to_dict() for item in self.items]
-        return payload
 
 
 def extract_ip_memory_from_story(
@@ -218,7 +181,7 @@ def _extract_characters(clean_text: str, source: MemorySource) -> list[Character
     names: list[str] = []
     role_patterns = [
         rf"{_ROLE_PREFIX_RE}([\u4e00-\u9fff]{{2,3}}?){_NAME_BOUNDARY_RE}",
-        r"([\u4e00-\u9fff]{2,3})(?:在|被|带着|发誓|归来|醒来|变成)",
+        _BROAD_SUBJECT_NAME_RE,
     ]
     for pattern in role_patterns:
         for match in re.finditer(pattern, clean_text):
@@ -246,7 +209,17 @@ def _append_name(names: list[str], name: str) -> None:
         return
     if any(stop in name for stop in _STOP_NAMES):
         return
+    if not _looks_like_person_name(name):
+        return
     names.append(name)
+
+
+def _looks_like_person_name(name: str) -> bool:
+    if len(name) < 2 or len(name) > 3:
+        return False
+    if name.startswith(_PRONOUN_PREFIXES):
+        return False
+    return not any(fragment in name for fragment in _NON_NAME_FRAGMENTS)
 
 
 def _role_for_name(name: str, clean_text: str) -> str:
@@ -286,8 +259,8 @@ def _extract_world_facts(clean_text: str, source: MemorySource) -> list[WorldFac
     return facts
 
 
-def _extract_narrative_memory(clean_text: str, source: MemorySource) -> ExtractedNarrativeMemory:
-    entries: list[NarrativeEntry] = []
+def _extract_narrative_memory(clean_text: str, source: MemorySource) -> NarrativeMemory:
+    entries: list[NarrativeDetail] = []
     if "三年前" in clean_text:
         entries.append(_entry("三年前，林晚被赶出家门。", source))
     if "父亲死亡" in clean_text:
@@ -303,7 +276,7 @@ def _extract_narrative_memory(clean_text: str, source: MemorySource) -> Extracte
         for entry in entries
         if any(term in entry.text for term in ("父亲死亡", "录音证据", "遗嘱"))
     ]
-    return ExtractedNarrativeMemory(
+    return NarrativeMemory(
         summary=_core_hook_from_text(clean_text, _premise_from_text(clean_text)),
         current_state="主角已带着关键证据归来，复仇线进入主动推进阶段。",
         timeline=timeline,
@@ -314,8 +287,8 @@ def _extract_narrative_memory(clean_text: str, source: MemorySource) -> Extracte
     )
 
 
-def _entry(text: str, source: MemorySource) -> NarrativeEntry:
-    return NarrativeEntry(id=_stable_id("narrative", text), text=text, source=source)
+def _entry(text: str, source: MemorySource) -> NarrativeDetail:
+    return NarrativeDetail(id=_stable_id("narrative", text), text=text, source=source)
 
 
 def _merge_characters(
@@ -357,11 +330,10 @@ def _merge_world_facts(current: list[WorldFact], extracted: list[WorldFact]) -> 
 
 def _merge_narrative_memory(
     current: NarrativeMemory,
-    extracted: ExtractedNarrativeMemory,
-) -> ExtractedNarrativeMemory:
-    current_items = list(getattr(current, "items", []))
-    items = _dedupe_entries([*current_items, *extracted.items])
-    return ExtractedNarrativeMemory(
+    extracted: NarrativeMemory,
+) -> NarrativeMemory:
+    items = _dedupe_entries([*list(current), *list(extracted)])
+    return NarrativeMemory(
         summary=current.summary or extracted.summary,
         current_state=current.current_state or extracted.current_state,
         timeline=_dedupe_strings([*current.timeline, *extracted.timeline]),
@@ -373,9 +345,9 @@ def _merge_narrative_memory(
     )
 
 
-def _dedupe_entries(entries: list[NarrativeEntry]) -> list[NarrativeEntry]:
+def _dedupe_entries(entries: list[NarrativeDetail]) -> list[NarrativeDetail]:
     seen: set[str] = set()
-    result: list[NarrativeEntry] = []
+    result: list[NarrativeDetail] = []
     for entry in entries:
         key = _normalize(entry.text)
         if not key or key in seen:

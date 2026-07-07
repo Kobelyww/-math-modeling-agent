@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterator
 
 
 def utc_now_iso() -> str:
@@ -190,6 +190,34 @@ class Foreshadowing:
 
 
 @dataclass(slots=True)
+class NarrativeDetail:
+    id: str = ""
+    text: str = ""
+    source: MemorySource = field(default_factory=MemorySource)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "text": self.text,
+            "source": self.source.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict[str, Any] | "NarrativeDetail" | None,
+    ) -> "NarrativeDetail":
+        if isinstance(data, cls):
+            return data
+        values = data or {}
+        return cls(
+            id=str(values.get("id", "")),
+            text=str(values.get("text", "")),
+            source=MemorySource.from_dict(values.get("source")),
+        )
+
+
+@dataclass(slots=True)
 class NarrativeMemory:
     summary: str = ""
     current_state: str = ""
@@ -197,7 +225,13 @@ class NarrativeMemory:
     open_threads: list[str] = field(default_factory=list)
     resolved_threads: list[str] = field(default_factory=list)
     continuity_notes: list[str] = field(default_factory=list)
+    items: list[NarrativeDetail] = field(default_factory=list)
     source: MemorySource = field(default_factory=MemorySource)
+
+    def __iter__(self) -> Iterator[NarrativeDetail]:
+        if self.items:
+            return iter(self.items)
+        return iter(_narrative_details_from_fields(self))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -207,6 +241,7 @@ class NarrativeMemory:
             "open_threads": list(self.open_threads),
             "resolved_threads": list(self.resolved_threads),
             "continuity_notes": list(self.continuity_notes),
+            "items": [item.to_dict() for item in self.items],
             "source": self.source.to_dict(),
         }
 
@@ -225,6 +260,7 @@ class NarrativeMemory:
             open_threads=_string_list(values.get("open_threads", [])),
             resolved_threads=_string_list(values.get("resolved_threads", [])),
             continuity_notes=_string_list(values.get("continuity_notes", [])),
+            items=_model_list(values.get("items", []), NarrativeDetail),
             source=MemorySource.from_dict(values.get("source")),
         )
 
@@ -363,6 +399,23 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return [str(value)]
     return [str(item) for item in value]
+
+
+def _narrative_details_from_fields(memory: NarrativeMemory) -> list[NarrativeDetail]:
+    seen: set[str] = set()
+    details: list[NarrativeDetail] = []
+    for text in [
+        *memory.timeline,
+        *memory.open_threads,
+        *memory.resolved_threads,
+        *memory.continuity_notes,
+    ]:
+        normalized = str(text or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        details.append(NarrativeDetail(text=normalized, source=memory.source))
+    return details
 
 
 def _model_list(value: Any, model: type[Any]) -> list[Any]:

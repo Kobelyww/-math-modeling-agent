@@ -1,7 +1,12 @@
 """Deterministic consistency checks against IP memory."""
 from __future__ import annotations
 
+import re
+
 from zhihu_fiction.ip_memory.models import IPMemory
+
+
+_CLAUSE_SPLIT_RE = re.compile(r"[，。；！？!?;,\n]+")
 
 
 def review_consistency(stage: str, output: str, memory: IPMemory | None) -> dict:
@@ -31,13 +36,23 @@ def _character_identity_warnings(output: str, memory: IPMemory) -> list[str]:
     for card in memory.characters:
         if not card.name or card.name not in output or not card.visual_identity:
             continue
-        conflicts = _visual_conflicts(card.visual_identity, output)
+        conflicts = []
+        for clause in _clauses_containing(output, card.name):
+            conflicts.extend(_visual_conflicts(card.visual_identity, clause))
         if conflicts:
-            detail = "、".join(conflicts)
+            detail = "、".join(_dedupe(conflicts))
             warnings.append(
                 f"{card.name}的视觉身份与记忆不一致：记忆为{card.visual_identity}，输出出现{detail}。"
             )
     return warnings
+
+
+def _clauses_containing(output: str, name: str) -> list[str]:
+    return [
+        clause.strip()
+        for clause in _CLAUSE_SPLIT_RE.split(output)
+        if name in clause
+    ]
 
 
 def _visual_conflicts(identity: str, output: str) -> list[str]:
@@ -74,9 +89,24 @@ def _is_modern_yuncheng_fact(text: str) -> bool:
 def _contradicts_modern_yuncheng(output: str) -> bool:
     if "古代" in output:
         return True
+    if "民国" in output and "运城" in output:
+        return True
+    if "现代北京" in output or "现代上海" in output:
+        return True
     if "未来上海" in output:
         return True
     return "未来" in output and "上海" in output
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _score(warnings: list[str]) -> float:
