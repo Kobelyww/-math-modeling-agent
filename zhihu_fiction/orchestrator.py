@@ -122,6 +122,7 @@ def run_coordinator(
     chapter_index: int = 1,
     total_chapters: int = 1,
     existing_story: str = "",
+    memory_context: str = "",
 ) -> WorkflowResult:
     """Run the Coordinator DeepAgent.
 
@@ -131,6 +132,15 @@ def run_coordinator(
         total_chapters: Total planned chapters
         existing_story: Previous chapters content (continuation mode)
     """
+    memory_section = ""
+    if memory_context.strip():
+        memory_section = (
+            "\n\n【创作记忆】\n"
+            "以下是本 IP 已沉淀的创作记忆。请严格遵守其中的角色、世界观、"
+            "伏笔和风格约束，保持前后连续，不要改写已建立设定。\n"
+            f"{memory_context.strip()}"
+        )
+
     feedback_section = ""
     if revision_feedback:
         feedback_section = f"\n\n【修改要求】上一轮评审未达标，请根据以下反馈重新创作：\n{revision_feedback}"
@@ -152,7 +162,7 @@ def run_coordinator(
             f"评审意见：\n{revision_feedback}\n\n"
             f"重要：你只需要针对评审意见修改小说正文，不需要重新做选题分析和大纲规划。"
             f"直接调用 write_draft（传入 revision_feedback）和 polish_draft 即可。"
-            f"最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}"
+            f"最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}{memory_section}"
         )
     else:
         prompt = (
@@ -160,7 +170,7 @@ def run_coordinator(
             f"当前知乎热榜趋势参考：\n"
             f"{hot_trends or '暂无热榜数据，请根据你的知识判断选题方向'}\n\n"
             f"请按照标准工作流程完成创作：选题分析 → 大纲规划 → 初稿创作 → 润色优化 → 发布方案整合。\n"
-            f"最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}{feedback_section}"
+            f"最终用【小说正文】和【发布方案】两个标记分别输出。{chapter_info}{feedback_section}{memory_section}"
         )
 
     resolved_genre = genre or "未指定"

@@ -13,6 +13,7 @@ from typing import Any, Callable, Protocol
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .config import APP_ROOT
+from .ip_memory.repository import IPMemoryRepository
 from .pipeline_storage import PipelineStorage
 from .scraper import scrape_zhihu_hot
 
@@ -179,6 +180,7 @@ class Pipeline:
         self._schedule_thread: threading.Thread | None = None
         self._schedule_stop = threading.Event()
         self._storage = PipelineStorage(RUN_DIR)
+        self._ip_memory_repo = IPMemoryRepository(APP_ROOT / "data" / "ip_memory")
 
         self._storage.ensure()
 
@@ -293,20 +295,24 @@ class Pipeline:
 
             for ch_idx in range(1, total_chapters + 1):
                 existing = "\n\n".join(all_chapters) if all_chapters else ""
+                _, memory_context = self._load_ip_memory_context(run_id)
                 wf_result = run_coordinator(
                     self.llm, self.coordinator,
                     topic=topic, hot_trends=hot_summary, genre=genre,
                     chapter_index=ch_idx, total_chapters=total_chapters,
                     existing_story=existing,
+                    memory_context=memory_context,
                     stream_callback=stream_callback,
                 )
                 all_chapters.append(wf_result.final_story)
 
             # Combine all chapters
             if not all_chapters:
+                _, memory_context = self._load_ip_memory_context(run_id)
                 wf_result = run_coordinator(
                     self.llm, self.coordinator,
                     topic=topic, hot_trends=hot_summary, genre=genre,
+                    memory_context=memory_context,
                     stream_callback=stream_callback,
                 )
                 all_chapters = [wf_result.final_story]
@@ -326,6 +332,7 @@ class Pipeline:
                     break
 
                 if round_num < self.max_rewrites:
+                    _, memory_context = self._load_ip_memory_context(run_id)
                     feedback = (
                         f"【评审分数】{score:.1f}/10 (门槛 {self.quality_threshold})\n\n"
                         f"【评审意见】\n{review['full_report']}\n\n"
@@ -337,6 +344,7 @@ class Pipeline:
                         revision_feedback=feedback,
                         total_chapters=total_chapters,
                         existing_story="" if total_chapters <= 1 else full_story,
+                        memory_context=memory_context,
                         stream_callback=stream_callback,
                     )
                     full_story = wf_result.final_story
@@ -357,6 +365,13 @@ class Pipeline:
             story_path = self._save_story(
                 run_id=run_id, topic=topic, genre=result.genre,
                 story=full_story, synthesis=wf_result.synthesis,
+            )
+            self._extract_and_save_ip_memory(
+                result=result,
+                topic=topic,
+                genre=result.genre,
+                full_story=full_story,
+                story_path=story_path,
             )
             # Checkpoint: story created, ready for publish
             self._save_checkpoint(run_id, topic=topic, genre=result.genre,
@@ -430,6 +445,61 @@ class Pipeline:
         self._append_run(result)
         self._clear_checkpoint(run_id)
         return result
+
+    def _load_ip_memory_context(self, run_id: str):
+        try:
+            from .ip_memory.rendering import render_memory_context
+
+            prior_memory = self._ip_memory_repo.load(run_id)
+            if prior_memory is None:
+                return None, ""
+            return prior_memory, render_memory_context(prior_memory)
+        except Exception as exc:
+            logger.warning("failed to load IP memory for %s: %s", run_id, exc)
+            return None, ""
+
+    def _extract_and_save_ip_memory(
+        self,
+        *,
+        result: RunResult,
+        topic: str,
+        genre: str,
+        full_story: str,
+        story_path: Path,
+    ) -> None:
+        t0 = time.time()
+        try:
+            from .ip_memory.extraction import extract_ip_memory_from_story
+
+            prior_memory = self._ip_memory_repo.load(result.run_id)
+            memory = extract_ip_memory_from_story(
+                project_id=result.run_id,
+                title=topic,
+                genre=genre,
+                story_text=full_story,
+                story_ref=str(story_path),
+                prior=prior_memory,
+            )
+            saved = self._ip_memory_repo.save(
+                memory,
+                patch_note=f"pipeline_extract:{story_path}",
+            )
+            result.stages["ip_memory"] = StageRecord(
+                status="ok",
+                duration_s=round(time.time() - t0, 1),
+                extra={
+                    "characters": len(saved.characters),
+                    "world_facts": len(saved.world_facts),
+                    "foreshadowing": len(saved.foreshadowing),
+                    "asset_bindings": len(saved.asset_bindings),
+                },
+            )
+        except Exception as exc:
+            result.stages["ip_memory"] = StageRecord(
+                status="failed",
+                duration_s=round(time.time() - t0, 1),
+                extra={"error": str(exc)},
+            )
 
     def run_scheduled(self, interval_minutes: int = 360) -> threading.Event:
         """Start background scheduled runs."""
