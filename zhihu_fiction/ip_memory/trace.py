@@ -76,8 +76,15 @@ class AgentTraceStore:
         events: list[AgentTraceEvent] = []
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
-                if line.strip():
-                    events.append(AgentTraceEvent.from_dict(json.loads(line)))
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                events.append(AgentTraceEvent.from_dict(data))
         return events
 
     def _path_for_run(self, run_id: str) -> Path:

@@ -100,3 +100,54 @@ def test_agent_trace_store_appends_and_reads_metadata(tmp_path: Path):
     assert restored[0].run_id == "run/中文:001"
     assert restored[0].metadata == {"note": "保留中文", "shot_count": 3}
     assert restored[0].tool_calls == [{"name": "review_stage_output", "status": "ok"}]
+
+
+def test_agent_trace_store_skips_malformed_and_non_object_jsonl_lines(tmp_path: Path):
+    store = AgentTraceStore(tmp_path)
+    first = AgentTraceEvent(
+        run_id="run-with-bad-lines",
+        node_id="drama.storyboard",
+        stage="storyboard",
+        event="started",
+    )
+    second = AgentTraceEvent(
+        run_id="run-with-bad-lines",
+        node_id="drama.storyboard",
+        stage="storyboard",
+        event="completed",
+        metadata={"note": "仍然保留中文"},
+    )
+
+    store.append(first)
+    path = store._path_for_run("run-with-bad-lines")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+        handle.write("not-json\n")
+        handle.write("[]\n")
+        handle.write("null\n")
+        handle.write('"bad"\n')
+    store.append(second)
+
+    restored = store.list("run-with-bad-lines")
+
+    assert [event.event for event in restored] == ["started", "completed"]
+    assert restored[1].metadata == {"note": "仍然保留中文"}
+
+
+def test_agent_trace_store_run_ids_cannot_escape_trace_root(tmp_path: Path):
+    root = tmp_path / "traces"
+    store = AgentTraceStore(root)
+
+    for run_id in ("../escape", "nested/escape"):
+        store.append(
+            AgentTraceEvent(
+                run_id=run_id,
+                node_id="drama.storyboard",
+                stage="storyboard",
+                event="completed",
+            )
+        )
+        assert len(store.list(run_id)) == 1
+
+    assert not (tmp_path / "escape.jsonl").exists()
+    assert not (root / "nested" / "escape.jsonl").exists()
