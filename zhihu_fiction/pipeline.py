@@ -290,6 +290,7 @@ class Pipeline:
             from .orchestrator import run_coordinator
 
             all_chapters: list[str] = []
+            ip_memory_warnings: list[str] = []
             existing = ""
             total_chapters = chapters if (chapters and chapters > 1) else 1
 
@@ -305,6 +306,24 @@ class Pipeline:
                     stream_callback=stream_callback,
                 )
                 all_chapters.append(wf_result.final_story)
+                try:
+                    self._extract_ip_memory_snapshot(
+                        run_id=run_id,
+                        topic=topic,
+                        genre=result.genre,
+                        full_story="\n\n".join(all_chapters),
+                        story_ref=f"{run_id}:chapter:{ch_idx}",
+                        patch_note=f"pipeline chapter {ch_idx} extraction",
+                    )
+                except Exception as exc:
+                    warning = f"chapter {ch_idx}: {exc}"
+                    ip_memory_warnings.append(warning)
+                    logger.warning(
+                        "failed to extract IP memory after chapter %s for %s: %s",
+                        ch_idx,
+                        run_id,
+                        exc,
+                    )
 
             # Combine all chapters
             if not all_chapters:
@@ -352,7 +371,10 @@ class Pipeline:
             result.stages["create"] = StageRecord(
                 status="ok",
                 duration_s=round(time.time() - t0, 1),
-                extra={"words": len(full_story)},
+                extra={
+                    "words": len(full_story),
+                    **({"ip_memory_warnings": ip_memory_warnings} if ip_memory_warnings else {}),
+                },
             )
             result.stages["review"] = StageRecord(
                 status="ok",
@@ -469,25 +491,21 @@ class Pipeline:
     ) -> None:
         t0 = time.time()
         try:
-            from .ip_memory.extraction import extract_ip_memory_from_story
-
-            prior_memory = self._ip_memory_repo.load(result.run_id)
-            memory = extract_ip_memory_from_story(
-                project_id=result.run_id,
-                title=topic,
+            saved = self._extract_ip_memory_snapshot(
+                run_id=result.run_id,
+                topic=topic,
                 genre=genre,
-                story_text=full_story,
+                full_story=full_story,
                 story_ref=str(story_path),
-                prior=prior_memory,
-            )
-            saved = self._ip_memory_repo.save(
-                memory,
                 patch_note=f"pipeline_extract:{story_path}",
             )
             result.stages["ip_memory"] = StageRecord(
                 status="ok",
                 duration_s=round(time.time() - t0, 1),
                 extra={
+                    "project_id": result.run_id,
+                    "story_ref": str(story_path),
+                    "snapshot_hash": self._ip_memory_repo.snapshot_hash(saved),
                     "characters": len(saved.characters),
                     "world_facts": len(saved.world_facts),
                     "foreshadowing": len(saved.foreshadowing),
@@ -500,6 +518,29 @@ class Pipeline:
                 duration_s=round(time.time() - t0, 1),
                 extra={"error": str(exc)},
             )
+
+    def _extract_ip_memory_snapshot(
+        self,
+        *,
+        run_id: str,
+        topic: str,
+        genre: str,
+        full_story: str,
+        story_ref: str,
+        patch_note: str,
+    ):
+        from .ip_memory.extraction import extract_ip_memory_from_story
+
+        prior_memory = self._ip_memory_repo.load(run_id)
+        memory = extract_ip_memory_from_story(
+            project_id=run_id,
+            title=topic,
+            genre=genre,
+            story_text=full_story,
+            story_ref=story_ref,
+            prior=prior_memory,
+        )
+        return self._ip_memory_repo.save(memory, patch_note=patch_note)
 
     def run_scheduled(self, interval_minutes: int = 360) -> threading.Event:
         """Start background scheduled runs."""

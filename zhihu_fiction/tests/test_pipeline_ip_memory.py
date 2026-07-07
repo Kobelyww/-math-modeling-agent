@@ -97,6 +97,47 @@ def test_pipeline_passes_prior_memory_context_to_chapter_generation(tmp_path):
     assert any("林晚" in prompt and "守住录音证据" in prompt for prompt in captured_prompts)
 
 
+def test_pipeline_refreshes_memory_between_fresh_chapters(tmp_path):
+    captured_prompts: list[str] = []
+    chapter_stories = [
+        "林晚在山西运城的雨夜醒来。三年前，她被继母周岚赶出家门。"
+        "这一次，林晚带着父亲死亡的录音证据归来。",
+        "第二章里，林晚继续追查真相。",
+    ]
+
+    class CapturingCoordinator:
+        def invoke(self, input_msg):
+            captured_prompts.append(input_msg["messages"][0]["content"])
+            story = chapter_stories[len(captured_prompts) - 1]
+            return {
+                "messages": [
+                    HumanMessage(content=f"【小说正文】\n{story}\n【发布方案】\n发布方案")
+                ]
+            }
+
+    reviewer = MagicMock()
+    reviewer.review.return_value = {"total_score": 7.5, "full_report": "ok"}
+    publisher = MagicMock()
+    publisher.publish.return_value = {"success": True, "url": "https://example.test/story"}
+    pipeline = _make_pipeline(coordinator=CapturingCoordinator(), reviewer=reviewer, publisher=publisher)
+    pipeline._ip_memory_repo = IPMemoryRepository(tmp_path / "ip_memory")
+
+    result = pipeline.run(
+        topic="雨夜归来",
+        genre="复仇爽文",
+        chapters=2,
+        _resume_state={"run_id": "fresh-two-chapters"},
+    )
+
+    assert result.error == ""
+    assert len(captured_prompts) == 2
+    second_prompt = captured_prompts[1]
+    assert "【创作记忆】" in second_prompt
+    assert "林晚" in second_prompt
+    assert "录音证据" in second_prompt
+    assert "运城" in second_prompt
+
+
 def test_pipeline_extracts_memory_after_story_save(tmp_path):
     coordinator = MagicMock()
     coordinator.invoke.return_value = {
@@ -126,5 +167,8 @@ def test_pipeline_extracts_memory_after_story_save(tmp_path):
     assert memory.story_bible.title == "雨夜归来"
     assert any(card.name == "林晚" for card in memory.characters)
     assert result.stages["ip_memory"].status == "ok"
+    assert result.stages["ip_memory"].extra["project_id"] == "memory-run"
+    assert result.stages["ip_memory"].extra["story_ref"].endswith(".md")
+    assert result.stages["ip_memory"].extra["snapshot_hash"].startswith("sha256:")
     assert result.stages["ip_memory"].extra["characters"] >= 1
     assert result.stages["ip_memory"].extra["world_facts"] >= 1
