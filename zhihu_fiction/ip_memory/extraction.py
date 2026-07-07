@@ -20,6 +20,13 @@ from zhihu_fiction.ip_memory.models import (
 
 _CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,3}")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?])\s*")
+_ROLE_PREFIX_RE = (
+    r"(?:女主|男主|主角|继母|父亲|母亲|姐姐|妹妹|哥哥|弟弟|丈夫|妻子)"
+)
+_NAME_BOUNDARY_RE = (
+    r"(?=赶出|篡改|带着|发誓|归来|醒来|变成|"
+    r"在|被|说|问|。|，|、|；|：|\s|$)"
+)
 _STOP_NAMES = {
     "山西",
     "运城",
@@ -210,7 +217,7 @@ def _emotional_promise(genre: str, clean_text: str) -> str:
 def _extract_characters(clean_text: str, source: MemorySource) -> list[CharacterCard]:
     names: list[str] = []
     role_patterns = [
-        r"(?:女主|男主|主角|继母|父亲|母亲|姐姐|妹妹|哥哥|弟弟|丈夫|妻子)([\u4e00-\u9fff]{2,3})",
+        rf"{_ROLE_PREFIX_RE}([\u4e00-\u9fff]{{2,3}}?){_NAME_BOUNDARY_RE}",
         r"([\u4e00-\u9fff]{2,3})(?:在|被|带着|发誓|归来|醒来|变成)",
     ]
     for pattern in role_patterns:

@@ -25,8 +25,12 @@ def test_extract_ip_memory_from_story_creates_core_entities():
     assert memory.story_bible.genre == "复仇爽文"
     assert memory.story_bible.emotional_promise
     assert any(card.name == "林晚" for card in memory.characters)
+    assert any(card.name == "周岚" for card in memory.characters)
+    assert not any(card.name == "周岚赶" for card in memory.characters)
     assert any("运城" in fact.text for fact in memory.world_facts)
     assert any("遗嘱" in item.text or "录音" in item.text for item in memory.narrative_memory)
+    assert memory.style_guide.tone
+    assert memory.style_guide.pacing
 
 
 def test_empty_extraction_keeps_prior_memory():
@@ -65,6 +69,31 @@ def test_extraction_merges_prior_narrative_entries():
     )
 
     assert any("录音证据" in item.text for item in memory.narrative_memory)
+
+
+def test_extraction_dedupes_prior_characters_world_facts_and_narrative():
+    story = """
+    林晚在山西运城的雨夜醒来。
+    林晚带着父亲死亡的录音证据归来。
+    """
+    prior = extract_ip_memory_from_story(
+        project_id="story-rain",
+        title="雨夜归来",
+        genre="复仇爽文",
+        story_text=story,
+    )
+
+    memory = extract_ip_memory_from_story(
+        project_id="story-rain",
+        title="雨夜归来",
+        genre="复仇爽文",
+        story_text=story,
+        prior=prior,
+    )
+
+    assert [card.name for card in memory.characters].count("林晚") == 1
+    assert sum(1 for fact in memory.world_facts if "运城" in fact.text) == 1
+    assert sum(1 for item in memory.narrative_memory if "录音证据" in item.text) == 1
 
 
 def test_consistency_review_flags_contradicting_character_fact():
