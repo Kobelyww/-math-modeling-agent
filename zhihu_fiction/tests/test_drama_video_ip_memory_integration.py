@@ -1,6 +1,7 @@
 """Integration tests for IP memory in drama-video stage generation."""
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -27,6 +28,13 @@ def make_memory(project_id: str = "雨夜重生") -> IPMemory:
         story_bible=StoryBible(title="雨夜重生", premise="林晚带着证据重启人生"),
         characters=[CharacterCard(id="char_linwan", name="林晚", role="女主")],
     )
+
+
+def patch_app_root(monkeypatch, tmp_path):
+    monkeypatch.setattr("zhihu_fiction.app.services.story_library.APP_ROOT", tmp_path)
+    server_mod = sys.modules.get("zhihu_fiction.server")
+    if server_mod is not None:
+        monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path, raising=False)
 
 
 def test_build_stage_prompt_includes_ip_memory_context():
@@ -63,7 +71,7 @@ def test_run_stage_deepagent_passes_rendered_ip_memory_to_coordinator(tmp_path, 
         "# 雨夜重生\n> 题材：悬疑\n\n林晚发现录音证据。\n\n# 发布方案\n短剧发布。",
         encoding="utf-8",
     )
-    monkeypatch.setattr("zhihu_fiction.app.services.story_library.APP_ROOT", tmp_path)
+    patch_app_root(monkeypatch, tmp_path)
 
     repo = IPMemoryRepository(tmp_path / "ip_memory")
     repo.save(make_memory(project_id=str(story_file)))
@@ -93,6 +101,94 @@ def test_run_stage_deepagent_passes_rendered_ip_memory_to_coordinator(tmp_path, 
 
     assert "【IP记忆】" in captured["memory_context"]
     assert "林晚" in captured["memory_context"]
+
+
+def test_run_stage_deepagent_supports_runner_without_memory_context(tmp_path, monkeypatch):
+    story_file = tmp_path / "output" / "rain" / "小说正文.md"
+    story_file.parent.mkdir(parents=True)
+    story_file.write_text(
+        "# 雨夜重生\n> 题材：悬疑\n\n林晚发现录音证据。\n\n# 发布方案\n短剧发布。",
+        encoding="utf-8",
+    )
+    patch_app_root(monkeypatch, tmp_path)
+
+    repo = IPMemoryRepository(tmp_path / "ip_memory")
+    repo.save(make_memory(project_id=str(story_file)))
+    captured: dict[str, str] = {}
+
+    def compat_attr(name, default=None):
+        replacements = {
+            "create_llm": lambda settings, temperature=0.4: "llm",
+            "create_drama_video_coordinator": lambda llm, stage: "coordinator",
+            "run_drama_video_coordinator": fake_run_drama_video_coordinator,
+        }
+        return replacements.get(name, default)
+
+    def fake_run_drama_video_coordinator(
+        coordinator,
+        *,
+        result,
+        stage,
+        stage_drafts,
+        current_draft="",
+        human_feedback="",
+    ):
+        captured["stage"] = stage
+        captured["title"] = result.topic
+        return {"content": "兼容阶段草稿", "events": []}
+
+    deps = SimpleNamespace(settings=SimpleNamespace(model="deepseek-chat"), ip_memory_repo=repo)
+
+    response = stage_generation.run_stage_deepagent(
+        deps,
+        str(story_file.relative_to(tmp_path)),
+        "storyboard",
+        {},
+        compat_attr=compat_attr,
+    )
+
+    assert response["content"] == "兼容阶段草稿"
+    assert captured == {"stage": "storyboard", "title": "雨夜重生"}
+
+
+def test_run_stage_deepagent_degrades_when_ip_memory_load_raises(tmp_path, monkeypatch):
+    story_file = tmp_path / "output" / "rain" / "小说正文.md"
+    story_file.parent.mkdir(parents=True)
+    story_file.write_text(
+        "# 雨夜重生\n> 题材：悬疑\n\n林晚发现录音证据。\n\n# 发布方案\n短剧发布。",
+        encoding="utf-8",
+    )
+    patch_app_root(monkeypatch, tmp_path)
+    captured: dict[str, str] = {}
+
+    class CorruptedRepo:
+        def load(self, project_id: str):
+            raise ValueError(f"corrupted memory for {project_id}")
+
+    def compat_attr(name, default=None):
+        replacements = {
+            "create_llm": lambda settings, temperature=0.4: "llm",
+            "create_drama_video_coordinator": lambda llm, stage: "coordinator",
+            "run_drama_video_coordinator": fake_run_drama_video_coordinator,
+        }
+        return replacements.get(name, default)
+
+    def fake_run_drama_video_coordinator(coordinator, **kwargs):
+        captured["memory_context"] = kwargs["memory_context"]
+        return {"content": "无记忆阶段草稿", "events": []}
+
+    deps = SimpleNamespace(settings=SimpleNamespace(model="deepseek-chat"), ip_memory_repo=CorruptedRepo())
+
+    response = stage_generation.run_stage_deepagent(
+        deps,
+        str(story_file.relative_to(tmp_path)),
+        "storyboard",
+        {},
+        compat_attr=compat_attr,
+    )
+
+    assert response["content"] == "无记忆阶段草稿"
+    assert captured["memory_context"] == "【IP记忆】\n暂无已保存记忆。"
 
 
 def test_run_drama_video_coordinator_includes_memory_context_in_prompt():

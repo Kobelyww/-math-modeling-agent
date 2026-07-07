@@ -1,6 +1,8 @@
 """DeepAgent stage generation service for short-drama production."""
 from __future__ import annotations
 
+import inspect
+import logging
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -12,6 +14,9 @@ from ...llm import create_llm
 from ...orchestrator import create_drama_video_coordinator, run_drama_video_coordinator
 from ..drama_video_stages import STAGE_LABELS, TEXT_STAGE_INSTRUCTIONS
 from .story_library import safe_story_file, story_result_from_file
+
+
+logger = logging.getLogger(__name__)
 
 
 def deepseek_v4pro_settings(settings):
@@ -74,6 +79,23 @@ def build_stage_prompt(result, stage: str, stage_drafts: dict[str, str], ip_memo
 """
 
 
+def _runner_accepts_memory_context(coordinator_runner) -> bool:
+    try:
+        signature = inspect.signature(coordinator_runner)
+    except (TypeError, ValueError):
+        return True
+    parameters = signature.parameters
+    return "memory_context" in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+
+
+def _run_coordinator_compat(coordinator_runner, coordinator, *, memory_context: str, **kwargs):
+    if _runner_accepts_memory_context(coordinator_runner):
+        kwargs["memory_context"] = memory_context
+    return coordinator_runner(coordinator, **kwargs)
+
+
 def run_stage_deepagent(
     dependencies,
     story_path: str,
@@ -95,7 +117,12 @@ def run_stage_deepagent(
         for project_id in (story_path, str(story_file), getattr(result, "topic", "")):
             if not project_id:
                 continue
-            ip_memory = ip_memory_repo.load(str(project_id))
+            try:
+                ip_memory = ip_memory_repo.load(str(project_id))
+            except Exception:
+                logger.warning("Failed to load IP memory for drama stage generation", exc_info=True)
+                ip_memory = None
+                break
             if ip_memory is not None:
                 break
     memory_context = format_ip_memory_context(ip_memory)
@@ -106,7 +133,8 @@ def run_stage_deepagent(
     coordinator_runner = compat_attr("run_drama_video_coordinator", run_drama_video_coordinator)
     llm = llm_factory(llm_settings, temperature=0.4)
     coordinator = coordinator_factory(llm, stage)
-    output = coordinator_runner(
+    output = _run_coordinator_compat(
+        coordinator_runner,
         coordinator,
         result=result,
         stage=stage,
