@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..workspace_routes import create_workspace_router
 from .dependencies import AppDependencies
-from .routes import costs, drama_video, health, pipeline, projects, static, stories, tasks
+from .routes import costs, drama_video, health, ip_memory, pipeline, projects, static, stories, tasks
 from .security import install_security
 from .services.drama_video_recovery import recover_video_jobs_after_restart
 from .state import AppState
@@ -90,15 +90,20 @@ def create_app(
     app.include_router(static.router)
     app.include_router(stories.router)
     app.include_router(projects.router)
+    app.include_router(ip_memory.router)
     app.include_router(costs.router)
     app.include_router(tasks.router)
     app.include_router(pipeline.router)
     app.include_router(drama_video.router)
+    create_exporter = getattr(deps, "create_exporter", None)
+    if create_exporter is None:
+        create_exporter = AppDependencies.create_exporter.__get__(deps, type(deps))
+
     app.include_router(
         create_workspace_router(
             deps.workspace_service,
             deps.workspace_queue,
-            deps.create_exporter,
+            create_exporter,
         )
     )
     return app
