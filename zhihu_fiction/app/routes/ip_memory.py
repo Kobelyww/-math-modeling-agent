@@ -1,7 +1,6 @@
 """IP memory API routes."""
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import APIRouter, HTTPException, Request
@@ -11,6 +10,7 @@ from ...ip_memory.extraction import extract_ip_memory_from_story
 from ...ip_memory.rendering import render_memory_context
 from ...ip_memory.repository import IPMemoryRepository
 from ..request_parsing import json_body, stripped_or_none
+from ..services.story_library import safe_story_file
 
 router = APIRouter()
 
@@ -72,9 +72,7 @@ def _ip_memory_repo(req: Request) -> IPMemoryRepository:
 def _story_text_from_request(body: dict) -> tuple[str, str]:
     story_path = stripped_or_none(body, "story_path")
     if story_path is not None:
-        path = Path(story_path).expanduser()
-        if not path.exists() or not path.is_file():
-            raise HTTPException(status_code=404, detail="story_path not found")
+        path = safe_story_file(story_path)
         return path.read_text(encoding="utf-8"), str(path)
 
     story_text = stripped_or_none(body, "story_text")
