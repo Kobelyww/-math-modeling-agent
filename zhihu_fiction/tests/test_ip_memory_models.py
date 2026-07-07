@@ -21,6 +21,7 @@ def test_ip_memory_round_trips_with_source_metadata(tmp_path: Path):
             premise="女主在雨夜重生并反击家族阴谋",
             genre="复仇爽文",
             core_hook="三年前被抛弃的人带着证据归来",
+            emotional_promise="压抑冤屈被证据反转释放",
             source=MemorySource(kind="story", ref="小说正文.md", excerpt="雨夜"),
         ),
         characters=[
@@ -48,6 +49,8 @@ def test_ip_memory_round_trips_with_source_metadata(tmp_path: Path):
 
     assert restored.project_id == "story-001"
     assert restored.story_bible.title == "雨夜重生"
+    assert payload["story_bible"]["emotional_promise"] == "压抑冤屈被证据反转释放"
+    assert restored.story_bible.emotional_promise == "压抑冤屈被证据反转释放"
     assert restored.characters[0].source.ref == "小说正文.md"
     assert restored.world_facts[0].text == "故事发生在现代运城"
 

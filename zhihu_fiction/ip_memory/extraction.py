@@ -172,6 +172,7 @@ def _merge_story_bible(
         premise=current.premise or premise,
         genre=str(genre or "").strip() or current.genre,
         core_hook=current.core_hook or core_hook,
+        emotional_promise=current.emotional_promise or emotional_promise,
         theme=current.theme or emotional_promise,
         audience=current.audience,
         tone=current.tone or emotional_promise,

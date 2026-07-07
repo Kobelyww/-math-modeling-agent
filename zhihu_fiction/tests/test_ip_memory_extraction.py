@@ -23,6 +23,7 @@ def test_extract_ip_memory_from_story_creates_core_entities():
 
     assert memory.story_bible.title == "雨夜归来"
     assert memory.story_bible.genre == "复仇爽文"
+    assert memory.story_bible.emotional_promise
     assert any(card.name == "林晚" for card in memory.characters)
     assert any("运城" in fact.text for fact in memory.world_facts)
     assert any("遗嘱" in item.text or "录音" in item.text for item in memory.narrative_memory)

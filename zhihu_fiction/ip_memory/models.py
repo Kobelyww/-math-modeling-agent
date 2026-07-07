@@ -41,6 +41,7 @@ class StoryBible:
     premise: str = ""
     genre: str = ""
     core_hook: str = ""
+    emotional_promise: str = ""
     theme: str = ""
     audience: str = ""
     tone: str = ""
@@ -52,6 +53,7 @@ class StoryBible:
             "premise": self.premise,
             "genre": self.genre,
             "core_hook": self.core_hook,
+            "emotional_promise": self.emotional_promise,
             "theme": self.theme,
             "audience": self.audience,
             "tone": self.tone,
@@ -68,6 +70,7 @@ class StoryBible:
             premise=str(values.get("premise", "")),
             genre=str(values.get("genre", "")),
             core_hook=str(values.get("core_hook", "")),
+            emotional_promise=str(values.get("emotional_promise", "")),
             theme=str(values.get("theme", "")),
             audience=str(values.get("audience", "")),
             tone=str(values.get("tone", "")),
