@@ -131,6 +131,7 @@ output/
 - **18 个工具**：Python 安全沙箱（512MB + 危险函数拦截）、LaTeX 编译、文献检索（arXiv/Semantic Scholar/Crossref）
 - **混合 RAG**：TF-IDF 关键词匹配 + 阿里云百练 text-embedding-v2（1536 维）语义检索，加权融合
 - **长短时记忆**：STM 两段式存储（compressed_prefix + recent_window）+ 多策略上下文压缩 + LTM（Redis Stack 或 SQLite+FTS5 回退）+ LLM 驱动记忆索引
+- Unified IP memory and Agent DAG traces connect novel generation, short-drama adaptation, and video prompt production.
 - **6 种终止条件**：Token预算 / 超时 / 轮次 / 质量阈值 / 外部中断 / 组合条件
 - **容错恢复**：所有 Agent 调用包裹 try/except，失败降级 + 部分结果
 - **测试覆盖**：65 个测试

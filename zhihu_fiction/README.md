@@ -161,6 +161,21 @@ zhihu_fiction/output/<story>/短剧视频Prompt包_<timestamp>/
 
 `/drama` 只生成视频模型 Prompt 包，不调用视频生成 API。`/drama_video` 会提交百炼异步视频任务；后续可根据 `provider_job_id` 查询状态并下载生成视频。
 
+### Unified IP Memory
+
+The fiction and short-drama workflows now share a lightweight IP memory package.
+Generated stories can extract a Story Bible, character cards, world facts,
+narrative memory, style guidance, and asset bindings. Short-drama DeepAgent
+stages read this memory before generating scripts, style plans, character
+references, storyboards, and video prompt packages.
+
+Useful local APIs:
+
+- `GET /api/ip-memory/{project_id}`
+- `POST /api/ip-memory/{project_id}/extract`
+- `POST /api/ip-memory/{project_id}/patch`
+- `GET /api/drama-video/deepagent/{run_id}/trace`
+
 ## Web 服务使用
 
 启动 FastAPI 服务：
