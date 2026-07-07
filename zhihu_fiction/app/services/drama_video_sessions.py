@@ -4,6 +4,9 @@ from __future__ import annotations
 import os
 import re
 
+from ...ip_memory.agent_graph import node_for_stage
+from ...ip_memory.consistency import review_consistency
+from ...ip_memory.trace import AgentTraceEvent
 from ...workspace.models import (
     ConsistencyProfile,
     DramaProjectSession,
@@ -178,6 +181,76 @@ def record_stage_version(
         metadata=dict(metadata or {}),
     )
     return dependencies.workspace_repo.save_drama_stage_version(version)
+
+
+def record_agent_trace(
+    dependencies,
+    run_id: str,
+    stage: str,
+    event: str,
+    content: str,
+    *,
+    project_id: str = "",
+    version_id: str = "",
+    events: list | None = None,
+    feedback: str = "",
+    human_decision: dict | None = None,
+    metadata: dict | None = None,
+):
+    trace_store = getattr(dependencies, "agent_trace_store", None)
+    if trace_store is None:
+        return None
+
+    safe_review = {
+        "stage": stage,
+        "status": "ok",
+        "warnings": [],
+        "score": 1.0,
+    }
+    memory = None
+    memory_snapshot = "sha256:empty"
+    ip_memory_repo = getattr(dependencies, "ip_memory_repo", None)
+    if ip_memory_repo is not None and project_id:
+        try:
+            memory = ip_memory_repo.load(project_id)
+            memory_snapshot = ip_memory_repo.snapshot_hash(memory)
+        except Exception:
+            memory = None
+            memory_snapshot = "sha256:empty"
+
+    try:
+        review = review_consistency(stage, content, memory)
+    except Exception:
+        review = safe_review
+
+    try:
+        node_id = node_for_stage(stage).node_id
+    except Exception:
+        node_id = stage
+
+    trace_metadata = dict(metadata or {})
+    if version_id:
+        trace_metadata["version_id"] = version_id
+    if events is not None:
+        trace_metadata["events"] = list(events)
+    if feedback:
+        trace_metadata["feedback"] = feedback
+
+    try:
+        return trace_store.append(
+            AgentTraceEvent(
+                run_id=run_id,
+                node_id=node_id,
+                stage=stage,
+                event=event,
+                memory_snapshot=memory_snapshot,
+                review=review,
+                human_decision=dict(human_decision or {}),
+                metadata=trace_metadata,
+            )
+        )
+    except Exception:
+        return None
 
 
 def _extract_consistency_fragments(stage: str, content: str) -> dict:

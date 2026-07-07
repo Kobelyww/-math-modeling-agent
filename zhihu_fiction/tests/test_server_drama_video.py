@@ -18,6 +18,7 @@ from zhihu_fiction.drama.models import (
     DramaShot,
 )
 from zhihu_fiction.drama.video import VideoJob, VideoJobStore
+from zhihu_fiction.ip_memory.trace import AgentTraceEvent, AgentTraceStore
 from zhihu_fiction.workspace.models import DramaProjectSession, DramaVideoJob, DramaVideoRun
 from zhihu_fiction.workspace.repositories import WorkspaceRepository
 
@@ -1863,3 +1864,39 @@ def test_drama_video_recovery_endpoint_reports_attention_items(tmp_path):
     assert response.status_code == 200
     assert response.json()["needs_attention_count"] == 1
     assert response.json()["awaiting_confirmation_sessions"][0]["id"] == "deepagent_waiting"
+
+
+def test_deepagent_trace_endpoint_returns_empty_events_without_store(tmp_path):
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    client = TestClient(create_app(dependencies=AppDependencies(workspace_repo=repo)))
+
+    response = client.get("/api/drama-video/deepagent/run_missing/trace")
+
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "run_missing", "events": []}
+
+
+def test_deepagent_trace_endpoint_returns_serialized_store_events(tmp_path):
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    deps = AppDependencies(workspace_repo=repo)
+    deps.agent_trace_store = AgentTraceStore(tmp_path / "traces")
+    deps.agent_trace_store.append(
+        AgentTraceEvent(
+            run_id="run_1",
+            node_id="drama.script",
+            stage="script",
+            event="human_confirmed",
+            metadata={"version_id": "version_1"},
+        )
+    )
+    client = TestClient(create_app(dependencies=deps))
+
+    response = client.get("/api/drama-video/deepagent/run_1/trace")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_id"] == "run_1"
+    assert len(data["events"]) == 1
+    assert data["events"][0]["event"] == "human_confirmed"
+    assert data["events"][0]["node_id"] == "drama.script"
+    assert data["events"][0]["metadata"] == {"version_id": "version_1"}

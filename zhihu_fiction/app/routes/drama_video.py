@@ -210,6 +210,16 @@ async def get_latest_drama_video_deepagent_session(
     }
 
 
+@router.get("/api/drama-video/deepagent/{run_id}/trace")
+async def list_drama_video_deepagent_trace(req: Request, run_id: str):
+    deps = req.app.state.dependencies
+    trace_store = getattr(deps, "agent_trace_store", None)
+    if trace_store is None:
+        return {"run_id": run_id, "events": []}
+    events = trace_store.list(run_id)
+    return {"run_id": run_id, "events": [event.to_dict() for event in events]}
+
+
 @router.get("/api/drama-video/deepagent/{run_id}")
 async def get_drama_video_deepagent_session(req: Request, run_id: str):
     deps = req.app.state.dependencies

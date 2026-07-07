@@ -15,6 +15,7 @@ from .drama_video_execution import default_video_run_id, start_video_run_spec
 from .drama_video_sessions import (
     get_session_spec,
     persist_session,
+    record_agent_trace,
     record_operation_log,
     record_stage_version,
     store_session_spec,
@@ -122,7 +123,7 @@ def start_deepagent_video_loop(
         events = []
     spec["pending_stage"] = stage
     spec.setdefault("drafts", {})[stage] = content
-    record_stage_version(
+    version = record_stage_version(
         dependencies,
         run_id,
         stage,
@@ -130,6 +131,16 @@ def start_deepagent_video_loop(
         "draft",
         project_id=project_id,
         metadata={"events": events},
+    )
+    record_agent_trace(
+        dependencies,
+        run_id,
+        stage,
+        "draft_created",
+        content,
+        project_id=project_id,
+        version_id=version.id,
+        events=events,
     )
     store_session_spec(dependencies, state, run_id, spec, "awaiting_confirmation")
     record_operation_log(
@@ -224,7 +235,7 @@ def advance_deepagent(
     draft = generator(spec["story_path"], stage, spec.get("stage_drafts") or {})
     spec["pending_stage"] = stage
     spec.setdefault("drafts", {})[stage] = draft["content"]
-    record_stage_version(
+    version = record_stage_version(
         dependencies,
         run_id,
         stage,
@@ -232,6 +243,16 @@ def advance_deepagent(
         "draft",
         project_id=spec.get("project_id") or "",
         metadata={"events": draft.get("events", [])},
+    )
+    record_agent_trace(
+        dependencies,
+        run_id,
+        stage,
+        "draft_created",
+        draft["content"],
+        project_id=spec.get("project_id") or "",
+        version_id=version.id,
+        events=draft.get("events", []),
     )
     store_session_spec(dependencies, state, run_id, spec, "awaiting_confirmation")
     return {
@@ -277,6 +298,16 @@ def confirm_stage(
         content,
         "confirmation",
         project_id=spec.get("project_id") or "",
+    )
+    record_agent_trace(
+        dependencies,
+        run_id,
+        stage,
+        "human_confirmed",
+        content,
+        project_id=spec.get("project_id") or "",
+        version_id=version.id,
+        human_decision={"decision": "confirm"},
     )
     update_consistency_profile_from_stage(
         dependencies,
@@ -366,6 +397,18 @@ def revise_stage(
         human_feedback=feedback,
         metadata={"events": draft.get("events", [])},
     )
+    record_agent_trace(
+        dependencies,
+        run_id,
+        stage,
+        "human_revision_requested",
+        draft["content"],
+        project_id=spec.get("project_id") or "",
+        version_id=version.id,
+        events=draft.get("events", []),
+        feedback=feedback,
+        human_decision={"decision": "revise", "feedback": feedback},
+    )
     completed_rework = _complete_rework_request(spec, stage, feedback, version.id)
     store_session_spec(dependencies, state, run_id, spec, "awaiting_confirmation")
     response = {
@@ -414,7 +457,7 @@ def retry_failed_stage(
 
         spec["pending_stage"] = stage
         spec.setdefault("drafts", {})[stage] = content
-        record_stage_version(
+        version = record_stage_version(
             dependencies,
             run_id,
             stage,
@@ -422,6 +465,17 @@ def retry_failed_stage(
             "restore",
             project_id=spec.get("project_id") or "",
             metadata={"events": events, "retry": True},
+        )
+        record_agent_trace(
+            dependencies,
+            run_id,
+            stage,
+            "draft_created",
+            content,
+            project_id=spec.get("project_id") or "",
+            version_id=version.id,
+            events=events,
+            metadata={"retry": True},
         )
         store_session_spec(dependencies, state, run_id, spec, "awaiting_confirmation")
         record_operation_log(
