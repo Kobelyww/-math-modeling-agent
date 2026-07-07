@@ -206,6 +206,25 @@ def test_consistency_review_does_not_attribute_next_character_visual_to_previous
     assert not any("林晚" in warning for warning in review["warnings"])
 
 
+def test_consistency_review_flags_pre_name_visual_conflict():
+    memory = IPMemory(
+        project_id="p",
+        story_bible=StoryBible(title="A"),
+        characters=[
+            CharacterCard(id="char_linwan", name="林晚", visual_identity="黑色长发")
+        ],
+    )
+
+    review = review_consistency(
+        stage="storyboard",
+        output="短发金发的林晚站在门口。",
+        memory=memory,
+    )
+
+    assert review["status"] == "warning"
+    assert any("林晚" in warning for warning in review["warnings"])
+
+
 def test_consistency_review_flags_extracted_modern_yuncheng_fact():
     memory = extract_ip_memory_from_story(
         project_id="story-rain",

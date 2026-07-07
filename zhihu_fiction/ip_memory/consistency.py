@@ -7,6 +7,7 @@ from zhihu_fiction.ip_memory.models import IPMemory
 
 
 _CLAUSE_SPLIT_RE = re.compile(r"[，。；！？!?;,\n]+")
+_VISUAL_CONTEXT_CHARS = 12
 
 
 def review_consistency(stage: str, output: str, memory: IPMemory | None) -> dict:
@@ -40,7 +41,7 @@ def _character_identity_warnings(output: str, memory: IPMemory) -> list[str]:
         conflicts = []
         other_names = [name for name in known_names if name != card.name]
         for clause in _clauses_containing(output, card.name):
-            for local_context in _local_contexts_after_name(
+            for local_context in _local_contexts_around_name(
                 clause,
                 card.name,
                 other_names,
@@ -62,7 +63,7 @@ def _clauses_containing(output: str, name: str) -> list[str]:
     ]
 
 
-def _local_contexts_after_name(
+def _local_contexts_around_name(
     clause: str,
     name: str,
     other_names: list[str],
@@ -70,17 +71,36 @@ def _local_contexts_after_name(
     contexts: list[str] = []
     search_from = 0
     while (start := clause.find(name, search_from)) >= 0:
-        context = clause[start:]
-        next_name_index = min(
+        end = start + len(name)
+        left_boundary = max(0, start - _VISUAL_CONTEXT_CHARS)
+        right_boundary = min(len(clause), end + _VISUAL_CONTEXT_CHARS)
+
+        previous_other_end = max(
+            [
+                index + len(other_name)
+                for other_name in other_names
+                if (index := clause.rfind(other_name, 0, start)) >= 0
+            ],
+            default=0,
+        )
+        next_other_start = min(
             [
                 index
                 for other_name in other_names
-                if (index := context.find(other_name, len(name))) >= 0
+                if (index := clause.find(other_name, end)) >= 0
             ],
-            default=len(context),
+            default=len(clause),
         )
-        contexts.append(context[:next_name_index])
-        search_from = start + len(name)
+
+        contexts.append(
+            clause[
+                max(left_boundary, previous_other_end) : min(
+                    right_boundary,
+                    next_other_start,
+                )
+            ]
+        )
+        search_from = end
     return contexts
 
 
