@@ -168,3 +168,13 @@ def test_patch_ip_memory_api_rejects_malformed_payload(tmp_path: Path):
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize("payload", [[], "bad"])
+def test_patch_ip_memory_api_rejects_non_object_json_payload(tmp_path: Path, payload):
+    app = create_app(dependencies=Deps(tmp_path))
+    client = TestClient(app)
+
+    response = client.post("/api/ip-memory/project-a/patch", json=payload)
+
+    assert response.status_code == 400

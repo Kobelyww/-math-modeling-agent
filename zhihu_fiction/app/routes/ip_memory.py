@@ -47,7 +47,7 @@ async def extract_ip_memory(req: Request, project_id: str):
 
 @router.post("/api/ip-memory/{project_id}/patch")
 async def patch_ip_memory(req: Request, project_id: str):
-    body = await json_body(req)
+    body = await _patch_json_body(req)
     repo = _ip_memory_repo(req)
     try:
         memory = repo.apply_patch(project_id, body)
@@ -79,6 +79,21 @@ def _story_text_from_request(body: dict) -> tuple[str, str]:
     if story_text is None:
         return "", ""
     return story_text, "inline"
+
+
+async def _patch_json_body(req: Request) -> dict:
+    content_type = req.headers.get("content-type", "")
+    if "application/json" not in content_type.lower():
+        raise HTTPException(status_code=400, detail="patch payload must be a JSON object")
+
+    try:
+        body = await req.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="patch payload must be valid JSON") from exc
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="patch payload must be a JSON object")
+    return body
 
 
 def _memory_response(memory) -> dict:
