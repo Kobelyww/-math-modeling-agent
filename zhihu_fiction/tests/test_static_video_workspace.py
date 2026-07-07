@@ -144,3 +144,17 @@ def test_video_workspace_mentions_consistency_and_human_loop_controls():
     assert "要求修改" in html
     assert "操作日志" in html
     assert "成本覆盖" in html
+
+
+def test_video_workspace_exposes_ip_memory_and_trace_panel():
+    html = _html()
+
+    assert "ip-memory-panel" in html
+    assert "agent-trace-panel" in html
+    assert "/api/ip-memory/" in html
+    assert "/trace" in html
+    assert '<section id="ip-memory-panel" class="workspace-panel">' in html
+    assert '<section id="agent-trace-panel" class="workspace-panel">' in html
+    assert "loadIpMemory(projectId)" in html
+    assert "loadAgentTrace(runId)" in html
+    assert 'document.getElementById("refresh-agent-trace")?.addEventListener("click"' in html

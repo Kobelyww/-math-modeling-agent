@@ -20,6 +20,8 @@
   [x-cloak] { display: none !important; }
   body { background: var(--paper); color: var(--ink); letter-spacing: 0; }
   .panel { background: var(--sand); border: 1px solid var(--line); }
+  .workspace-panel { background: var(--sand); border: 1px solid var(--line); }
+  .workspace-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
   .ink-panel { background: var(--ink); color: var(--paper); border: 1px solid #2b2520; }
   .muted-panel { background: var(--paper-soft); border: 1px solid var(--line); }
   .field { background: #fffdf7; border: 1px solid var(--line); color: var(--ink); }
@@ -413,6 +415,74 @@
         </div>
       </div>
 
+      <section id="ip-memory-panel" class="workspace-panel">
+        <header class="panel-header">
+          <div>
+            <h2 class="text-sm font-semibold">IP 记忆</h2>
+            <p class="text-xs text-[#6b6258] mt-1" x-text="ipMemoryStatusLabel()"></p>
+          </div>
+          <button id="refresh-ip-memory" type="button"
+            :disabled="ipMemoryLoading || !memoryProjectCandidates().length"
+            class="muted-panel px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+            <span x-show="!ipMemoryLoading">刷新</span>
+            <span x-show="ipMemoryLoading">加载中...</span>
+          </button>
+        </header>
+        <div id="ip-memory-content" class="panel-body muted space-y-3">
+          <div x-show="ipMemoryLoading" class="text-[#6b6258]">正在加载 IP 记忆...</div>
+          <div x-show="!ipMemoryLoading && ipMemoryError" x-cloak class="border border-red-200 bg-red-50 text-red-700 p-2"
+            x-text="ipMemoryError"></div>
+          <div x-show="!ipMemoryLoading && !ipMemoryError && !ipMemory" class="text-[#6b6258]">暂无 IP 记忆</div>
+          <div x-show="!ipMemoryLoading && !ipMemoryError && ipMemory" x-cloak class="space-y-3">
+            <div class="grid grid-cols-3 gap-2 text-center">
+              <div class="muted-panel p-2">
+                <div class="text-[11px] text-[#6b6258]">角色</div>
+                <strong x-text="ipMemoryCount('characters')"></strong>
+              </div>
+              <div class="muted-panel p-2">
+                <div class="text-[11px] text-[#6b6258]">世界事实</div>
+                <strong x-text="ipMemoryCount('world_facts')"></strong>
+              </div>
+              <div class="muted-panel p-2">
+                <div class="text-[11px] text-[#6b6258]">伏笔</div>
+                <strong x-text="ipMemoryCount('foreshadowing')"></strong>
+              </div>
+            </div>
+            <pre class="muted-panel p-3 overflow-x-auto whitespace-pre-wrap max-h-64" x-text="ipMemoryContext || formatJson(ipMemory)"></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="agent-trace-panel" class="workspace-panel">
+        <header class="panel-header">
+          <div>
+            <h2 class="text-sm font-semibold">Agent Trace</h2>
+            <p class="text-xs text-[#6b6258] mt-1" x-text="agentTraceStatusLabel()"></p>
+          </div>
+          <button id="refresh-agent-trace" type="button"
+            :disabled="agentTraceLoading || !deepAgentRunId"
+            class="muted-panel px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+            <span x-show="!agentTraceLoading">刷新</span>
+            <span x-show="agentTraceLoading">加载中...</span>
+          </button>
+        </header>
+        <div id="agent-trace-content" class="panel-body muted space-y-2">
+          <div x-show="agentTraceLoading" class="text-[#6b6258]">正在加载 Agent Trace...</div>
+          <div x-show="!agentTraceLoading && agentTraceError" x-cloak class="border border-red-200 bg-red-50 text-red-700 p-2"
+            x-text="agentTraceError"></div>
+          <div x-show="!agentTraceLoading && !agentTraceError && agentTraceEvents.length===0" class="text-[#6b6258]">暂无 Trace 事件</div>
+          <template x-for="event in agentTraceEvents.slice(-8).reverse()" :key="event.created_at + event.node_id + event.event">
+            <div class="border border-[#d8cdbc] bg-[#fffdf7] p-2">
+              <div class="flex items-center justify-between gap-2">
+                <strong x-text="event.node_id || event.stage"></strong>
+                <span x-text="event.event"></span>
+              </div>
+              <div class="mt-1 text-[#6b6258]" x-text="agentTraceEventLine(event)"></div>
+            </div>
+          </template>
+        </div>
+      </section>
+
       <div id="operation-log-panel" class="panel">
         <div class="px-4 py-3 border-b border-[#d8cdbc]">
           <h2 class="text-sm font-semibold">操作日志</h2>
@@ -544,6 +614,15 @@ function videoApp() {
     selectedStory: null,
     projectWorkspace: { consistency_profiles: [], latest_consistency_profile: null, operation_logs: [] },
     costCenter: { summary: {} },
+    ipMemory: null,
+    ipMemoryContext: '',
+    ipMemoryProjectId: '',
+    ipMemoryLoading: false,
+    ipMemoryError: '',
+    agentTraceEvents: [],
+    agentTraceLoading: false,
+    agentTraceError: '',
+    memoryTraceButtonsBound: false,
     projectId: '',
     initialStoryPath: '',
     initialRunId: '',
@@ -637,14 +716,121 @@ function videoApp() {
       if (detail?.message) return detail.message;
       return data?.error || fallbackMessage;
     },
+    bindMemoryTraceRefreshButtons() {
+      if (this.memoryTraceButtonsBound) return;
+      document.getElementById("refresh-ip-memory")?.addEventListener("click", () => {
+        this.loadIpMemory(this.currentMemoryProjectId());
+      });
+      document.getElementById("refresh-agent-trace")?.addEventListener("click", () => {
+        this.loadAgentTrace(this.deepAgentRunId);
+      });
+      this.memoryTraceButtonsBound = true;
+    },
+    extractRunIdCandidate(value) {
+      const match = String(value || '').match(/(\d{8}_\d{6})/);
+      return match ? match[1] : '';
+    },
+    memoryProjectCandidates() {
+      const candidates = [];
+      const add = value => {
+        const text = String(value || '').trim();
+        if (text && !candidates.includes(text)) candidates.push(text);
+      };
+      add(this.projectId);
+      add(this.selectedStory?.project_id);
+      add(this.selectedStory?.run_id);
+      add(this.extractRunIdCandidate(this.selectedStory?.name));
+      add(this.extractRunIdCandidate(this.selectedStory?.path));
+      add(this.extractRunIdCandidate(this.restoredStoryPath));
+      add(this.extractRunIdCandidate(this.activeStoryPath()));
+      add(this.ipMemoryProjectId);
+      return candidates;
+    },
+    currentMemoryProjectId() {
+      return this.memoryProjectCandidates()[0] || '';
+    },
+    async loadIpMemory(projectId) {
+      const candidates = projectId ? [projectId] : this.memoryProjectCandidates();
+      if (!candidates.length) {
+        this.ipMemory = null;
+        this.ipMemoryContext = '';
+        this.ipMemoryProjectId = '';
+        this.ipMemoryError = '';
+        return;
+      }
+      this.ipMemoryLoading = true;
+      this.ipMemoryError = '';
+      try {
+        for (const candidate of candidates) {
+          const res = await fetch('/api/ip-memory/' + encodeURIComponent(candidate));
+          if (res.status === 404) continue;
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || data.error || 'IP 记忆加载失败');
+          this.ipMemory = data.memory || null;
+          this.ipMemoryContext = data.context || data.rendered_context || '';
+          this.ipMemoryProjectId = data.project_id || candidate;
+          return;
+        }
+        this.ipMemory = null;
+        this.ipMemoryContext = '';
+        this.ipMemoryProjectId = candidates[0] || '';
+      } catch(e) {
+        this.ipMemory = null;
+        this.ipMemoryContext = '';
+        this.ipMemoryError = 'IP 记忆加载失败：' + e.message;
+      } finally {
+        this.ipMemoryLoading = false;
+      }
+    },
+    async loadAgentTrace(runId) {
+      if (!runId) {
+        this.agentTraceEvents = [];
+        this.agentTraceError = '';
+        return;
+      }
+      this.agentTraceLoading = true;
+      this.agentTraceError = '';
+      try {
+        const res = await fetch('/api/drama-video/deepagent/' + encodeURIComponent(runId) + '/trace');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'Agent Trace 加载失败');
+        this.agentTraceEvents = data.events || [];
+      } catch(e) {
+        this.agentTraceEvents = [];
+        this.agentTraceError = 'Agent Trace 加载失败：' + e.message;
+      } finally {
+        this.agentTraceLoading = false;
+      }
+    },
+    ipMemoryStatusLabel() {
+      if (this.ipMemoryLoading) return '加载中';
+      if (this.ipMemoryProjectId) return 'Project: ' + this.ipMemoryProjectId;
+      return '等待作品或会话记忆';
+    },
+    ipMemoryCount(key) {
+      const value = this.ipMemory?.[key];
+      return Array.isArray(value) ? value.length : 0;
+    },
+    agentTraceStatusLabel() {
+      if (this.agentTraceLoading) return '加载中';
+      if (!this.deepAgentRunId) return '等待 DeepAgent 会话';
+      return this.agentTraceEvents.length + ' 个事件';
+    },
+    agentTraceEventLine(event) {
+      const stage = stageLabels[event.stage] || event.stage || 'unknown';
+      const snapshot = event.memory_snapshot || 'sha256:empty';
+      return [event.created_at || '', stage, snapshot].filter(Boolean).join(' / ');
+    },
 
     async init() {
+      this.bindMemoryTraceRefreshButtons();
       const params = new URLSearchParams(window.location.search);
       this.projectId = params.get('project_id') || '';
       this.initialStoryPath = params.get('story_path') || '';
       this.initialRunId = params.get('run_id') || '';
       await this.loadInfrastructureStatus();
       await this.loadProjectWorkspace();
+      await this.loadIpMemory(this.projectId);
       await this.loadCostCoverage();
       await this.loadStories();
       if (this.initialRunId) {
@@ -715,6 +901,8 @@ function videoApp() {
         await Promise.allSettled([
           this.loadVideoRunHistory(),
           this.loadProjectWorkspace(),
+          this.loadIpMemory(),
+          this.loadAgentTrace(this.deepAgentRunId || runId),
           this.loadCostCoverage(),
         ]);
         if (!this.error && this.workspaceRestoreStatus === '正在恢复指定 DeepAgent 会话...') {
@@ -736,6 +924,7 @@ function videoApp() {
       try {
         const restoreSession = this.restoreLatestDeepAgentSession();
         await Promise.allSettled([restoreSession, this.loadVideoRunHistory(), this.loadProjectWorkspace(), this.loadCostCoverage()]);
+        await Promise.allSettled([this.loadIpMemory(), this.loadAgentTrace(this.deepAgentRunId)]);
         if (!this.error && this.workspaceRestoreStatus === '正在恢复工作台...') {
           this.workspaceRestoreStatus = '准备就绪';
         }
@@ -747,6 +936,14 @@ function videoApp() {
       this.selectedStory = story;
       this.projectWorkspace = { consistency_profiles: [], latest_consistency_profile: null, operation_logs: [] };
       this.costCenter = { summary: {} };
+      this.ipMemory = null;
+      this.ipMemoryContext = '';
+      this.ipMemoryProjectId = '';
+      this.ipMemoryLoading = false;
+      this.ipMemoryError = '';
+      this.agentTraceEvents = [];
+      this.agentTraceLoading = false;
+      this.agentTraceError = '';
       this.restoredStoryPath = story?.path || story?.body_path || '';
       this.workspaceOpen = true;
       this.activeStage = 'script';
@@ -906,6 +1103,8 @@ function videoApp() {
           this.pushHumanLoopMessage(this.activeStage, 'agent', data.content || data.draft);
         }
         await this.loadDeepAgentVersions();
+        await this.loadAgentTrace(this.deepAgentRunId);
+        await this.loadIpMemory();
         this.stageGenerationMessage = `${data.label || this.activeStageLabel()}草稿已生成，请编辑并确认。`;
         this.videoStageLog.push({
           id: ++this.logSeq,
@@ -946,6 +1145,8 @@ function videoApp() {
           this.deepAgentActive = true;
           this.deepAgentFailed = false;
           await this.loadDeepAgentVersions();
+          await this.loadAgentTrace(this.deepAgentRunId);
+          await this.loadIpMemory();
           this.videoStageLog.push({
             id: ++this.logSeq,
             time: new Date().toLocaleTimeString(),
@@ -1003,6 +1204,8 @@ function videoApp() {
         this.stageDrafts[data.stage] = data.content || '';
         this.pushHumanLoopMessage(data.stage, 'agent', data.content || '');
         await this.loadDeepAgentVersions();
+        await this.loadAgentTrace(this.deepAgentRunId);
+        await this.loadIpMemory();
         this.stageGenerationMessage = `${data.label}草稿已生成，请编辑并确认。`;
         this.videoStageLog.push({
           id: ++this.logSeq,
@@ -1086,6 +1289,8 @@ function videoApp() {
         );
         await this.loadDeepAgentVersions();
         await this.loadProjectWorkspace();
+        await this.loadIpMemory();
+        await this.loadAgentTrace(this.deepAgentRunId);
         await this.loadCostCoverage();
         this.videoStageLog.push({
           id: ++this.logSeq,
@@ -1142,6 +1347,8 @@ function videoApp() {
         this.pushHumanLoopMessage(stage, 'agent', data.content || '');
         await this.loadDeepAgentVersions();
         await this.loadProjectWorkspace();
+        await this.loadIpMemory();
+        await this.loadAgentTrace(this.deepAgentRunId);
         this.stageGenerationMessage = `${data.label || stageLabels[stage]}已根据人类反馈调整，请确认或继续反馈。`;
         this.videoStageLog.push({
           id: ++this.logSeq,
@@ -1246,6 +1453,8 @@ function videoApp() {
           '已恢复指定 DeepAgent 会话。'
         );
         this.stageVersions = await this.loadDeepAgentVersionsForRun(this.initialRunId);
+        await this.loadAgentTrace(this.initialRunId);
+        await this.loadIpMemory();
         this.videoStageLog.push({
           id: ++this.logSeq,
           time: new Date().toLocaleTimeString(),
@@ -1276,6 +1485,8 @@ function videoApp() {
           data.next_stage || '',
           '已恢复最近 DeepAgent 会话。'
         );
+        await this.loadAgentTrace(this.deepAgentRunId);
+        await this.loadIpMemory();
         this.videoStageLog.push({
           id: ++this.logSeq,
           time: new Date().toLocaleTimeString(),
@@ -1313,6 +1524,7 @@ function videoApp() {
         if (!res.ok) throw new Error(data.detail || data.error || 'DeepAgent 状态加载失败');
         const session = data.session || {};
         await this.loadDeepAgentVersions();
+        await this.loadAgentTrace(this.deepAgentRunId);
         if (session.status === 'failed') {
           this.error = session.error || 'DeepAgent 生成失败';
           this.deepAgentFailed = true;
@@ -1367,6 +1579,8 @@ function videoApp() {
         this.deepAgentFailed = false;
         await this.loadDeepAgentVersions();
         await this.loadProjectWorkspace();
+        await this.loadIpMemory();
+        await this.loadAgentTrace(this.deepAgentRunId);
         this.stageGenerationMessage = 'DeepAgent 失败阶段已重新生成，等待确认。';
         this.workspaceRestoreStatus = '失败阶段已恢复，请确认或继续反馈。';
         this.videoStageLog.push({
