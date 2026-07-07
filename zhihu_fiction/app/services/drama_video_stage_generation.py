@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 
 from ...base import normalize_content
+from ...ip_memory.rendering import render_memory_context
 from ...llm import create_llm
 from ...orchestrator import create_drama_video_coordinator, run_drama_video_coordinator
 from ..drama_video_stages import STAGE_LABELS, TEXT_STAGE_INSTRUCTIONS
@@ -35,9 +36,16 @@ def format_stage_context(stage_drafts: dict[str, str]) -> str:
     return "\n\n".join(sections) if sections else "无"
 
 
-def build_stage_prompt(result, stage: str, stage_drafts: dict[str, str]) -> str:
+def format_ip_memory_context(ip_memory) -> str:
+    if ip_memory is None:
+        return "【IP记忆】\n暂无已保存记忆。"
+    return render_memory_context(ip_memory)
+
+
+def build_stage_prompt(result, stage: str, stage_drafts: dict[str, str], ip_memory=None) -> str:
     label = STAGE_LABELS[stage]
     instruction = TEXT_STAGE_INSTRUCTIONS[stage]
+    memory_context = format_ip_memory_context(ip_memory)
     return f"""你是 DeepSeek V4 Pro，负责把知乎/网文小说开发成可生产短剧的视频前置资产。
 
 当前要创作的生产阶段：{label}
@@ -55,6 +63,8 @@ def build_stage_prompt(result, stage: str, stage_drafts: dict[str, str]) -> str:
 
 前序已确认稿：
 {format_stage_context(stage_drafts)}
+
+{memory_context}
 
 发布方案参考：
 {result.synthesis or "无"}
@@ -79,6 +89,16 @@ def run_stage_deepagent(
 
     story_file = safe_story_file(story_path)
     result = story_result_from_file(story_file)
+    ip_memory = None
+    ip_memory_repo = getattr(dependencies, "ip_memory_repo", None)
+    if ip_memory_repo is not None:
+        for project_id in (story_path, str(story_file), getattr(result, "topic", "")):
+            if not project_id:
+                continue
+            ip_memory = ip_memory_repo.load(str(project_id))
+            if ip_memory is not None:
+                break
+    memory_context = format_ip_memory_context(ip_memory)
     settings = compat_attr("settings", dependencies.settings)
     llm_settings = deepseek_v4pro_settings(settings)
     llm_factory = compat_attr("create_llm", create_llm)
@@ -93,6 +113,7 @@ def run_stage_deepagent(
         stage_drafts=stage_drafts,
         current_draft=current_draft,
         human_feedback=human_feedback,
+        memory_context=memory_context,
     )
     content = normalize_content(output.get("content", "")).strip()
     if not content:

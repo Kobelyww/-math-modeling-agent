@@ -299,6 +299,7 @@ def run_drama_video_coordinator(
     stage_drafts: dict[str, str],
     current_draft: str = "",
     human_feedback: str = "",
+    memory_context: str = "",
     stream_callback: callable | None = None,
 ) -> dict[str, Any]:
     """Run the drama-video DeepAgent Coordinator for one confirmed stage."""
@@ -340,6 +341,7 @@ def run_drama_video_coordinator(
         "工具返回后，请整合为最终阶段草稿，并使用【阶段草稿】标记输出。\n\n"
         f"小说正文：\n{result.final_story}\n\n"
         f"前序已确认稿：\n{_format_drama_video_stage_context(stage_drafts) or '无'}\n\n"
+        f"统一IP记忆：\n{memory_context.strip() or '暂无'}\n\n"
         f"发布方案参考：\n{result.synthesis or '无'}"
         f"{revision_section}"
     )
