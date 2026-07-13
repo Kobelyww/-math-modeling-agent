@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from asyncio import Lock
 from pathlib import Path
@@ -350,6 +351,24 @@ def _md_table_from_cells(cells: list, row_count: int, col_count: int) -> str:
         if ri == 0:
             lines.append("| " + " | ".join(["---"] * col_count) + " |")
     return "\n".join(lines)
+
+
+def _mimo_table_vision_config() -> dict[str, str] | None:
+    api_key = _settings.vision_api_key or os.getenv("MIMO_API_KEY")
+    api_base = (
+        _settings.vision_api_base
+        or os.getenv("MIMO_API_BASE")
+        or "https://api.xiaomimimo.com/v1"
+    ).rstrip("/")
+    model = (
+        _settings.vision_model
+        or os.getenv("MIMO_VISION_MODEL")
+        or os.getenv("MIMO_MODEL")
+        or "mimo-v2.5-pro"
+    )
+    if not api_key:
+        return None
+    return {"api_key": api_key, "api_base": api_base, "model": model}
 
 
 @router.post("/api/upload/pdf")
