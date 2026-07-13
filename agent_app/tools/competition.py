@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +76,64 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
                 "role": "user",
                 "content": json.dumps(context, ensure_ascii=False, indent=2),
             },
+        ]
+
+    def _programmer_messages(
+        state: RunState,
+        modeling_plan: dict[str, Any],
+        data_files: list[str],
+    ) -> list[dict[str, str]]:
+        context = {
+            "modeling_plan": modeling_plan,
+            "problem_spec.json": _read_json_artifact(state, "problem_spec.json"),
+            "tables.json": _read_json_artifact(state, "tables.json"),
+            "figures.json": _read_json_artifact(state, "figures.json"),
+            "data_files": data_files,
+        }
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are the experiment programmer. Return only executable Python code "
+                    "that writes all results under the results directory."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(context, ensure_ascii=False, indent=2),
+            },
+        ]
+
+    def _strip_fenced_code_block(content: str) -> str:
+        text = content.strip()
+        if not text.startswith("```"):
+            return text
+        lines = text.splitlines()
+        if len(lines) > 1 and lines[-1].strip() == "```":
+            return "\n".join(lines[1:-1]).strip()
+        return "\n".join(lines[1:]).strip()
+
+    def _execute_generated_code(state: RunState, code: str) -> tuple[Path, subprocess.CompletedProcess[str]]:
+        artifact_service = _artifacts_for_state(state)
+        code_path = artifact_service.write_text("solve.py", code)
+        completed = subprocess.run(
+            [sys.executable, str(code_path)],
+            cwd=run_store.run_dir(state.run_id),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        return code_path, completed
+
+    def _collect_result_paths(run_dir: Path) -> list[str]:
+        results_dir = run_dir / "results"
+        if not results_dir.exists():
+            return []
+        return [
+            str(path)
+            for path in sorted(results_dir.rglob("*"))
+            if path.is_file()
         ]
 
     def _review_core_artifacts(artifacts: list[str]) -> dict[str, Any]:
@@ -227,6 +287,54 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         """Write a reproducible placeholder experiment script and results directory."""
         state = _load_state(run_id)
         artifact_service = _artifacts_for_state(state)
+        if generation_service is not None:
+            messages = _programmer_messages(state, modeling_plan, data_files)
+            code = _strip_fenced_code_block(generation_service.generate_markdown("programmer", messages))
+            code_path, completed = _execute_generated_code(state, code)
+            debug_attempted = False
+            if completed.returncode != 0:
+                debug_attempted = True
+                debug_messages = [
+                    *messages,
+                    {"role": "assistant", "content": code},
+                    {
+                        "role": "user",
+                        "content": (
+                            "The generated code failed. Return a corrected complete Python script.\n\n"
+                            f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
+                        ),
+                    },
+                ]
+                code = _strip_fenced_code_block(
+                    generation_service.generate_markdown("code_debugger", debug_messages)
+                )
+                code_path, completed = _execute_generated_code(state, code)
+
+            run_dir = run_store.run_dir(run_id)
+            result_paths = _collect_result_paths(run_dir)
+            experiment_result = {
+                "success": completed.returncode == 0,
+                "execution_status": "success" if completed.returncode == 0 else "failed",
+                "script_generated": True,
+                "code_path": str(code_path),
+                "data_files": data_files,
+                "result_paths": result_paths,
+                "figure_paths": [],
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+                "debug_attempted": debug_attempted,
+                "notes": "Executed DeepSeek programmer generated experiment script.",
+                "reproducibility_notes": "Run solve.py from the run directory to regenerate results.",
+            }
+            manifest_path = artifact_service.write_json("experiment_manifest.json", experiment_result)
+            return {
+                "experiment_result": experiment_result,
+                "experiment_manifest_path": str(manifest_path),
+                "code_path": str(code_path),
+                "result_paths": result_paths,
+                "figure_paths": [],
+            }
+
         code_path = artifact_service.write_text(
             "solve.py",
             "from pathlib import Path\n\n"
