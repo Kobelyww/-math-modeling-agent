@@ -29,6 +29,9 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     assert distiller.Distiller is legacy_distiller.Distiller
     assert distiller.distill_single is legacy_distiller.distill_single
     assert distiller.distill_aggregate is legacy_distiller.distill_aggregate
+    assert distiller.Distiller.__module__ == "zhihu_fiction.fiction.distiller"
+    assert distiller.distill_single.__module__ == "zhihu_fiction.fiction.distiller"
+    assert distiller.distill_aggregate.__module__ == "zhihu_fiction.fiction.distiller"
 
     assert skills_store.SkillsStore is legacy_skills_store.SkillsStore
     assert skills_store.SkillsStore.__module__ == "zhihu_fiction.fiction.skills_store"
