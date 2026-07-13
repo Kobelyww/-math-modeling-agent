@@ -14,6 +14,13 @@ from agent_app.evaluators import evaluate_submission
 from agent_app.services.artifact_service import ArtifactService
 from agent_app.services.data_analysis import DataAnalysisService
 from agent_app.services.ingestion import InputIngestionService
+from agent_app.services.paper_sections import (
+    REQUIRED_SECTION_FILES,
+    build_section_context,
+    merge_section_texts,
+    section_generation_order,
+    section_path,
+)
 from agent_app.services.problem_package import build_problem_package
 from agent_app.services.run_store import RunStore
 
@@ -373,6 +380,79 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
     ) -> dict[str, Any]:
         """Draft markdown and LaTeX competition paper artifacts."""
         state = _load_state(run_id)
+        if generation_service is not None:
+            run_dir = run_store.run_dir(run_id)
+            section_paths: dict[str, str] = {}
+            for section_file in section_generation_order():
+                context = build_section_context(
+                    section_file,
+                    problem_brief,
+                    modeling_plan,
+                    experiment_result,
+                    evidence_notes,
+                )
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "Write one competition-paper section in polished Markdown.",
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(context, ensure_ascii=False, indent=2),
+                    },
+                ]
+                content = generation_service.generate_markdown("paper_section_writer", messages)
+                path = section_path(run_dir, section_file)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+                section_paths[section_file] = str(path)
+
+            merged_sections = merge_section_texts(run_dir)
+            consistency_report = generation_service.generate_markdown(
+                "paper_consistency_reviewer",
+                [
+                    {
+                        "role": "user",
+                        "content": merged_sections,
+                    }
+                ],
+            )
+            consistency_path = _write_for_state(state, "paper_consistency_report.md", consistency_report)
+            paper_markdown = generation_service.generate_markdown(
+                "paper_synthesizer",
+                [
+                    {
+                        "role": "user",
+                        "content": merged_sections,
+                    }
+                ],
+            )
+            paper_latex = generation_service.generate_markdown(
+                "latex_synthesizer",
+                [
+                    {
+                        "role": "user",
+                        "content": paper_markdown,
+                    }
+                ],
+            )
+            markdown_path = _write_for_state(state, "paper.md", paper_markdown)
+            latex_path = _write_for_state(state, "paper.tex", paper_latex)
+            paper_draft = {
+                "markdown_path": str(markdown_path),
+                "latex_path": str(latex_path),
+                "section_paths": section_paths,
+                "consistency_report_path": str(consistency_path),
+                "sections": {name: section_paths[name] for name in REQUIRED_SECTION_FILES},
+            }
+            return {
+                "paper_draft": paper_draft,
+                "paper_markdown_path": str(markdown_path),
+                "paper_tex_path": str(latex_path),
+                "paper_section_paths": list(section_paths.values()),
+                "paper_consistency_report_path": str(consistency_path),
+            }
+
         markdown_path = _write_for_state(
             state,
             "paper.md",
