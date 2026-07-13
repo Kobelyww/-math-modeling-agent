@@ -218,8 +218,15 @@ def test_project_dashboard_links_to_short_drama_workspace_and_next_action():
     html = _html()
 
     assert "next_action" in html
+    assert "workspaceNextActionLabel()" in html
+    assert "workspaceNextActionKind()" in html
+    assert "executeWorkspaceNextAction()" in html
+    assert "workspaceNextAction().kind === 'generate_stage'" in html
+    assert "url.searchParams.set('run_id', action.target_id)" in html
+    assert "url.searchParams.set('stage', action.stage)" in html
     assert "/video" in html
     assert "待确认" in html
+    assert "待生成" in html
 
 
 def test_project_timeline_titles_cover_drama_production_events():

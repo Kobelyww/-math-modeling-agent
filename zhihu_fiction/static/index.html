@@ -496,7 +496,7 @@
             推荐会话：<span x-text="productionStatus().recommended_run_id || '暂无'"></span>
           </p>
           <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
-            <span class="status-chip px-2 py-0.5" x-text="workspaceNextAction().kind === 'confirm_stage' ? '待确认' : (workspaceNextAction().label || '暂无待处理动作')"></span>
+            <span class="status-chip px-2 py-0.5" x-text="workspaceNextActionLabel()"></span>
             <span class="text-slate-500">
               当前阶段：<span x-text="stageSummary().pending_stage || '暂无'"></span>
             </span>
@@ -520,9 +520,14 @@
             <strong class="text-xl" x-text="productionStatus().exported_package_count || 0"></strong>
           </div>
         </div>
-        <button type="button" @click="openRecommendedDramaSession()"
-          :disabled="!productionStatus().recommended_run_id"
-          class="px-4 py-2 cta-primary rounded text-sm disabled:opacity-45 disabled:cursor-not-allowed">继续推荐会话</button>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" @click="executeWorkspaceNextAction()"
+            :disabled="workspaceNextActionKind()==='none' || workspaceNextActionKind()==='wait'"
+            class="px-4 py-2 cta-primary rounded text-sm disabled:opacity-45 disabled:cursor-not-allowed">执行下一步</button>
+          <button type="button" @click="openRecommendedDramaSession()"
+            :disabled="!productionStatus().recommended_run_id"
+            class="px-4 py-2 surface-muted rounded text-sm disabled:opacity-45 disabled:cursor-not-allowed">继续推荐会话</button>
+        </div>
       </div>
       <div id="project-release-readiness" class="mt-4 border-t border-[#d8cdbc] pt-4">
         <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -1831,6 +1836,16 @@ function app() {
     workspaceNextAction() {
       return this.projectWorkspace.next_action || {};
     },
+    workspaceNextActionKind() {
+      return this.workspaceNextAction().kind || 'none';
+    },
+    workspaceNextActionLabel() {
+      const action = this.workspaceNextAction();
+      if (this.workspaceNextAction().kind === 'confirm_stage') return '待确认';
+      if (this.workspaceNextAction().kind === 'generate_stage') return '待生成';
+      if (action.kind === 'wait') return '生成中';
+      return action.label || '暂无待处理动作';
+    },
     productionStatus() {
       return this.projectWorkspace.production_status || {};
     },
@@ -2159,7 +2174,32 @@ function app() {
         await this.loadTaskCenter();
       } catch(e) { alert('取消失败: '+e.message); }
     },
+    executeWorkspaceNextAction() {
+      const action = this.workspaceNextAction();
+      if (!action?.kind || action.kind === 'none' || action.kind === 'wait') return;
+      if (action.kind === 'confirm_stage' || action.kind === 'generate_stage') {
+        this.openVideoForWorkspaceAction(action);
+        return;
+      }
+      this.openRecommendedDramaSession();
+    },
+    openVideoForWorkspaceAction(action) {
+      const session = this.projectDramaSessions().find(item => item.id === action.target_id) || {
+        id: action.target_id,
+      };
+      const url = this.videoWorkspaceUrl(session);
+      if (action.target_id) {
+        url.searchParams.set('run_id', action.target_id);
+      }
+      if (action.stage) {
+        url.searchParams.set('stage', action.stage);
+      }
+      window.location.href = url.toString();
+    },
     openVideoForProject(session = null) {
+      window.location.href = this.videoWorkspaceUrl(session).toString();
+    },
+    videoWorkspaceUrl(session = null) {
       const url = new URL('/video', window.location.origin);
       if (this.selectedProject?.id) {
         url.searchParams.set('project_id', this.selectedProject.id);
@@ -2173,7 +2213,7 @@ function app() {
       if (session?.id) {
         url.searchParams.set('run_id', session.id);
       }
-      window.location.href = url.toString();
+      return url;
     },
     formatDate(value) {
       if (!value) return '';
