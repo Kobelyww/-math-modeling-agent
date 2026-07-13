@@ -34,3 +34,6 @@ def test_storage_modules_expose_existing_storage_adapters() -> None:
     assert object_storage.LocalObjectStorage is legacy_object_storage.LocalObjectStorage
     assert object_storage.MinioObjectStorage is legacy_object_storage.MinioObjectStorage
     assert object_storage.create_object_storage is legacy_object_storage.create_object_storage
+    assert object_storage.LocalObjectStorage.__module__ == "zhihu_fiction.storage.object_storage"
+    assert object_storage.MinioObjectStorage.__module__ == "zhihu_fiction.storage.object_storage"
+    assert object_storage.create_object_storage.__module__ == "zhihu_fiction.storage.object_storage"
