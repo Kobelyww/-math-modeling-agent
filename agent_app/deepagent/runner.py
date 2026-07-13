@@ -57,7 +57,7 @@ class CompetitionPaperRunner:
             coordinator = self._create_coordinator()
             response = coordinator.invoke(self._build_coordinator_payload(state.run_id, run_dir, spec))
             state = self.run_store.load_state(state.run_id)
-            state.status = RunStatus.COMPLETED
+            state.status = self._status_from_response(response)
             summary = self._summarize_response(response)
         except Exception as exc:
             state = self._load_latest_state(state)
@@ -166,6 +166,16 @@ class CompetitionPaperRunner:
             return self.run_store.load_state(state.run_id)
         except Exception:
             return state
+
+    def _status_from_response(self, response: Any) -> RunStatus:
+        if isinstance(response, dict):
+            status = response.get("status")
+            if status in {item.value for item in RunStatus}:
+                return RunStatus(status)
+            quality_report = response.get("quality_report")
+            if isinstance(quality_report, dict) and quality_report.get("passed") is False:
+                return RunStatus.PARTIAL
+        return RunStatus.COMPLETED
 
     def _summarize_response(self, response: Any) -> str:
         if isinstance(response, dict):

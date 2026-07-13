@@ -140,6 +140,25 @@ class EventDrivingCoordinator:
             },
         )
         self.emit({"type": "quality_gate", "stage": "review_and_revise", **review["quality_report"]})
+        if not review["quality_report"].get("passed", False):
+            required_fixes = review["quality_report"].get("required_fixes", [])
+            self.emit(
+                {
+                    "type": "revise_required",
+                    "stage": "review_and_revise",
+                    "required_fixes": required_fixes,
+                    "review_report_path": review.get("review_report_path"),
+                }
+            )
+            summary = review.get("review_report_path") or "质量审查未通过，需要修改后再打包。"
+            self.emit({"type": "message", "role": "assistant", "content": summary})
+            return {
+                "messages": [{"content": summary}],
+                "inputs_manifest": manifest,
+                "status": "partial",
+                "quality_report": review["quality_report"],
+            }
+
         package = self._stage("package_submission", "打包提交", "package_submission", {"run_id": run_id})
 
         summary = package["final_synthesis_path"]
