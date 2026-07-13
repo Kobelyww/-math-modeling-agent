@@ -29,6 +29,7 @@ def test_storage_modules_expose_existing_storage_adapters() -> None:
     from zhihu_fiction.storage import object_storage, pipeline_storage
 
     assert pipeline_storage.PipelineStorage is legacy_pipeline_storage.PipelineStorage
+    assert pipeline_storage.PipelineStorage.__module__ == "zhihu_fiction.storage.pipeline_storage"
 
     assert object_storage.LocalObjectStorage is legacy_object_storage.LocalObjectStorage
     assert object_storage.MinioObjectStorage is legacy_object_storage.MinioObjectStorage
