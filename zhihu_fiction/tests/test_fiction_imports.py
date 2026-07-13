@@ -31,6 +31,7 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     assert distiller.distill_aggregate is legacy_distiller.distill_aggregate
 
     assert skills_store.SkillsStore is legacy_skills_store.SkillsStore
+    assert skills_store.SkillsStore.__module__ == "zhihu_fiction.fiction.skills_store"
 
     assert tools.TOOLS is legacy_tools.TOOLS
     assert tools.save_article is legacy_tools.save_article
