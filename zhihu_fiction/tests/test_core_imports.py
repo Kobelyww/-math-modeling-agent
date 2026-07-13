@@ -17,6 +17,8 @@ def test_core_modules_expose_existing_public_api() -> None:
 
     assert base.normalize_content is legacy_base.normalize_content
     assert base.extract_story_body is legacy_base.extract_story_body
+    assert base.normalize_content.__module__ == "zhihu_fiction.core.base"
+    assert base.extract_story_body.__module__ == "zhihu_fiction.core.base"
 
     assert tools.TOOLS is legacy_tools.TOOLS
     assert tools.save_article is legacy_tools.save_article
