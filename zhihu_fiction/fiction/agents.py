@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from zhihu_fiction.agents import ReviewerAgent, create_coordinator
+from zhihu_fiction.agents import ReviewerAgent, create_coordinator, create_drama_video_coordinator
 
-__all__ = ["ReviewerAgent", "create_coordinator"]
+__all__ = ["ReviewerAgent", "create_coordinator", "create_drama_video_coordinator"]

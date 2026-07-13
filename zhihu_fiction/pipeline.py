@@ -1,8 +1,12 @@
-"""Compatibility exports for fiction production pipelines."""
+"""Compatibility alias for fiction production pipelines."""
 
 from __future__ import annotations
 
+import sys
+
+from zhihu_fiction.fiction import pipeline as _impl
 from zhihu_fiction.fiction.pipeline import (
+    APP_ROOT,
     CHECKPOINT_DIR,
     RUN_DIR,
     SCHEDULE_FILE,
@@ -19,6 +23,7 @@ from zhihu_fiction.fiction.pipeline import (
 )
 
 __all__ = [
+    "APP_ROOT",
     "CHECKPOINT_DIR",
     "RUN_DIR",
     "SCHEDULE_FILE",
@@ -33,3 +38,5 @@ __all__ = [
     "moderate_content",
     "select_topic",
 ]
+
+sys.modules[__name__] = _impl

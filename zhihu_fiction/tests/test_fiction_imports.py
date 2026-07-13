@@ -17,6 +17,9 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     assert orchestrator.run_coordinator is legacy_orchestrator.run_coordinator
     assert orchestrator.WorkflowResult is legacy_orchestrator.WorkflowResult
     assert orchestrator.StageResult is legacy_orchestrator.StageResult
+    assert orchestrator.run_coordinator.__module__ == "zhihu_fiction.fiction.orchestrator"
+    assert orchestrator.WorkflowResult.__module__ == "zhihu_fiction.fiction.orchestrator"
+    assert orchestrator.StageResult.__module__ == "zhihu_fiction.fiction.orchestrator"
 
     assert pipeline.Pipeline is legacy_pipeline.Pipeline
     assert pipeline.RunResult is legacy_pipeline.RunResult
