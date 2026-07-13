@@ -18,6 +18,7 @@ def test_core_modules_expose_existing_public_api() -> None:
     assert config.load_settings.__module__ == "zhihu_fiction.core.config"
 
     assert llm.create_llm is legacy_llm.create_llm
+    assert llm.create_llm.__module__ == "zhihu_fiction.core.llm"
 
     assert base.normalize_content is legacy_base.normalize_content
     assert base.extract_story_body is legacy_base.extract_story_body
