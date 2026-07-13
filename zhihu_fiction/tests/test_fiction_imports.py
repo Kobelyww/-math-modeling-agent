@@ -8,7 +8,8 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     from zhihu_fiction import pipeline as legacy_pipeline
     from zhihu_fiction import scraper as legacy_scraper
     from zhihu_fiction import skills_store as legacy_skills_store
-    from zhihu_fiction.fiction import agents, distiller, orchestrator, pipeline, scraper, skills_store
+    from zhihu_fiction import tools as legacy_tools
+    from zhihu_fiction.fiction import agents, distiller, orchestrator, pipeline, scraper, skills_store, tools
 
     assert agents.create_coordinator is legacy_agents.create_coordinator
     assert agents.ReviewerAgent is legacy_agents.ReviewerAgent
@@ -30,3 +31,8 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     assert distiller.distill_aggregate is legacy_distiller.distill_aggregate
 
     assert skills_store.SkillsStore is legacy_skills_store.SkillsStore
+
+    assert tools.TOOLS is legacy_tools.TOOLS
+    assert tools.save_article is legacy_tools.save_article
+    assert tools.save_article.func.__module__ == "zhihu_fiction.fiction.tools"
+    assert tools.scrape_hot.func.__module__ == "zhihu_fiction.fiction.tools"

@@ -27,3 +27,4 @@ def test_core_modules_expose_existing_public_api() -> None:
 
     assert tools.TOOLS is legacy_tools.TOOLS
     assert tools.save_article is legacy_tools.save_article
+    assert tools.save_article.func.__module__ == "zhihu_fiction.fiction.tools"

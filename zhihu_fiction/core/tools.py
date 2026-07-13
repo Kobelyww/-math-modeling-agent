@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from zhihu_fiction.tools import (
+from zhihu_fiction.fiction.tools import (
+    OUTPUT_DIR,
     TOOLS,
     current_time,
     list_scraped,
@@ -15,6 +16,7 @@ from zhihu_fiction.tools import (
 )
 
 __all__ = [
+    "OUTPUT_DIR",
     "TOOLS",
     "current_time",
     "list_scraped",
