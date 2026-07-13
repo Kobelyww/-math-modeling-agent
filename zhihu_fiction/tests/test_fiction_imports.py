@@ -25,6 +25,12 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     assert scraper.scrape_zhihu_hot is legacy_scraper.scrape_zhihu_hot
     assert scraper.search_zhihu_topic is legacy_scraper.search_zhihu_topic
     assert scraper.manual_entry is legacy_scraper.manual_entry
+    assert scraper.scrape_zhihu_hot.__module__ == "zhihu_fiction.fiction.scraper"
+    assert scraper.search_zhihu_topic.__module__ == "zhihu_fiction.fiction.scraper"
+    assert scraper.manual_entry.__module__ == "zhihu_fiction.fiction.scraper"
+    assert scraper.save_scraped_content.__module__ == "zhihu_fiction.fiction.scraper"
+    assert scraper.load_scraped_file.__module__ == "zhihu_fiction.fiction.scraper"
+    assert scraper.fetch_question_answers.__module__ == "zhihu_fiction.fiction.scraper"
 
     assert distiller.Distiller is legacy_distiller.Distiller
     assert distiller.distill_single is legacy_distiller.distill_single
