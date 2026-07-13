@@ -12,6 +12,10 @@ def test_core_modules_expose_existing_public_api() -> None:
     assert config.Settings is legacy_config.Settings
     assert config.AgentConfig is legacy_config.AgentConfig
     assert config.load_settings is legacy_config.load_settings
+    assert config.APP_ROOT.name == "zhihu_fiction"
+    assert config.Settings.__module__ == "zhihu_fiction.core.config"
+    assert config.AgentConfig.__module__ == "zhihu_fiction.core.config"
+    assert config.load_settings.__module__ == "zhihu_fiction.core.config"
 
     assert llm.create_llm is legacy_llm.create_llm
 
