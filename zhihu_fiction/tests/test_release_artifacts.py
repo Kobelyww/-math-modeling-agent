@@ -179,3 +179,22 @@ def test_ci_workflow_runs_zhihu_fiction_tests():
     assert "python -m pytest zhihu_fiction/tests" in text
     assert "test_release_artifacts.py" in text
     assert "actions/setup-python" in text
+
+
+def test_mcp_server_gitlink_has_external_boundary_metadata():
+    gitmodules = Path(".gitmodules")
+    assert gitmodules.exists()
+
+    text = gitmodules.read_text(encoding="utf-8")
+    assert '[submodule "zhihu_fiction/mcp_server"]' in text
+    assert "path = zhihu_fiction/mcp_server" in text
+    assert "url = https://github.com/Douyh123/zhihu-mcp.git" in text
+    assert "ignore = dirty" in text
+
+    result = subprocess.run(
+        ["git", "ls-files", "-s", "zhihu_fiction/mcp_server"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.startswith("160000 ")

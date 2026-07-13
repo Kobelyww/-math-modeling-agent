@@ -1,0 +1,4 @@
+[submodule "zhihu_fiction/mcp_server"]
+	path = zhihu_fiction/mcp_server
+	url = https://github.com/Douyh123/zhihu-mcp.git
+	ignore = dirty
