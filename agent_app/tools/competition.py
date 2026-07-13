@@ -11,6 +11,7 @@ from agent_app.evaluators import evaluate_submission
 from agent_app.services.artifact_service import ArtifactService
 from agent_app.services.data_analysis import DataAnalysisService
 from agent_app.services.ingestion import InputIngestionService
+from agent_app.services.problem_package import build_problem_package
 from agent_app.services.run_store import RunStore
 
 
@@ -66,13 +67,24 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             output_profile=state.spec.output_profile,
             options=state.spec.options,
         )
-        manifest = InputIngestionService(_artifacts(run_id)).ingest(state.spec)
+        artifact_service = _artifacts_for_state(state)
+        manifest = InputIngestionService(artifact_service).ingest(state.spec)
+        problem_package = build_problem_package(
+            artifact_service,
+            question=question,
+        )
         run_store.save_state(state)
         saved_paths = [
             item["path"]
             for item in [*manifest["data_files"], *manifest["reference_files"]]
         ]
-        return {"inputs_manifest": manifest, "saved_paths": saved_paths, "warnings": []}
+        return {
+            "inputs_manifest": manifest,
+            "problem_package": problem_package,
+            "problem_package_paths": list(problem_package.values()),
+            "saved_paths": saved_paths,
+            "warnings": [],
+        }
 
     @tool("analyze_problem")
     def analyze_problem(run_id: str, question: str) -> dict[str, Any]:
