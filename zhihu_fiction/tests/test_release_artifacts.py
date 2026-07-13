@@ -26,6 +26,24 @@ def test_gitignore_excludes_runtime_secrets_and_generated_data():
         assert pattern in text
 
 
+def test_runtime_secret_and_generated_paths_are_not_tracked():
+    result = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "zhihu_fiction/data/auth",
+            "zhihu_fiction/data/workspace",
+            "zhihu_fiction/data/objects",
+            "zhihu_fiction/output",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == ""
+
+
 def test_release_checklist_exists_and_covers_publish_gates():
     text = Path("docs/release/RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
 
