@@ -143,16 +143,34 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             if path.is_file()
         ]
 
-    def _review_core_artifacts(artifacts: list[str]) -> dict[str, Any]:
+    def _run_artifact_names(run_id: str) -> set[str]:
+        run_dir = run_store.run_dir(run_id)
+        if not run_dir.exists():
+            return set()
+        return {
+            path.name
+            for path in run_dir.iterdir()
+            if path.is_file()
+        }
+
+    def _review_core_artifacts(run_id: str, artifacts: list[str]) -> dict[str, Any]:
         required = {"modeling_report.md", "solve.py", "paper.tex"}
         names = {Path(artifact).name for artifact in artifacts}
+        names.update(_run_artifact_names(run_id))
         missing = sorted(required - names)
+        findings = [] if not missing else ["Required core artifacts are incomplete."]
+        required_fixes = [f"缺少交付物: {name}" for name in missing]
+        model_report_path = run_store.run_dir(run_id) / "modeling_report.md"
+        if not artifacts and model_report_path.exists() and len(model_report_path.read_text(encoding="utf-8").strip()) < 100:
+            findings.append("modeling_report.md 内容过短")
+            required_fixes.append("modeling_report.md 内容过短，需要重写")
+        passed = not required_fixes
         return {
             "gate_name": "review",
-            "passed": not missing,
-            "score": 1.0 if not missing else max(0.0, 1.0 - len(missing) / len(required)),
-            "findings": [] if not missing else ["Required core artifacts are incomplete."],
-            "required_fixes": [f"缺少交付物: {name}" for name in missing],
+            "passed": passed,
+            "score": 1.0 if passed else max(0.0, 1.0 - len(required_fixes) / (len(required) + 1)),
+            "findings": findings,
+            "required_fixes": required_fixes,
         }
 
     @tool("ingest_inputs")
@@ -492,7 +510,7 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
     ) -> dict[str, Any]:
         """Review generated artifacts and write a lightweight quality report."""
         state = _load_state(run_id)
-        quality_report = _review_core_artifacts(artifacts)
+        quality_report = _review_core_artifacts(run_id, artifacts)
         lines = ["# Review Report", ""]
         if quality_report["passed"]:
             lines.append("- Required core artifacts are present for packaging.")
