@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from agent_app.services.run_store import RunStore
 
 def make_competition_tools(run_store: RunStore, **services: Any) -> list:
     data_service = services.get("data_service") or DataAnalysisService()
+    generation_service = services.get("generation_service")
 
     def _load_state(run_id: str) -> RunState:
         return run_store.load_state(run_id)
@@ -38,6 +40,41 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             ".tex": "latex",
             ".json": "json",
         }.get(path.suffix.lower(), path.suffix.lstrip("."))
+
+    def _read_json_artifact(state: RunState, relative_path: str) -> dict[str, Any]:
+        path = run_store.run_dir(state.run_id) / relative_path
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _planner_messages(
+        state: RunState,
+        problem_brief: dict[str, Any],
+        data_audit: dict[str, Any],
+        evidence_notes: list[str],
+    ) -> list[dict[str, str]]:
+        context = {
+            "problem_spec.json": _read_json_artifact(state, "problem_spec.json"),
+            "tables.json": _read_json_artifact(state, "tables.json"),
+            "figures.json": _read_json_artifact(state, "figures.json"),
+            "source_map.json": _read_json_artifact(state, "source_map.json"),
+            "problem_brief": problem_brief,
+            "data_audit": data_audit,
+            "evidence_notes": evidence_notes,
+        }
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are the mathematical modeling planner. Return a JSON model plan and "
+                    "a concise modeling report that maps experiments to paper conclusions."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(context, ensure_ascii=False, indent=2),
+            },
+        ]
 
     def _review_core_artifacts(artifacts: list[str]) -> dict[str, Any]:
         required = {"modeling_report.md", "solve.py", "paper.tex"}
@@ -153,6 +190,19 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
     ) -> dict[str, Any]:
         """Draft a modeling plan artifact from problem, data, and evidence context."""
         state = _load_state(run_id)
+        if generation_service is not None:
+            messages = _planner_messages(state, problem_brief, data_audit, evidence_notes)
+            modeling_plan = generation_service.generate_json("modeling_planner", messages)
+            report_text = generation_service.generate_markdown("modeling_planner", messages)
+            artifact_service = _artifacts_for_state(state)
+            model_plan_path = artifact_service.write_json("model_plan.json", modeling_plan)
+            report_path = artifact_service.write_text("modeling_report.md", report_text)
+            return {
+                "modeling_plan": modeling_plan,
+                "model_plan_path": str(model_plan_path),
+                "modeling_report_path": str(report_path),
+            }
+
         modeling_plan = {
             "selected_model": "DeepAgent generated model",
             "candidate_models": ["descriptive analysis", "baseline optimization"],
