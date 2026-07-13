@@ -57,6 +57,9 @@ zhihu_fiction/data/objects/
 zhihu_fiction/data/debug/
 zhihu_fiction/data/ip_memory/
 zhihu_fiction/data/agent_traces/
+zhihu_fiction/mcp_server/cookies/
+zhihu_fiction/mcp_server/search_results/
+zhihu_fiction/mcp_server/browser/.user_data/
 
 # Local databases and queues
 *.sqlite

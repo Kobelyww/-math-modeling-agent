@@ -18,26 +18,32 @@
 
 ```text
 zhihu_fiction/
-├── agents.py             # DeepAgent 工具函数、系统提示词、评审 Agent
-├── automator_zhihu.py    # 知乎浏览器辅助发布
-├── base.py               # 内容规范化、基础工具
-├── cli.py                # 交互式命令行入口
-├── config.py             # 环境变量和模型配置
-├── distiller.py          # 爆款内容技能蒸馏
-├── exporter.py           # 多平台发布包导出
-├── llm.py                # LLM 创建逻辑
-├── orchestrator.py       # Coordinator 调用和工作流兼容封装
-├── pipeline.py           # 自动化流水线、调度、检查点、内容安全
-├── scraper.py            # 知乎热榜/搜索/手动录入采集
-├── server.py             # FastAPI Web 服务和 SSE 接口
-├── skills_store.py       # 技能库存取
-├── tools.py              # 辅助工具
+├── app/                  # FastAPI app factory、settings、security、SSE、route helpers
+├── drama/                # 小说转短剧、阶段资产、视频 prompt 和任务模型
+├── ip_memory/            # Story Bible、人设、世界观、叙事记忆和一致性追踪
+├── workspace/            # 项目、任务、审核、资产、队列、repository 和 service
 ├── publishers/           # 知乎、起点、番茄发布包适配器
 ├── static/               # Web 前端静态资源
-├── tests/                # 单元测试
-├── data/                 # 抓取数据、技能库、认证状态等运行数据
-└── output/               # 生成作品、发布包、流水线记录
+├── tests/                # 单元测试和接口测试
+├── docs/                 # 架构、发布、实施计划和产品文档
+├── data/                 # 本地运行数据，默认不作为源码提交
+├── output/               # 生成作品、发布包、流水线记录，默认忽略
+├── mcp_server/           # 独立嵌套 Git 仓库，承载知乎 MCP/浏览器自动化服务
+├── server.py             # 兼容 Web 入口：uvicorn zhihu_fiction.server:app
+├── cli.py                # 兼容 CLI 入口：python -m zhihu_fiction.cli
+└── *.py                  # 迁移期兼容模块，后续分阶段收敛到领域包
 ```
+
+当前项目正在从早期扁平结构迁移到产品级模块架构。迁移期间会保留旧入口和兼容模块，避免破坏 CLI、Web API 和现有测试。详细边界见：
+
+- [`docs/architecture.md`](docs/architecture.md)
+- [`docs/superpowers/specs/2026-07-13-zhihu-fiction-architecture-cleanup-design.md`](docs/superpowers/specs/2026-07-13-zhihu-fiction-architecture-cleanup-design.md)
+
+运行数据策略：
+
+- `data/auth/`、`data/workspace/`、`data/objects/`、`data/ip_memory/`、`data/agent_traces/` 和 `output/` 是本地运行产物。
+- `data/auth/` 可能包含知乎登录态或浏览器 cookie，不能提交。
+- `mcp_server/` 是嵌套 Git 仓库，第一阶段只作为外部集成边界保留，不并入主包。
 
 ## 安装与准备
 
