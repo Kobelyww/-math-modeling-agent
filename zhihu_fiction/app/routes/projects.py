@@ -264,9 +264,13 @@ def _project_stage_summary(drama_sessions: list[dict]) -> dict:
     if not drama_sessions:
         return {"pending_stage": "", "status": "not_started", "session_id": ""}
     session = drama_sessions[0]
+    status = str(session.get("status") or "")
+    pending_stage = str(session.get("pending_stage") or "")
+    if not pending_stage and status == "ready_for_next_stage":
+        pending_stage = _next_project_stage(session)
     return {
-        "pending_stage": str(session.get("pending_stage") or ""),
-        "status": str(session.get("status") or ""),
+        "pending_stage": pending_stage,
+        "status": status,
         "session_id": str(session.get("id") or ""),
     }
 
@@ -279,6 +283,13 @@ def _project_stage_next_action(stage_summary: dict) -> dict:
         return {
             "kind": "confirm_stage",
             "label": f"确认 {stage} 阶段",
+            "target_id": session_id,
+            "stage": stage,
+        }
+    if status == "ready_for_next_stage" and stage and session_id:
+        return {
+            "kind": "generate_stage",
+            "label": f"生成 {stage} 阶段",
             "target_id": session_id,
             "stage": stage,
         }
