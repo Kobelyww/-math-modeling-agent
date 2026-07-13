@@ -626,6 +626,7 @@ function videoApp() {
     projectId: '',
     initialStoryPath: '',
     initialRunId: '',
+    initialStage: '',
     restoredStoryPath: '',
     workspaceOpen: false,
     activeStage: 'script',
@@ -828,6 +829,7 @@ function videoApp() {
       this.projectId = params.get('project_id') || '';
       this.initialStoryPath = params.get('story_path') || '';
       this.initialRunId = params.get('run_id') || '';
+      this.initialStage = this.normalizeStageParam(params.get('stage'));
       await this.loadInfrastructureStatus();
       await this.loadProjectWorkspace();
       await this.loadIpMemory(this.projectId);
@@ -990,6 +992,10 @@ function videoApp() {
         this.activeStage === stage.id ? 'active' : '',
         stage.confirmed ? 'done' : '',
       ].join(' ');
+    },
+    normalizeStageParam(stage) {
+      const value = String(stage || '').trim();
+      return this.workflowStages.some(item => item.id === value) ? value : '';
     },
     activeStageLabel() {
       return this.workflowStages.find(stage => stage.id === this.activeStage)?.label || '作品库';
@@ -1418,7 +1424,7 @@ function videoApp() {
         confirmed: confirmed.has(stage.id),
       }));
       const pendingStage = session.pending_stage || nextStage || 'script';
-      this.activeStage = session.status === 'video_started' ? 'video' : pendingStage;
+      this.activeStage = session.status === 'video_started' ? 'video' : (this.initialStage || pendingStage);
       if (session.video_run_id) this.runId = session.video_run_id;
       if (session.status === 'generating') {
         this.workspaceRestoreStatus = '已恢复生成中的 DeepAgent 会话。';
@@ -1430,7 +1436,7 @@ function videoApp() {
         this.pushHumanLoopMessage(pendingStage, 'agent', (session.drafts || {})[pendingStage]);
       } else if (session.status === 'ready_for_next_stage') {
         this.workspaceRestoreStatus = '已恢复会话，等待继续生成下一阶段。';
-        this.stageGenerationMessage = `${stageLabels[pendingStage] || pendingStage}等待 DeepAgent 继续生成。`;
+        this.stageGenerationMessage = `${stageLabels[this.activeStage] || this.activeStage}等待 DeepAgent 继续生成。`;
       } else if (session.status === 'failed') {
         this.workspaceRestoreStatus = '已恢复失败会话，可重试失败阶段。';
         this.error = session.error || 'DeepAgent 上次生成失败';

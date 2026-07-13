@@ -18,8 +18,19 @@ def test_video_workspace_restores_project_query_context():
     assert "this.projectId = params.get('project_id') || ''" in html
     assert "this.initialStoryPath = params.get('story_path') || ''" in html
     assert "this.initialRunId = params.get('run_id') || ''" in html
+    assert "this.initialStage = this.normalizeStageParam(params.get('stage'))" in html
     assert "await this.openInitialStoryWorkspace()" in html
     assert "openInitialStoryWorkspace()" in html
+
+
+def test_video_workspace_restores_stage_query_context():
+    html = _html()
+
+    assert "initialStage: ''" in html
+    assert "normalizeStageParam(stage)" in html
+    assert "return this.workflowStages.some(item => item.id === value) ? value : ''" in html
+    assert "this.initialStage || pendingStage" in html
+    assert "this.stageGenerationMessage = `${stageLabels[this.activeStage] || this.activeStage}等待 DeepAgent 继续生成。`" in html
 
 
 def test_video_workspace_can_restore_deepagent_session_by_run_id():
