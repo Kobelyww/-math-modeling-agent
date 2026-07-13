@@ -4,13 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import APP_ROOT, load_settings
+from ..core.config import APP_ROOT, load_settings
 from ..exporter import Exporter
 from ..ip_memory.repository import IPMemoryRepository
 from ..ip_memory.trace import AgentTraceStore
-from ..llm import create_llm
-from ..pipeline import Pipeline
-from ..skills_store import SkillsStore
+from ..core.llm import create_llm
+from ..fiction.pipeline import Pipeline
+from ..fiction.skills_store import SkillsStore
 from ..workspace.queue import WorkspaceQueue
 from ..workspace.queue_backends import create_queue_backend
 from ..workspace.repositories import WorkspaceRepository
@@ -58,7 +58,7 @@ class AppDependencies:
         self.video_job_recovery = {"refresh_queued": 0, "failed": 0}
 
     def create_pipeline(self) -> Pipeline:
-        from ..orchestrator import create_orchestrator
+        from ..fiction.orchestrator import create_orchestrator
 
         coordinator, reviewer, llm = create_orchestrator(
             self.settings,

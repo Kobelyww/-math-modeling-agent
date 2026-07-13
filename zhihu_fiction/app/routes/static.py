@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-from ...config import APP_ROOT
+from ...core.config import APP_ROOT
 
 router = APIRouter()
 

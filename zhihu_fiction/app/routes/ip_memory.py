@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ...config import APP_ROOT
+from ...core.config import APP_ROOT
 from ...ip_memory.extraction import extract_ip_memory_from_story
 from ...ip_memory.rendering import render_memory_context
 from ...ip_memory.repository import IPMemoryRepository

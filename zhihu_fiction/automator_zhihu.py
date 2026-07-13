@@ -11,7 +11,7 @@ import json
 import time
 from pathlib import Path
 
-from .config import APP_ROOT
+from .core.config import APP_ROOT
 
 AUTH_DIR = APP_ROOT / "data" / "auth"
 DEBUG_DIR = APP_ROOT / "data" / "debug"

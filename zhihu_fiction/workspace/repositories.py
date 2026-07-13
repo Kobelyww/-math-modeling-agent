@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
-from ..config import APP_ROOT
+from ..core.config import APP_ROOT
 from .models import (
     ConsistencyProfile,
     CostLedgerEntry,

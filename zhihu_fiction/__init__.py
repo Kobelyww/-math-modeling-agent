@@ -12,7 +12,7 @@ __all__ = [
 
 def __getattr__(name: str):
     if name in {"Settings", "load_settings"}:
-        from .config import Settings, load_settings
+        from .core.config import Settings, load_settings
 
         return {"Settings": Settings, "load_settings": load_settings}[name]
     if name == "Exporter":
@@ -20,11 +20,11 @@ def __getattr__(name: str):
 
         return Exporter
     if name == "Pipeline":
-        from .pipeline import Pipeline
+        from .fiction.pipeline import Pipeline
 
         return Pipeline
     if name == "SkillsStore":
-        from .skills_store import SkillsStore
+        from .fiction.skills_store import SkillsStore
 
         return SkillsStore
     if name in {"ZhihuSaltPublisher", "QidianPublisher", "FanqiePublisher"}:

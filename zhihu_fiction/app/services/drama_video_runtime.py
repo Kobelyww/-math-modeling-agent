@@ -7,10 +7,10 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
-from ...config import APP_ROOT
+from ...core.config import APP_ROOT
+from ...core.llm import create_llm
 from ...drama import DramaAdapter, DramaExporter
 from ...drama.video import VideoJobStore, create_video_provider
-from ...llm import create_llm
 from ...workspace.models import DramaVideoJob
 from ..drama_video_stages import (
     DEEPAGENT_STAGES,

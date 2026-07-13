@@ -9,10 +9,10 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 
-from ...base import normalize_content
+from ...core.base import normalize_content
+from ...core.llm import create_llm
+from ...fiction.orchestrator import create_drama_video_coordinator, run_drama_video_coordinator
 from ...ip_memory.rendering import render_memory_context
-from ...llm import create_llm
-from ...orchestrator import create_drama_video_coordinator, run_drama_video_coordinator
 from ..drama_video_stages import STAGE_LABELS, TEXT_STAGE_INSTRUCTIONS
 from .story_library import safe_story_file, story_result_from_file
 

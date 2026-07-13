@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from ..config import APP_ROOT
+from ..core.config import APP_ROOT
 
 
 class AssetStoreError(RuntimeError):

@@ -9,8 +9,8 @@ from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 
-from .config import APP_ROOT
-from .orchestrator import WorkflowResult
+from .core.config import APP_ROOT
+from .fiction.orchestrator import WorkflowResult
 from .publishers.base import PlatformMeta
 from .publishers.fanqie import FanqiePublisher
 from .publishers.qidian import QidianPublisher

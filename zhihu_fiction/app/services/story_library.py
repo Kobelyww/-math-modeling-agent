@@ -6,9 +6,9 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from ...base import extract_story_body
-from ...config import APP_ROOT
-from ...orchestrator import StageResult, WorkflowResult
+from ...core.base import extract_story_body
+from ...core.config import APP_ROOT
+from ...fiction.orchestrator import StageResult, WorkflowResult
 from ..legacy_compat import server_path_attr
 
 OUTPUT_DIR = APP_ROOT / "output"

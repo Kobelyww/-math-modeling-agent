@@ -15,7 +15,7 @@ from ...drama.assets import create_asset_store
 from ...drama.models import DramaShot
 from ...drama.stage_assets import estimate_video_cost, normalize_stage_asset
 from ...drama.video import VideoJobStore, create_video_provider
-from ...llm import create_llm
+from ...core.llm import create_llm
 from ...workspace.models import (
     CostLedgerEntry,
     DramaProjectPackage,
@@ -649,7 +649,7 @@ def merge_stage_drafts_into_result(result, stage_drafts: dict[str, str], stage_l
         synthesis_parts.append(result.synthesis)
     synthesis_parts.append("\n\n".join(sections))
 
-    from ...orchestrator import WorkflowResult
+    from ...fiction.orchestrator import WorkflowResult
 
     return WorkflowResult(
         topic=result.topic,

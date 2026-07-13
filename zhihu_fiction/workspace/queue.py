@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ..config import APP_ROOT
+from ..core.config import APP_ROOT
 from .models import StoryTask, utc_now_iso
 from .repositories import WorkspaceRepository
 from .services import WorkspaceService

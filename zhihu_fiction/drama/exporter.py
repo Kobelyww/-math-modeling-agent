@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from ..config import APP_ROOT
+from ..core.config import APP_ROOT
 from .models import DramaProject
 
 

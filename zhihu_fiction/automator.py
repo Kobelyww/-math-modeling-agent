@@ -11,7 +11,7 @@ import logging
 import time
 from pathlib import Path
 
-from .config import APP_ROOT
+from .core.config import APP_ROOT
 
 logger = logging.getLogger(__name__)
 

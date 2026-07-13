@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import asyncio
 
-from ...pipeline import Pipeline, RUN_DIR
-from ...pipeline_storage import PipelineStorage
+from ...fiction.pipeline import Pipeline, RUN_DIR
+from ...storage.pipeline_storage import PipelineStorage
 
 
 def read_runs(limit: int = 50) -> list[dict]:

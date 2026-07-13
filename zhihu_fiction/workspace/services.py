@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..orchestrator import WorkflowResult
+from ..fiction.orchestrator import WorkflowResult
 from .models import (
     Material,
     Project,

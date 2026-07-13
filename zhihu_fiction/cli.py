@@ -21,17 +21,17 @@ import json
 import sys
 from pathlib import Path
 
-from .config import APP_ROOT, load_settings
-from .distiller import Distiller
+from .core.config import APP_ROOT, load_settings
+from .core.llm import create_llm
+from .fiction.distiller import Distiller
+from .fiction.orchestrator import OrchestratorCompat, WorkflowResult, create_orchestrator
+from .fiction.pipeline import Pipeline
+from .fiction.scraper import list_scraped_files, load_scraped_file, scrape_zhihu_hot
+from .fiction.skills_store import SkillsStore
 from .drama import DramaAdapter, DramaAdapterError, DramaExporter
 from .drama.video import BailianVideoProvider, DramaVideoError, VideoJobStore, create_video_provider
 from .exporter import DEFAULT_PLATFORMS, Exporter
-from .llm import create_llm
-from .orchestrator import OrchestratorCompat, WorkflowResult, create_orchestrator
-from .pipeline import Pipeline
 from .automator_zhihu import ZhihuPublisher, LoginRequired
-from .scraper import list_scraped_files, load_scraped_file, scrape_zhihu_hot
-from .skills_store import SkillsStore
 
 HELP_TEXT = """
 ╔══════════════════════════════════════════════════════╗
@@ -112,7 +112,7 @@ class CLI:
             print("抓取失败或返回空结果。")
             return
 
-        from .scraper import save_scraped_content
+        from .fiction.scraper import save_scraped_content
         from datetime import datetime
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -125,7 +125,7 @@ class CLI:
 
     def cmd_search(self, keyword: str) -> None:
         print(f"\n[搜索] 正在搜索: {keyword}...")
-        from .scraper import save_scraped_content, search_zhihu_topic
+        from .fiction.scraper import save_scraped_content, search_zhihu_topic
         from datetime import datetime
 
         items = search_zhihu_topic(keyword)
@@ -155,7 +155,7 @@ class CLI:
         if score_str:
             score = _parse_manual_score(score_str)
 
-        from .scraper import manual_entry
+        from .fiction.scraper import manual_entry
         saved = manual_entry(title, excerpt, hot_score=score)
         print(f"已录入并保存: {saved}")
 
@@ -349,7 +349,7 @@ class CLI:
         print(f"加载文件: {filepath.name}")
         text = filepath.read_text(encoding="utf-8")
 
-        from .base import extract_story_body
+        from .core.base import extract_story_body
 
         # Parse topic / genre from the header
         topic = ""
@@ -365,7 +365,7 @@ class CLI:
 
         story, synthesis = extract_story_body(text)
 
-        from .orchestrator import StageResult
+        from .fiction.orchestrator import StageResult
         self.last_result = WorkflowResult(
             topic=topic or filepath.stem.split("_")[0],
             genre=genre or "未指定",

@@ -8,20 +8,20 @@ from .app.factory import create_app
 from .app.services import drama_video_runtime
 from .app.services.pipeline_runtime import execute_pipeline_in_background, read_runs
 from .app.state import AppState
-from .config import APP_ROOT
+from .core.config import APP_ROOT
 from .drama import DramaAdapter, DramaAdapterError, DramaExporter
 from .drama.video import BailianVideoProvider, DramaVideoError, VideoJobStore, create_video_provider
 from .exporter import Exporter
-from .llm import create_llm
-from .orchestrator import (
+from .core.llm import create_llm
+from .fiction.orchestrator import (
     StageResult,
     WorkflowResult,
     create_drama_video_coordinator,
     create_orchestrator,
     run_drama_video_coordinator,
 )
-from .pipeline import Pipeline, RUN_DIR
-from .skills_store import SkillsStore
+from .fiction.pipeline import Pipeline, RUN_DIR
+from .fiction.skills_store import SkillsStore
 from .workspace.queue import WorkspaceQueue
 from .workspace.queue_backends import create_queue_backend
 from .workspace.repositories import WorkspaceRepository
