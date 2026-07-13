@@ -21,6 +21,10 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     assert pipeline.Pipeline is legacy_pipeline.Pipeline
     assert pipeline.RunResult is legacy_pipeline.RunResult
     assert pipeline.select_topic is legacy_pipeline.select_topic
+    assert pipeline.Pipeline.__module__ == "zhihu_fiction.fiction.pipeline"
+    assert pipeline.RunResult.__module__ == "zhihu_fiction.fiction.pipeline"
+    assert pipeline.StageRecord.__module__ == "zhihu_fiction.fiction.pipeline"
+    assert pipeline.select_topic.__module__ == "zhihu_fiction.fiction.pipeline"
 
     assert scraper.scrape_zhihu_hot is legacy_scraper.scrape_zhihu_hot
     assert scraper.search_zhihu_topic is legacy_scraper.search_zhihu_topic
