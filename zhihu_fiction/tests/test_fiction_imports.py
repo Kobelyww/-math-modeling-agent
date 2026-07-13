@@ -12,7 +12,16 @@ def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     from zhihu_fiction.fiction import agents, distiller, orchestrator, pipeline, scraper, skills_store, tools
 
     assert agents.create_coordinator is legacy_agents.create_coordinator
+    assert agents.create_drama_video_coordinator is legacy_agents.create_drama_video_coordinator
     assert agents.ReviewerAgent is legacy_agents.ReviewerAgent
+    assert agents.create_coordinator.__module__ == "zhihu_fiction.fiction.agents"
+    assert agents.create_drama_video_coordinator.__module__ == "zhihu_fiction.fiction.agents"
+    assert agents.ReviewerAgent.__module__ == "zhihu_fiction.fiction.agents"
+    assert agents._make_analyze_topic.__module__ == "zhihu_fiction.fiction.agents"
+    assert agents._make_plan_outline.__module__ == "zhihu_fiction.fiction.agents"
+    assert agents._make_write_draft.__module__ == "zhihu_fiction.fiction.agents"
+    assert agents._make_polish_draft.__module__ == "zhihu_fiction.fiction.agents"
+    assert agents._make_synthesize.__module__ == "zhihu_fiction.fiction.agents"
 
     assert orchestrator.run_coordinator is legacy_orchestrator.run_coordinator
     assert orchestrator.WorkflowResult is legacy_orchestrator.WorkflowResult
