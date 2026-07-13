@@ -1,7 +1,9 @@
-"""Compatibility exports for fiction skill-card storage."""
+"""Compatibility alias for fiction skill-card storage."""
 
 from __future__ import annotations
 
-from zhihu_fiction.fiction.skills_store import SKILLS_DIR, SkillsStore
+import sys
 
-__all__ = ["SKILLS_DIR", "SkillsStore"]
+from zhihu_fiction.fiction import skills_store as _impl
+
+sys.modules[__name__] = _impl

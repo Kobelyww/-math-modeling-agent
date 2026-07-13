@@ -1,5 +1,24 @@
 from __future__ import annotations
 
+import importlib
+
+
+def test_legacy_fiction_modules_alias_real_implementation_modules() -> None:
+    aliases = [
+        ("zhihu_fiction.agents", "zhihu_fiction.fiction.agents"),
+        ("zhihu_fiction.distiller", "zhihu_fiction.fiction.distiller"),
+        ("zhihu_fiction.orchestrator", "zhihu_fiction.fiction.orchestrator"),
+        ("zhihu_fiction.pipeline", "zhihu_fiction.fiction.pipeline"),
+        ("zhihu_fiction.scraper", "zhihu_fiction.fiction.scraper"),
+        ("zhihu_fiction.skills_store", "zhihu_fiction.fiction.skills_store"),
+        ("zhihu_fiction.tools", "zhihu_fiction.fiction.tools"),
+    ]
+
+    for legacy_name, implementation_name in aliases:
+        legacy_module = importlib.import_module(legacy_name)
+        implementation_module = importlib.import_module(implementation_name)
+        assert legacy_module is implementation_module
+
 
 def test_fiction_modules_expose_existing_story_pipeline_api() -> None:
     from zhihu_fiction import agents as legacy_agents
