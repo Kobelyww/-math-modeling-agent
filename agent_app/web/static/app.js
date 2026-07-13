@@ -224,6 +224,17 @@ function handlePaperEvent(msg) {
       addArtifact(msg);
       appendEvent('生成产物：' + (msg.name || msg.path), msg.stage);
       break;
+    case 'section':
+      updateStage(msg.stage || 'draft_paper', msg.status || 'running');
+      if (msg.path) {
+        addArtifact({
+          name: msg.name || msg.path.split('/').pop(),
+          path: msg.path,
+          kind: 'markdown',
+        });
+      }
+      appendEvent('章节 ' + (msg.name || '') + '：' + (msg.status || 'running'), msg.stage || 'draft_paper');
+      break;
     case 'quality_gate':
       appendEvent('质量门 ' + msg.gate_name + '：' + (msg.passed ? '通过' : '未通过') + '，得分 ' + msg.score, msg.stage);
       break;

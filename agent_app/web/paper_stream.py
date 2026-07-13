@@ -172,6 +172,7 @@ class EventDrivingCoordinator:
         self.emit({"type": "tool", "stage": stage, "name": tool_name, "status": "completed", "result": self._preview(result)})
         self.emit({"type": "stage", "stage": stage, "label": label, "status": "completed"})
         self._emit_artifact_paths(stage, result)
+        self._emit_section_paths(stage, result)
         return result
 
     def _emit_artifact_paths(self, stage: str, result: dict[str, Any]) -> None:
@@ -189,6 +190,20 @@ class EventDrivingCoordinator:
                             "kind": path.suffix.lstrip(".") or "file",
                         }
                     )
+
+    def _emit_section_paths(self, stage: str, result: dict[str, Any]) -> None:
+        for item in result.get("paper_section_paths", []):
+            if isinstance(item, str):
+                path = Path(item)
+                self.emit(
+                    {
+                        "type": "section",
+                        "stage": stage,
+                        "name": path.name,
+                        "status": "completed",
+                        "path": item,
+                    }
+                )
 
     @staticmethod
     def _looks_like_artifact_path(value: str) -> bool:

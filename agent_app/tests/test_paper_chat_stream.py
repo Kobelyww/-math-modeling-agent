@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agent_app.config import Settings
 from agent_app.domain.models import RunSpec, RunStatus
+from agent_app.services.run_store import RunStore
 from agent_app.web.paper_stream import (
     EventDrivingCoordinator,
     PaperChatRequest,
@@ -145,6 +146,54 @@ def test_paper_chat_streamer_does_not_mark_deepagent_stage_complete_for_partial_
         if event.get("type") == "stage" and event.get("stage") == "deepagent_reasoning"
     ]
     assert [event["status"] for event in deepagent_events] == ["running", "partial"]
+
+
+def test_paper_stream_emits_section_writing_events(tmp_path):
+    events = []
+
+    class FakeCoordinator:
+        def __init__(self, run_store, settings=None, event_handler=None):
+            self.run_store = run_store
+            self.event_handler = event_handler
+
+        def invoke(self, payload):
+            run_dir = self.run_store.run_dir(payload["run_id"])
+            section = run_dir / "paper" / "sections" / "04_model_building.md"
+            section.parent.mkdir(parents=True, exist_ok=True)
+            section.write_text("# 模型建立\n", encoding="utf-8")
+            self.event_handler(
+                {
+                    "type": "section",
+                    "stage": "draft_paper",
+                    "name": "04_model_building.md",
+                    "status": "completed",
+                    "path": str(section),
+                }
+            )
+            return {"messages": [{"content": str(section)}]}
+
+    streamer = PaperChatStreamer(output_root=tmp_path, coordinator_factory=FakeCoordinator)
+    streamer.run(RunSpec(question="建立模型"), events.append)
+
+    assert any(event.get("type") == "section" and event.get("name") == "04_model_building.md" for event in events)
+
+
+def test_event_driving_coordinator_emits_section_events_from_draft_result(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    events = []
+    coordinator = EventDrivingCoordinator(store, events.append)
+    section = tmp_path / "run" / "paper" / "sections" / "04_model_building.md"
+    coordinator.tools = {
+        "draft_competition_paper": type(
+            "Tool",
+            (),
+            {"invoke": lambda self, payload: {"paper_section_paths": [str(section)]}},
+        )()
+    }
+
+    coordinator._stage("draft_paper", "起草论文", "draft_competition_paper", {})
+
+    assert any(event.get("type") == "section" and event.get("path") == str(section) for event in events)
 
 
 def test_build_followup_question_includes_recent_assistant_context():
