@@ -31,6 +31,23 @@ def test_recognizer_handles_non_four_question_problem():
     assert subproblems[1].primary_type == SubproblemType.EVALUATION
 
 
+def test_recognizer_handles_pdf_extracted_question_headings_without_colons():
+    text = """
+    请建立数学模型，解决以下问题：
+    问题1  供应商声称次品率不会超过标称值，请设计抽样检测方案。
+    问题2  已知两种零配件和成品次品率，请作出检测和拆解决策。
+    问题3  对 m 道工序、n 个零配件，已知零配件、半成品和成品的次品率，重复问题
+    2，给出生产过程的决策方案。
+    问题4  假设问题2 和问题3 中零配件、半成品和成品的次品率均是通过抽样检测方法得到的。
+    """
+
+    subproblems = recognize_subproblems(text)
+
+    assert [item.subproblem_id for item in subproblems] == ["q1", "q2", "q3", "q4"]
+    assert subproblems[2].dependencies == ["q2"]
+    assert subproblems[3].dependencies == ["q2", "q3"]
+
+
 def test_classifier_prioritizes_sampling_over_generic_statistics():
     assert classify_subproblem("在95%的信度下认定次品率超过标称值").primary == SubproblemType.SAMPLING_TEST
 

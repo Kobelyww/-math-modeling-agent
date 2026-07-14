@@ -6,7 +6,9 @@ from agent_app.domain.contracts import SubproblemContract
 from agent_app.workflow_packs.cumcm.taxonomy import classify_subproblem
 
 
-QUESTION_PATTERN = re.compile(r"(?:问题|第)\s*(?P<num>[0-9一二三四五六七八九十]+)\s*[：:]")
+QUESTION_PATTERN = re.compile(
+    r"(?m)(?:^|(?<=。))\s*(?:问题|第)\s*(?P<num>[0-9一二三四五六七八九十]+)\s*(?:[：:]|\s{2,})"
+)
 QUESTION_REF_PATTERN = re.compile(r"问题\s*(?P<num>[0-9一二三四五六七八九十]+)")
 NUMBER_MAP = {
     "一": 1,
