@@ -24,6 +24,11 @@ def test_build_problem_package_writes_structured_tables(tmp_path):
     package = build_problem_package(artifacts, question=question, tables=tables, figures=[])
 
     assert package["problem_spec_path"].endswith("problem_spec.json")
+    assert package["problem_contract_path"].endswith("contracts/problem_contract.json")
+    assert (tmp_path / "contracts" / "problem_contract.json").exists()
+    problem_spec = json.loads((tmp_path / "problem_spec.json").read_text(encoding="utf-8"))
+    assert problem_spec["subproblems"][0]["id"] == "q1"
+    assert problem_spec["subproblems"][0]["primary_type"] == "sampling_test"
     tables_json = json.loads((tmp_path / "tables.json").read_text(encoding="utf-8"))
     assert tables_json["tables"][0]["title"] == "表1 企业在生产中遇到的情况"
     assert tables_json["tables"][0]["source"]["page"] == 2
@@ -52,6 +57,7 @@ def test_ingest_inputs_creates_problem_package_without_changing_question_markdow
     assert result["problem_package"]["problem_spec_path"].endswith("problem_spec.json")
     assert result["problem_package_paths"] == list(result["problem_package"].values())
     assert (run_dir / "problem_spec.json").exists()
+    assert (run_dir / "contracts" / "problem_contract.json").exists()
     assert (run_dir / "tables.json").exists()
     assert (run_dir / "figures.json").exists()
     assert (run_dir / "source_map.json").exists()

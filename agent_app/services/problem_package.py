@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from agent_app.domain.serialization import to_json_dict
 from agent_app.services.artifact_service import ArtifactService
+from agent_app.workflow_packs.cumcm.problem_builder import build_cumcm_problem_contract
 
 
 def build_problem_package(
@@ -22,16 +25,36 @@ def build_problem_package(
         _normalize_figure(figure, index)
         for index, figure in enumerate(figures or [], start=1)
     ]
+    problem_contract = build_cumcm_problem_contract(
+        question,
+        source_text_path=Path("question.md"),
+        tables=normalized_tables,
+        figures=normalized_figures,
+    )
 
     problem_spec_path = artifacts.write_json(
         "problem_spec.json",
         {
             "background": _extract_background(question),
-            "subproblems": [],
+            "subproblems": [
+                {
+                    "id": item.subproblem_id,
+                    "question_text": item.question_text,
+                    "primary_type": item.primary_type.value,
+                    "secondary_types": [problem_type.value for problem_type in item.secondary_types],
+                    "dependencies": item.dependencies,
+                    "expected_outputs": item.expected_outputs,
+                }
+                for item in problem_contract.subproblems
+            ],
             "objectives": [],
             "constraints": [],
-            "deliverables": ["modeling_report.md", "solve.py", "paper.md", "paper.tex"],
+            "deliverables": problem_contract.required_deliverables,
         },
+    )
+    problem_contract_path = artifacts.write_json(
+        "contracts/problem_contract.json",
+        to_json_dict(problem_contract),
     )
     tables_path = artifacts.write_json("tables.json", {"tables": normalized_tables})
     figures_path = artifacts.write_json("figures.json", {"figures": normalized_figures})
@@ -48,6 +71,7 @@ def build_problem_package(
 
     return {
         "problem_spec_path": str(problem_spec_path),
+        "problem_contract_path": str(problem_contract_path),
         "tables_path": str(tables_path),
         "figures_path": str(figures_path),
         "source_map_path": str(source_map_path),
