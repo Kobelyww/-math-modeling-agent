@@ -22,7 +22,7 @@ from agent_app.domain.models import ArtifactRef, QualityReport, RunSpec, RunStat
 from agent_app.domain.serialization import to_json_dict
 from agent_app.evaluators import evaluate_claims, evaluate_submission
 from agent_app.services.artifact_service import ArtifactService
-from agent_app.services.claim_map import build_b_problem_claims
+from agent_app.services.claim_map import build_b_problem_claims, build_generic_claims
 from agent_app.services.contract_store import ContractStore
 from agent_app.services.data_analysis import DataAnalysisService
 from agent_app.services.ingestion import InputIngestionService
@@ -1947,6 +1947,179 @@ if __name__ == "__main__":
             "figure_paths": [],
         }
 
+    def _write_writer_service_paper_sidecars(
+        state: RunState,
+        problem_brief: dict[str, Any],
+        modeling_plan: dict[str, Any],
+        experiment_result: dict[str, Any],
+        evidence_notes: list[str],
+    ) -> dict[str, Any]:
+        if generation_service is None:
+            return {}
+
+        run_dir = run_store.run_dir(state.run_id)
+        section_paths: dict[str, str] = {}
+        for section_file in section_generation_order():
+            context = build_section_context(
+                section_file,
+                problem_brief,
+                modeling_plan,
+                experiment_result,
+                evidence_notes,
+            )
+            messages = [
+                {
+                    "role": "system",
+                    "content": "Write one competition-paper section in polished Markdown.",
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(context, ensure_ascii=False, indent=2),
+                },
+            ]
+            content = generation_service.generate_markdown("paper_section_writer", messages)
+            path = section_path(run_dir, section_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            section_paths[section_file] = str(path)
+
+        merged_sections = merge_section_texts(run_dir)
+        consistency_report = generation_service.generate_markdown(
+            "paper_consistency_reviewer",
+            [
+                {
+                    "role": "user",
+                    "content": merged_sections,
+                }
+            ],
+        )
+        consistency_path = _write_for_state(state, "paper_consistency_report.md", consistency_report)
+        writer_markdown = generation_service.generate_markdown(
+            "paper_synthesizer",
+            [
+                {
+                    "role": "user",
+                    "content": merged_sections,
+                }
+            ],
+        )
+        writer_latex = generation_service.generate_markdown(
+            "latex_synthesizer",
+            [
+                {
+                    "role": "user",
+                    "content": writer_markdown,
+                }
+            ],
+        )
+        writer_markdown_path = _write_for_state(state, "paper/writer_synthesized.md", writer_markdown)
+        writer_latex_path = _write_for_state(state, "paper/writer_synthesized.tex", writer_latex)
+        return {
+            "writer_section_paths": section_paths,
+            "paper_consistency_report_path": str(consistency_path),
+            "writer_markdown_path": str(writer_markdown_path),
+            "writer_latex_path": str(writer_latex_path),
+        }
+
+    def _write_generic_claim_paper(
+        state: RunState,
+        problem_brief: dict[str, Any],
+        modeling_plan: dict[str, Any],
+        experiment_result: dict[str, Any],
+        evidence_notes: list[str],
+    ) -> dict[str, Any]:
+        run_dir = run_store.run_dir(state.run_id)
+        subproblem_plans = modeling_plan.get("subproblem_plans") or problem_brief.get("subproblems") or []
+        writer_artifacts = _write_writer_service_paper_sidecars(
+            state,
+            problem_brief,
+            modeling_plan,
+            experiment_result,
+            evidence_notes,
+        )
+        claims = build_generic_claims(subproblem_plans, run_dir)
+        claim_map_path = ContractStore(run_dir).write_claim_map(claims)
+        claim_report = evaluate_claims(claims, artifact_root=run_dir)
+        claim_report_path = _write_contract_json(
+            run_dir,
+            "claims/claim_gate_report.json",
+            claim_report,
+        )
+        _trace_for_state(state).write_gate_report("claim_gate", to_json_dict(claim_report))
+        section_paths = write_claim_section_files(run_dir, claims)
+        abstract_path = run_dir / "sections" / "01_abstract.md"
+        if abstract_path.exists():
+            abstract_path.write_text(
+                "## 摘要\n\n"
+                f"本文根据题面动态识别子问题，共识别 {len(subproblem_plans)} 个子问题，并为每个子问题生成可复现 baseline 求解流程。"
+                "每个结论均绑定到对应结果文件与 claim id，避免没有结果支撑的文字性结论。\n",
+                encoding="utf-8",
+            )
+        section_text = "\n\n".join(path.read_text(encoding="utf-8").strip() for path in section_paths)
+        markdown_path = _write_for_state(
+            state,
+            "paper.md",
+            section_text + "\n",
+        )
+        latex_body = "\n".join(
+            [
+                "\\section{摘要}",
+                "本文构建通用 CUMCM 合同驱动建模流程。",
+                "\\section{问题重述}",
+                f"共识别 {len(subproblem_plans)} 个子问题。",
+                "\\section{模型假设}",
+                "所有假设均记录在模型合同中。",
+                "\\section{符号说明}",
+                "变量、参数和结果文件由模型合同定义。",
+                "\\section{模型建立与求解}",
+                "每个子问题通过 solver strategy 选择求解方式。",
+                "\\section{结果分析}",
+                "结果结论由 claim map 追踪到具体文件与 locator。",
+                "\\section{灵敏度分析}",
+                "稳健性结论只在实验产物支持时写入。",
+                "\\section{模型评价}",
+                "评价包括可解释性、可复现性与局限性。",
+                "\\section{参考文献}",
+                "参考文献由证据检索阶段维护。",
+                "\\section{附录}",
+                "附录列出代码、合同、结果和审查报告。",
+            ]
+        )
+        latex_path = _write_for_state(
+            state,
+            "paper.tex",
+            "\\documentclass[UTF8]{ctexart}\n"
+            "\\begin{document}\n"
+            f"{latex_body}\n"
+            "\\end{document}\n",
+        )
+        section_path_map = {
+            path.stem: str(path)
+            for path in section_paths
+        }
+        paper_draft = {
+            "markdown_path": str(markdown_path),
+            "latex_path": str(latex_path),
+            "section_paths": section_path_map,
+            "claim_map_path": str(claim_map_path),
+            "claim_gate_report_path": str(claim_report_path),
+            "claim_gate_passed": claim_report.passed,
+            "sections": section_path_map,
+            **writer_artifacts,
+        }
+        result = {
+            "paper_draft": paper_draft,
+            "paper_markdown_path": str(markdown_path),
+            "paper_tex_path": str(latex_path),
+            "paper_section_paths": list(section_path_map.values()),
+            "claim_map_path": str(claim_map_path),
+            "claim_gate_report_path": str(claim_report_path),
+            "claim_gate_passed": claim_report.passed,
+        }
+        if writer_artifacts:
+            result.update(writer_artifacts)
+        return result
+
     @tool("draft_competition_paper")
     def draft_competition_paper(
         run_id: str,
@@ -1974,7 +2147,6 @@ if __name__ == "__main__":
                 claim_report,
             )
             section_paths = write_claim_section_files(run_dir, claims)
-            section_text = "\n\n".join(path.read_text(encoding="utf-8") for path in section_paths)
             q2_path = run_dir / "results" / "q2_table1_decisions.csv"
             q2_preview = ""
             if q2_path.exists():
@@ -2018,19 +2190,25 @@ if __name__ == "__main__":
                 f"{q2_preview}\n\n"
                 "上述结果直接支撑 claim_q1_sampling_plan、claim_q2_table1_decisions、claim_q3_tree_decisions 与 claim_q4_uncertainty_limits 四条结论。"
                 "若后续用户要求重写任一阶段，后续章节必须随 stale marker 一并重写，不能复用旧结论。\n\n"
+                "## 结论与证据追踪\n"
+                "论文正文中的四类结论均绑定到 claims/claim_map.json 中的 claim id，而不是直接来自提示词假设。"
+                "claim_q1_sampling_plan 对应抽样方案结果，用于支撑接收与拒收规则；"
+                "claim_q2_table1_decisions 对应表 1 六种情形的策略枚举行，用于支撑检测、成品检验和拆解决策；"
+                "claim_q3_tree_decisions 对应装配树递归求解结果，用于说明多零配件和半成品结构的推广方式；"
+                "claim_q4_uncertainty_limits 对应不确定性重求解结果，用于限制单点最优策略的适用范围。"
+                "如果任一结果文件缺失、locator 为空或 claim gate 不通过，该条结论不得进入最终提交稿，只能保留为待修复项。\n\n"
                 "## 灵敏度分析\n"
                 "灵敏度结论只在 q4 重求解结果支持时成立。若 results/q4_uncertainty_re_solve.csv 中 strategy_changed 为真，则 q2/q3 的策略应写成条件建议，"
                 "而不是普适最优方案。\n\n"
                 "## 模型评价\n"
                 "本版本的优势是 contract、solver、claim 与 section 文件相互独立，便于审查和重跑；局限是正文仍属于结构化草稿，后续应由章节写作智能体逐节扩写，"
-                "并在每节暴露产物供用户审阅确认。\n\n"
+                "并在每节暴露产物供用户审阅确认。"
+                "在正式提交前，还应把表格结果转写为竞赛论文中的规范表格，并补充每个策略选择背后的成本差异解释。\n\n"
                 "## 参考文献\n"
                 "[1] Montgomery, D. C. Introduction to Statistical Quality Control.\n"
                 "[2] Hillier, F. S., Lieberman, G. J. Introduction to Operations Research.\n\n"
                 "## 附录\n"
-                "完整代码入口为 solve.py；实验合同见 contracts/experiments/q1.json 至 q4.json；模型合同见 contracts/models/q1.json 至 q4.json。\n\n"
-                "## Claim-Aware Section Context\n"
-                f"{section_text}\n"
+                "完整代码入口为 solve.py；实验合同见 contracts/experiments/q1.json 至 q4.json；模型合同见 contracts/models/q1.json 至 q4.json。\n"
             )
             paper_tex = (
                 "\\documentclass[UTF8]{ctexart}\n"
@@ -2081,6 +2259,15 @@ if __name__ == "__main__":
                 "claim_map_path": str(claim_map_path),
                 "claim_gate_report_path": str(claim_report_path),
             }
+
+        if modeling_plan.get("workflow_type") == GENERIC_CUMCM_WORKFLOW:
+            return _write_generic_claim_paper(
+                state,
+                problem_brief,
+                modeling_plan,
+                experiment_result,
+                evidence_notes,
+            )
 
         if generation_service is not None:
             run_dir = run_store.run_dir(run_id)
@@ -2272,65 +2459,13 @@ if __name__ == "__main__":
                 "paper_tex_path": str(latex_path),
             }
 
-        subproblem_plans = modeling_plan.get("subproblem_plans") or problem_brief.get("subproblems") or []
-        result_lines = "\n".join(
-            f"- {item['id']} {item['title']}：{item['result_file']}"
-            for item in subproblem_plans
-        )
-        section_lines = "\n\n".join(
-            f"### {item['id']} {item['title']}\n"
-            f"类型：{item.get('problem_type', 'analysis')}。\n"
-            f"模型：{item.get('model', 'baseline')}。\n"
-            f"算法：{item.get('algorithm', 'baseline')}。\n"
-            f"结果文件：{item.get('result_file', '')}。"
-            for item in subproblem_plans
-        )
-        markdown_path = _write_for_state(
+        return _write_generic_claim_paper(
             state,
-            "paper.md",
-            "# 数学建模论文草稿\n\n"
-            "## 摘要\n"
-            "本文根据题面动态识别子问题，并为每个子问题生成可复现 baseline 求解流程。"
-            "每个结论均绑定到对应结果文件，避免没有结果支撑的文字性结论。\n\n"
-            "## 问题重述\n"
-            f"共识别 {len(subproblem_plans)} 个子问题。\n\n"
-            "## 模型建立与求解\n"
-            f"{section_lines}\n\n"
-            "## 结果文件\n"
-            f"{result_lines}\n\n"
-            "## 模型评价\n"
-            "当前通用路径提供可执行 baseline 和结果契约；若识别到专用题型，可进一步切换到专用求解器。\n",
+            problem_brief,
+            modeling_plan,
+            experiment_result,
+            evidence_notes,
         )
-        latex_sections = "\n".join(
-            f"\\subsection{{{item['id']} {item['title']}}}\n"
-            f"Model: {item.get('model', 'baseline')}. Result: {item.get('result_file', '')}.\n"
-            for item in subproblem_plans
-        )
-        latex_path = _write_for_state(
-            state,
-            "paper.tex",
-            "\\documentclass{article}\n"
-            "\\begin{document}\n"
-            "\\section{Dynamic Subproblem Modeling}\n"
-            f"Identified {len(subproblem_plans)} subproblems.\\n\n"
-            f"{latex_sections}"
-            "\\section{Results}\n"
-            "Each conclusion is linked to a generated result file.\n"
-            "\\end{document}\n",
-        )
-        paper_draft = {
-            "markdown_path": str(markdown_path),
-            "latex_path": str(latex_path),
-            "sections": {
-                "摘要": "动态识别子问题并生成可复现 baseline。",
-                "模型建立与求解": "每个子问题绑定模型、算法和结果文件。",
-            },
-        }
-        return {
-            "paper_draft": paper_draft,
-            "paper_markdown_path": str(markdown_path),
-            "paper_tex_path": str(latex_path),
-        }
 
     @tool("review_submission")
     def review_submission(

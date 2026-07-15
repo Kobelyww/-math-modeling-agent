@@ -1,8 +1,9 @@
 import json
 
-from agent_app.domain.models import RunSpec
+from agent_app.domain.models import RunOptions, RunSpec
 from agent_app.services.run_store import RunStore
 from agent_app.tools.competition import make_competition_tools
+from agent_app.workflow_packs.cumcm.routing import BENCHMARK_2024_B_ID
 
 
 class FakeFullChainGenerationService:
@@ -75,7 +76,15 @@ class FakeFullChainGenerationService:
 
 def test_b_problem_full_chain_uses_structured_tables_and_sections(tmp_path):
     store = RunStore(output_root=tmp_path)
-    state = store.create_run(RunSpec(question="生产过程中的决策问题 零配件 拆解"))
+    state = store.create_run(
+        RunSpec(
+            question="生产过程中的决策问题 零配件 拆解",
+            options=RunOptions(
+                workflow_mode="benchmark",
+                benchmark_id=BENCHMARK_2024_B_ID,
+            ),
+        )
+    )
     run_dir = store.run_dir(state.run_id)
     (run_dir / "tables.json").write_text('{"tables":[{"title":"表1","rows":[["1","10%"]]}]}', encoding="utf-8")
     tools = {
