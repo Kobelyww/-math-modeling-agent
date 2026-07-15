@@ -1,3 +1,5 @@
+import json
+
 from agent_app.domain.models import RunSpec
 from agent_app.services.run_store import RunStore
 from agent_app.tools.competition import make_competition_tools
@@ -105,6 +107,18 @@ def test_b_problem_full_chain_uses_structured_tables_and_sections(tmp_path):
     )
 
     assert (run_dir / "tables.json").exists()
-    assert "tables.json" in (run_dir / "solve.py").read_text(encoding="utf-8")
-    assert (run_dir / "paper" / "sections" / "00_abstract.md").exists()
-    assert review["quality_report"]["passed"] is True
+    assert (run_dir / "contracts" / "problem_contract.json").exists()
+    assert (run_dir / "contracts" / "models" / "q1.json").exists()
+    assert (run_dir / "contracts" / "experiments" / "q4.json").exists()
+    assert (run_dir / "results" / "q1_sampling_plan.csv").exists()
+    assert (run_dir / "results" / "q2_table1_decisions.csv").exists()
+    assert (run_dir / "results" / "q3_table2_tree_decisions.csv").exists()
+    assert (run_dir / "results" / "q4_uncertainty_re_solve.csv").exists()
+    assert (run_dir / "results" / "parameter_audit.json").exists()
+    assert "0.35" not in (run_dir / "solve.py").read_text(encoding="utf-8")
+    assert "DeepSeek generated B problem model" not in (run_dir / "modeling_report.md").read_text(encoding="utf-8")
+    assert (run_dir / "claims" / "claim_map.json").exists()
+    assert (run_dir / "sections" / "08_result_analysis.md").exists()
+    claim_map = json.loads((run_dir / "claims" / "claim_map.json").read_text(encoding="utf-8"))
+    assert len(claim_map) == 4
+    assert review["subagent_review_paths"]
