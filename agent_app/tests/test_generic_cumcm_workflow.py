@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import csv
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from agent_app.domain.models import RunOptions, RunSpec
@@ -25,6 +28,15 @@ B_LOOKING_TEXT = (
 
 def _tools_for(store: RunStore) -> dict[str, object]:
     return {tool.name: tool for tool in make_competition_tools(run_store=store)}
+
+
+class FailingGenerationService:
+    def __init__(self):
+        self.calls = []
+
+    def generate_markdown(self, role, messages):
+        self.calls.append((role, messages))
+        raise AssertionError("generic CUMCM run_experiment must not call generation_service")
 
 
 def test_production_b_looking_text_uses_generic_cumcm_contract_workflow(tmp_path):
@@ -131,18 +143,150 @@ def test_explicit_benchmark_mode_uses_b_fixture_contracts(tmp_path):
         assert expected_result_files[subproblem_id] in model_contract["result_files"]
 
 
-def test_plan_model_uses_analyzed_problem_text_when_run_spec_question_is_placeholder(tmp_path):
-    analyzed_question = (
-        "某城市需要建立交通管理模型。"
-        "问题1：预测未来七天各路段交通流量。"
-        "问题2：在道路容量约束下优化信号灯配时，使平均等待时间最小。"
+def test_non_b_problem_does_not_enter_benchmark_solver(tmp_path):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+        "问题2：预测未来三个月水质等级。"
     )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+    solve_path = run_dir / "solve.py"
+    q1_result_path = run_dir / "results" / "q1_result.csv"
+    q2_result_path = run_dir / "results" / "q2_result.csv"
+    benchmark_q2_path = run_dir / "results" / "q2_table1_decisions.csv"
+    run_experiment_trace = json.loads(
+        (run_dir / "trace" / "llm_outputs" / "run_experiment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert experiment["experiment_result"]["execution_status"] == "success"
+    assert q1_result_path.exists()
+    assert q2_result_path.exists()
+    assert not benchmark_q2_path.exists()
+    assert "generic_cumcm_contract_workflow" in solve_path.read_text(encoding="utf-8")
+    assert "results/q1_result.csv" in {
+        str(Path(path).relative_to(run_dir))
+        for path in experiment["experiment_result"]["result_paths"]
+    }
+    assert run_experiment_trace["execution_status"] == "success"
+    assert run_experiment_trace["workflow_type"] == GENERIC_CUMCM_WORKFLOW
+
+    with q1_result_path.open("r", encoding="utf-8", newline="") as handle:
+        q1_rows = list(csv.DictReader(handle))
+    with q2_result_path.open("r", encoding="utf-8", newline="") as handle:
+        q2_rows = list(csv.DictReader(handle))
+
+    plan_by_id = {
+        item["id"]: item
+        for item in plan["modeling_plan"]["subproblem_plans"]
+    }
+    assert q1_rows[0]["workflow_type"] == GENERIC_CUMCM_WORKFLOW
+    assert q1_rows[0]["solver_mode"] == plan_by_id["q1"]["solver_mode"]
+    assert q2_rows[0]["workflow_type"] == GENERIC_CUMCM_WORKFLOW
+    assert q2_rows[0]["solver_mode"] == plan_by_id["q2"]["solver_mode"]
+
+    rerun = subprocess.run(
+        [sys.executable, str(solve_path)],
+        cwd=run_dir,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert rerun.returncode == 0, rerun.stderr
+
+
+def test_generic_run_experiment_ignores_injected_generation_service(tmp_path):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+        "问题2：预测未来三个月水质等级。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    generation_service = FailingGenerationService()
+    tools = {
+        tool.name: tool
+        for tool in make_competition_tools(
+            run_store=store,
+            generation_service=generation_service,
+        )
+    }
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+    q1_result_path = run_dir / "results" / "q1_result.csv"
+    trace_path = run_dir / "trace" / "llm_outputs" / "run_experiment.json"
+
+    assert generation_service.calls == []
+    assert experiment["experiment_result"]["execution_status"] == "success"
+    assert "generic_cumcm_contract_workflow" in (run_dir / "solve.py").read_text(
+        encoding="utf-8"
+    )
+    assert trace_path.exists()
+    assert (
+        json.loads(trace_path.read_text(encoding="utf-8"))["workflow_type"]
+        == GENERIC_CUMCM_WORKFLOW
+    )
+
+    with q1_result_path.open("r", encoding="utf-8", newline="") as handle:
+        q1_rows = list(csv.DictReader(handle))
+    assert q1_rows[0]["workflow_type"] == GENERIC_CUMCM_WORKFLOW
+    assert (
+        q1_rows[0]["solver_mode"]
+        == plan["modeling_plan"]["subproblem_plans"][0]["solver_mode"]
+    )
+
+
+def test_plan_model_uses_analyzed_problem_text_when_run_spec_question_is_placeholder(tmp_path):
     store = RunStore(output_root=tmp_path)
     state = store.create_run(RunSpec(question="用户稍后补充题面"))
     tools = _tools_for(store)
 
     problem = tools["analyze_problem"].invoke(
-        {"run_id": state.run_id, "question": analyzed_question}
+        {"run_id": state.run_id, "question": B_LOOKING_TEXT}
     )
     plan = tools["plan_model"].invoke(
         {
@@ -155,9 +299,29 @@ def test_plan_model_uses_analyzed_problem_text_when_run_spec_question_is_placeho
 
     run_dir = store.run_dir(state.run_id)
     problem_contract = json.loads((run_dir / "contracts" / "problem_contract.json").read_text(encoding="utf-8"))
+    routing_trace_path = run_dir / "trace" / "routing_decision.json"
+    routing_after_plan = json.loads(routing_trace_path.read_text(encoding="utf-8"))
 
-    assert [item["id"] for item in problem["problem_brief"]["subproblems"]] == ["q1", "q2"]
-    assert [item["id"] for item in plan["modeling_plan"]["subproblem_plans"]] == ["q1", "q2"]
-    assert [item["subproblem_id"] for item in problem_contract["subproblems"]] == ["q1", "q2"]
-    assert "交通流量" in problem_contract["subproblems"][0]["question_text"]
-    assert "信号灯配时" in problem_contract["subproblems"][1]["question_text"]
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+    routing_after_experiment = json.loads(routing_trace_path.read_text(encoding="utf-8"))
+
+    assert [item["id"] for item in problem["problem_brief"]["subproblems"]] == ["q1", "q2", "q3", "q4"]
+    assert [item["id"] for item in plan["modeling_plan"]["subproblem_plans"]] == ["q1", "q2", "q3", "q4"]
+    assert [item["subproblem_id"] for item in problem_contract["subproblems"]] == ["q1", "q2", "q3", "q4"]
+    assert routing_after_plan["rejected_routes"] == [BENCHMARK_2024_B_ID]
+    assert routing_after_plan == routing_after_experiment
+    assert routing_after_experiment["workflow_type"] == GENERIC_CUMCM_WORKFLOW
+    assert routing_after_experiment["reason"] == (
+        "problem text is treated as production input; benchmark routes require explicit options"
+    )
+    assert experiment["experiment_result"]["execution_status"] == "success"
+    assert (run_dir / "results" / "q1_result.csv").exists()
+    assert (run_dir / "results" / "q2_result.csv").exists()
+    assert "抽样检测方案" in problem_contract["subproblems"][0]["question_text"]
+    assert "检测和拆解决策" in problem_contract["subproblems"][1]["question_text"]

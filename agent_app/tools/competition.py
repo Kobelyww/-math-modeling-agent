@@ -49,6 +49,7 @@ from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision_solve
 from agent_app.workflow_packs.cumcm.problem_builder import build_cumcm_problem_contract
 from agent_app.workflow_packs.cumcm.routing import (
     BENCHMARK_2024_B_ID,
+    GENERIC_CUMCM_WORKFLOW,
     select_cumcm_route,
 )
 
@@ -1182,6 +1183,7 @@ if __name__ == "__main__":
         for subproblem in bundle.problem_contract.subproblems:
             model = model_by_id[subproblem.subproblem_id]
             experiment = experiment_by_id[subproblem.subproblem_id]
+            strategy = bundle.solver_strategies.get(subproblem.subproblem_id)
             plans.append(
                 {
                     "id": subproblem.subproblem_id,
@@ -1191,6 +1193,7 @@ if __name__ == "__main__":
                     "dependencies": subproblem.dependencies,
                     "model": model.algorithm,
                     "algorithm": model.algorithm,
+                    "solver_mode": strategy.mode.value if strategy else "generated_solver",
                     "result_file": model.result_files[0] if model.result_files else f"results/{subproblem.subproblem_id}_result.csv",
                     "experiment_contract": to_json_dict(experiment),
                 }
@@ -1235,6 +1238,7 @@ from pathlib import Path
 
 
 SUBPROBLEMS = {encoded}
+WORKFLOW_TYPE = "generic_cumcm_contract_workflow"
 
 
 def score_for_subproblem(item: dict) -> float:
@@ -1261,9 +1265,11 @@ def main() -> None:
     for item in SUBPROBLEMS:
         row = {{
             "subproblem_id": item["id"],
+            "workflow_type": WORKFLOW_TYPE,
             "problem_type": item.get("problem_type", "analysis"),
             "model": item.get("model", "baseline"),
             "algorithm": item.get("algorithm", "baseline"),
+            "solver_mode": item.get("solver_mode", "generated_solver"),
             "dependencies": ";".join(item.get("dependencies", [])),
             "baseline_score": score_for_subproblem(item),
             "status": "solved_baseline",
@@ -1794,7 +1800,7 @@ if __name__ == "__main__":
         """Write a reproducible placeholder experiment script and results directory."""
         state = _load_state(run_id)
         artifact_service = _artifacts_for_state(state)
-        if _is_b_problem_context(state, modeling_plan=modeling_plan):
+        if _is_benchmark_route(state, state.spec.question) or modeling_plan.get("workflow_type") == "cumcm_b_problem_benchmark_workflow":
             run_dir = run_store.run_dir(run_id)
             bundle = _ensure_benchmark_b_contract_bundle(state, state.spec.question)
             solver_result = run_b_problem_solver(run_dir)
@@ -1849,7 +1855,8 @@ if __name__ == "__main__":
                 "figure_paths": [],
             }
 
-        if generation_service is not None:
+        is_generic_cumcm_contract = modeling_plan.get("workflow_type") == GENERIC_CUMCM_WORKFLOW
+        if generation_service is not None and not is_generic_cumcm_contract:
             messages = _programmer_messages(state, modeling_plan, data_files)
             code = _strip_fenced_code_block(generation_service.generate_markdown("programmer", messages))
             code_path, completed = _execute_generated_code(state, code)
@@ -1908,15 +1915,11 @@ if __name__ == "__main__":
             timeout=30,
             check=False,
         )
-        results_dir = run_dir / "results"
-        result_paths = [
-            str(path)
-            for path in sorted(results_dir.iterdir())
-            if path.is_file()
-        ] if results_dir.exists() else []
+        result_paths = _collect_result_paths(run_dir)
         experiment_result = {
             "success": completed.returncode == 0,
             "execution_status": "success" if completed.returncode == 0 else "failed",
+            "workflow_type": modeling_plan.get("workflow_type"),
             "script_generated": True,
             "code_path": str(code_path),
             "data_files": data_files,
@@ -1927,6 +1930,16 @@ if __name__ == "__main__":
             "notes": "Executed dynamic subproblem baseline workflow.",
             "reproducibility_notes": "Run solve.py from the run directory to regenerate results/subproblem_summary.csv and per-subproblem result files.",
         }
+        trace = _trace_for_state(state)
+        trace.append_event(
+            "run_experiment",
+            {
+                "workflow_type": modeling_plan.get("workflow_type"),
+                "result_paths": result_paths,
+                "execution_status": experiment_result["execution_status"],
+            },
+        )
+        trace.write_json("llm_outputs/run_experiment.json", experiment_result)
         return {
             "experiment_result": experiment_result,
             "code_path": str(code_path),
