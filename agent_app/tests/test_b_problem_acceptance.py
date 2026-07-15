@@ -127,6 +127,7 @@ def test_b_problem_full_chain_uses_structured_tables_and_sections(tmp_path):
     assert "0.35" not in (run_dir / "solve.py").read_text(encoding="utf-8")
     assert "DeepSeek generated B problem model" not in (run_dir / "modeling_report.md").read_text(encoding="utf-8")
     assert (run_dir / "claims" / "claim_map.json").exists()
+    assert (run_dir / "trace" / "gate_reports" / "claim_gate.json").exists()
     assert (run_dir / "sections" / "08_result_analysis.md").exists()
     claim_map = json.loads((run_dir / "claims" / "claim_map.json").read_text(encoding="utf-8"))
     assert len(claim_map) == 4

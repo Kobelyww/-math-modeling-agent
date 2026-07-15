@@ -18,9 +18,9 @@ from agent_app.domain.contracts import (
     SubproblemContract,
     SubproblemType,
 )
-from agent_app.domain.models import ArtifactRef, QualityReport, RunSpec, RunState, RunStatus
+from agent_app.domain.models import ArtifactRef, PaperDraft, QualityReport, RunSpec, RunState, RunStatus
 from agent_app.domain.serialization import to_json_dict
-from agent_app.evaluators import evaluate_claims, evaluate_submission
+from agent_app.evaluators import evaluate_claims, evaluate_paper, evaluate_submission
 from agent_app.services.artifact_service import ArtifactService
 from agent_app.services.claim_map import build_b_problem_claims, build_generic_claims
 from agent_app.services.contract_store import ContractStore
@@ -120,7 +120,29 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         run_store.save_state(state)
 
     def _blocking_quality_reports(state: RunState) -> list[QualityReport]:
-        return [report for report in state.quality_reports if not report.passed]
+        reports = [
+            report
+            for report in state.quality_reports
+            if not report.passed and report.gate_name != "submission"
+        ]
+        stale_dir = run_store.run_dir(state.run_id) / "stale"
+        if stale_dir.exists():
+            for marker in sorted(stale_dir.glob("*.json")):
+                try:
+                    stale_payload = json.loads(marker.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    stale_payload = {}
+                reason = str(stale_payload.get("reason") or "上游产物已过期")
+                reports.append(
+                    QualityReport(
+                        gate_name="stale_artifacts",
+                        passed=False,
+                        score=0.0,
+                        findings=[f"发现过期产物标记: stale/{marker.name}"],
+                        required_fixes=[f"存在过期产物标记 stale/{marker.name}: {reason}"],
+                    )
+                )
+        return reports
 
     def _planner_messages(
         state: RunState,
@@ -219,18 +241,17 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             if path.is_file()
         }
 
-    def _review_core_artifacts(run_id: str, artifacts: list[str]) -> dict[str, Any]:
+    def _review_core_artifacts(
+        run_id: str,
+        artifacts: list[str],
+        requires_b_problem_results: bool = False,
+    ) -> dict[str, Any]:
         required = {"modeling_report.md", "solve.py", "paper.tex"}
         required_results = set(_b_problem_result_files()) | {"results/model_equations.md"}
         names = {Path(artifact).name for artifact in artifacts}
         names.update(_run_artifact_names(run_id))
         missing = sorted(required - names)
         run_dir = run_store.run_dir(run_id)
-        model_report_path = run_dir / "modeling_report.md"
-        requires_b_problem_results = False
-        if model_report_path.exists():
-            model_report_text = model_report_path.read_text(encoding="utf-8")
-            requires_b_problem_results = "生产过程中的决策问题" in model_report_text or "二项抽样" in model_report_text
         missing_results = []
         if requires_b_problem_results:
             missing_results = [
@@ -249,7 +270,11 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             path = run_dir / name
             if not path.exists():
                 continue
-            text = path.read_text(encoding="utf-8")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                placeholder_findings.append(f"{name} 无法读取")
+                continue
             matched = [phrase for phrase in placeholder_phrases if phrase in text]
             if matched:
                 placeholder_findings.append(f"{name} 仍包含占位内容")
@@ -285,7 +310,42 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         path = run_dir / relative_path
         if not path.exists():
             return ""
-        return path.read_text(encoding="utf-8")
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return ""
+
+    def _paper_draft_from_markdown(run_dir: Path) -> PaperDraft:
+        markdown_path = run_dir / "paper.md"
+        latex_path = run_dir / "paper.tex"
+        sections: dict[str, str] = {}
+        section_aliases = {
+            "灵敏度分析": "灵敏度",
+            "灵敏度与稳健性分析": "灵敏度",
+        }
+        if markdown_path.exists():
+            current_heading: str | None = None
+            current_lines: list[str] = []
+            try:
+                markdown_lines = markdown_path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                markdown_lines = []
+            for line in markdown_lines:
+                if line.startswith("## "):
+                    if current_heading is not None:
+                        sections[current_heading] = "\n".join(current_lines).strip()
+                    heading = line[3:].strip()
+                    current_heading = section_aliases.get(heading, heading)
+                    current_lines = []
+                elif current_heading is not None:
+                    current_lines.append(line)
+            if current_heading is not None:
+                sections[current_heading] = "\n".join(current_lines).strip()
+        return PaperDraft(
+            markdown_path=markdown_path if markdown_path.exists() else None,
+            latex_path=latex_path if latex_path.exists() else None,
+            sections=sections,
+        )
 
     def _count_csv_rows(path: Path) -> int:
         if not path.exists():
@@ -839,6 +899,8 @@ if __name__ == "__main__":
         paper_md = _read_run_text(run_dir, "paper.md")
         paper_tex = _read_run_text(run_dir, "paper.tex")
         paper_text = paper_md or paper_tex
+        paper_gate_report = evaluate_paper(_paper_draft_from_markdown(run_dir))
+        _trace_for_state(state).write_gate_report("paper_gate", to_json_dict(paper_gate_report))
         findings: list[str] = []
         required_fixes: list[str] = []
 
@@ -877,6 +939,9 @@ if __name__ == "__main__":
                 required_fixes.append("在论文结果与附录中逐项引用并解释所有关键实验输出。")
             if "问题 4" not in paper_text and "问题4" not in paper_text:
                 required_fixes.append("补充问题 4 的不确定性重求解结论，不能只停留在前三问。")
+
+        findings.extend(paper_gate_report.findings)
+        required_fixes.extend(paper_gate_report.required_fixes)
 
         return _subagent_review(
             state,
@@ -2046,6 +2111,7 @@ if __name__ == "__main__":
             claim_report,
         )
         _trace_for_state(state).write_gate_report("claim_gate", to_json_dict(claim_report))
+        _record_quality_report(state, to_json_dict(claim_report))
         section_paths = write_claim_section_files(run_dir, claims)
         abstract_path = run_dir / "sections" / "01_abstract.md"
         if abstract_path.exists():
@@ -2146,6 +2212,8 @@ if __name__ == "__main__":
                 "claims/claim_gate_report.json",
                 claim_report,
             )
+            _trace_for_state(state).write_gate_report("claim_gate", to_json_dict(claim_report))
+            _record_quality_report(state, to_json_dict(claim_report))
             section_paths = write_claim_section_files(run_dir, claims)
             q2_path = run_dir / "results" / "q2_table1_decisions.csv"
             q2_preview = ""
@@ -2179,6 +2247,10 @@ if __name__ == "__main__":
                 "- d1,d2,df,r：是否检测零配件 1、零配件 2、成品以及是否拆解不合格品。\n"
                 "- p1,p2,pf：零配件与装配过程次品率。\n"
                 "- E[Pi]：单位成品期望利润。\n\n"
+                "## 问题分析\n"
+                "该题把抽样检验、生产检测、拆解返工和不确定性重求解耦合在一起。"
+                "因此论文必须先用问题 1 给出参数可信区间，再用问题 2 和问题 3 形成可复现决策表，"
+                "最后用问题 4 限定单点最优策略的适用边界。\n\n"
                 "## 模型建立与求解\n"
                 "问题 1 令 X 服从二项分布 Binomial(n,p)，在拒收和接收两类风险约束下搜索最小 n 与临界值 k，结果写入 results/q1_sampling_plan.csv。"
                 "问题 2 对四个二元变量枚举 16 种策略，计算合格收入、采购成本、检测成本、拆解成本和调换损失后的 expected_profit，结果写入 results/q2_table1_decisions.csv。"
@@ -2477,7 +2549,15 @@ if __name__ == "__main__":
         """Review generated artifacts with model, experiment, and paper sub-reviews."""
         state = _load_state(run_id)
         run_dir = run_store.run_dir(run_id)
-        core_report = _review_core_artifacts(run_id, artifacts)
+        requires_benchmark_results = (
+            state.spec.options.workflow_mode == "benchmark"
+            and state.spec.options.benchmark_id == BENCHMARK_2024_B_ID
+        )
+        core_report = _review_core_artifacts(
+            run_id,
+            artifacts,
+            requires_b_problem_results=requires_benchmark_results,
+        )
         subreviews = [
             _review_model_artifacts(state, run_dir),
             _review_experiment_artifacts(state, run_dir),
@@ -2522,7 +2602,20 @@ if __name__ == "__main__":
             for path in sorted(run_dir.iterdir())
             if path.is_file()
         ]
-        state.quality_reports.append(evaluate_submission(state.artifacts, artifact_root=run_dir))
+        require_benchmark_results = (
+            state.spec.options.workflow_mode == "benchmark"
+            and state.spec.options.benchmark_id == BENCHMARK_2024_B_ID
+        )
+        submission_report = evaluate_submission(
+            state.artifacts,
+            artifact_root=run_dir,
+            require_benchmark_results=require_benchmark_results,
+        )
+        _record_quality_report(state, to_json_dict(submission_report))
+        if not submission_report.passed:
+            fixes = [fix for fix in submission_report.required_fixes if fix]
+            detail = "；".join(fixes[:6]) if fixes else "请补齐提交包所需交付物。"
+            raise RuntimeError(f"提交门禁未通过，不能打包提交：{detail}")
         run_store.save_state(state)
         run_json_path = run_dir / "run.json"
         package_manifest = {

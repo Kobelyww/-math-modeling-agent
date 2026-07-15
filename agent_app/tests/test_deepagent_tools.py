@@ -212,6 +212,33 @@ def test_review_submission_uses_run_directory_artifacts_when_model_argument_is_e
         "    print(expected_profit())\n",
         encoding="utf-8",
     )
+    (run_dir / "paper.md").write_text(
+        "## 摘要\n"
+        "本文围绕评价任务建立综合评分模型，给出指标归一化、权重汇总和结果解释。\n\n"
+        "## 关键词\n"
+        "综合评价；水质模型；敏感性\n\n"
+        "## 问题重述\n"
+        "题目要求基于观测指标形成可复现评价流程，并说明模型输出如何支持决策。\n\n"
+        "## 模型假设\n"
+        "假设输入指标已经完成单位校验，同一指标在样本间具有可比较的统计含义。\n\n"
+        "## 符号说明\n"
+        "设 x 表示标准化指标矩阵，w 表示权重向量，s 表示综合评分结果。\n\n"
+        "## 问题分析\n"
+        "评价问题的核心是把多指标观测转化为稳定排序，并识别影响排序的关键变量。\n\n"
+        "## 模型建立与求解\n"
+        "先对指标做区间归一化，再通过加权求和得到评分，并输出每个样本的排序。\n\n"
+        "## 结果分析\n"
+        "模型结果显示评分可以区分样本差异，主要贡献来自权重较高且波动较大的指标。\n\n"
+        "## 灵敏度\n"
+        "对主要权重进行小幅扰动后重新计算排序，检查核心结论是否保持稳定。\n\n"
+        "## 模型评价\n"
+        "该模型结构清晰、便于复现，但需要在数据量增加后进一步校验权重鲁棒性。\n\n"
+        "## 参考文献\n"
+        "[1] 全国大学生数学建模竞赛论文写作规范与综合评价方法参考资料。\n\n"
+        "## 附录\n"
+        "附录包含求解代码入口、参数说明和主要中间结果，便于复核完整流程。\n",
+        encoding="utf-8",
+    )
     (run_dir / "paper.tex").write_text(
         "\\documentclass{article}\n"
         "\\begin{document}\n"
@@ -525,8 +552,28 @@ def test_package_submission_tool_writes_summary(tmp_path):
     store = RunStore(output_root=tmp_path)
     state = store.create_run(RunSpec(question="建立模型"))
     run_dir = store.run_dir(state.run_id)
-    for filename in ["modeling_report.md", "solve.py", "paper.tex", "review_report.md"]:
-        (run_dir / filename).write_text("content", encoding="utf-8")
+    (run_dir / "modeling_report.md").write_text(
+        "# Modeling Report\n\n"
+        + "本报告包含变量、目标函数、约束、实验流程、结果解释和论文结论映射。\n" * 80,
+        encoding="utf-8",
+    )
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\n"
+        "\\begin{document}\n"
+        "\\section{摘要} 本文给出可复现建模流程。\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (run_dir / "review_report.md").write_text("# Review\n", encoding="utf-8")
     tool_by_name = {tool.name: tool for tool in make_competition_tools(run_store=store)}
 
     result = tool_by_name["package_submission"].invoke({"run_id": state.run_id})

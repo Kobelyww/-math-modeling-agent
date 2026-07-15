@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agent_app.domain.models import (
     ArtifactRef,
     ExperimentResult,
@@ -15,6 +17,24 @@ from agent_app.evaluators import (
     evaluate_paper,
     evaluate_submission,
 )
+from agent_app.evaluators.paper_gate import BANNED_INTERNAL_MARKERS
+
+
+def _complete_paper_sections() -> dict[str, str]:
+    return {
+        "摘要": "本文围绕赛题目标建立可复现实验流程，并给出主要结论。",
+        "关键词": "数学建模；优化决策；证据追踪",
+        "问题重述": "本节重述赛题要求、输入数据、约束条件与需要提交的结果。",
+        "模型假设": "样本相互独立，参数均来自题面、数据文件或显式实验估计。",
+        "符号说明": "x 表示核心决策变量，c 表示成本参数，y 表示输出指标。",
+        "问题分析": "本节分析约束与目标之间的关系，并说明各子问题依赖顺序。",
+        "模型建立与求解": "建立规划模型并给出求解算法、变量定义、约束和结果文件。",
+        "结果分析": "结果显示主要指标稳定，并能追踪到对应实验表格和 claim。",
+        "灵敏度": "扰动关键参数后比较目标值变化，用于限定结论的适用范围。",
+        "模型评价": "模型具有可解释性和可复现性，但对数据质量仍存在依赖。",
+        "参考文献": "列出质量控制、运筹优化和统计推断相关参考资料。",
+        "附录": "附录包含代码入口、实验数据、结果文件和审查报告路径。",
+    }
 
 
 def test_input_gate_requires_question_and_manifest(tmp_path):
@@ -47,12 +67,63 @@ def test_modeling_gate_accepts_complete_plan():
         algorithm_plan="最小二乘求解",
         evaluation_metrics=["RMSE"],
         sensitivity_plan="扰动容量参数 5% 比较结果",
+        experiment_conclusion_links=[
+            "基线对比 -> 对应论文结论：回归模型可解释地预测交通流；关系：支撑",
+            "灵敏度分析 -> 对应论文结论：结论在容量参数扰动下保持稳定；关系：限制",
+        ],
     )
 
     report = evaluate_modeling(plan)
 
     assert report.passed is True
     assert report.score == 1.0
+
+
+def test_modeling_gate_requires_experiment_conclusion_links():
+    plan = ModelingPlan(
+        subproblem_plans=["问题一：建立回归预测模型"],
+        variables={"x": "输入特征"},
+        parameters={"beta": "回归系数"},
+        assumptions=["样本独立"],
+        objective_functions=["最小化均方误差"],
+        constraints=["道路容量非负"],
+        candidate_models=["线性回归", "随机森林"],
+        selected_model="线性回归",
+        algorithm_plan="最小二乘求解",
+        evaluation_metrics=["RMSE"],
+        sensitivity_plan="扰动容量参数 5% 比较结果",
+    )
+
+    report = evaluate_modeling(plan)
+
+    assert report.passed is False
+    assert any("实验方案与论文结论关系" in item for item in report.required_fixes)
+
+
+def test_modeling_gate_rejects_experiment_links_without_per_experiment_relationships():
+    plan = ModelingPlan(
+        subproblem_plans=["问题一：建立回归预测模型"],
+        variables={"x": "输入特征"},
+        parameters={"beta": "回归系数"},
+        assumptions=["样本独立"],
+        objective_functions=["最小化均方误差"],
+        constraints=["道路容量非负"],
+        candidate_models=["线性回归", "随机森林"],
+        selected_model="线性回归",
+        algorithm_plan="最小二乘求解",
+        evaluation_metrics=["RMSE"],
+        sensitivity_plan="扰动容量参数 5% 比较结果",
+        experiment_conclusion_links=[
+            "基线对比",
+            "灵敏度分析",
+            "论文结论：回归模型可解释地预测交通流；关系：支撑",
+        ],
+    )
+
+    report = evaluate_modeling(plan)
+
+    assert report.passed is False
+    assert any("实验方案与论文结论关系" in item for item in report.required_fixes)
 
 
 def test_experiment_gate_rejects_missing_code_and_sensitivity():
@@ -114,6 +185,55 @@ def test_paper_gate_rejects_missing_sections_and_placeholder_text(tmp_path):
     assert any("占" + "位" in item for item in report.required_fixes)
 
 
+def test_paper_gate_rejects_internal_context_and_thin_sections(tmp_path):
+    paper = PaperDraft(
+        markdown_path=tmp_path / "paper.md",
+        latex_path=tmp_path / "paper.tex",
+        sections={
+            "摘要": "本文建立可复现的建模流程，并用结果文件支撑主要结论。",
+            "关键词": "建模；优化；证据追踪",
+            "问题重述": "Claim-Aware Section Context: internal planner notes must not leak.",
+            "模型假设": "样本独立。",
+            "符号说明": "x 表示决策变量。",
+            "问题分析": "分析。",
+            "模型建立与求解": "建立模型。",
+            "结果分析": "结果稳定。",
+            "灵敏度": "扰动参数。",
+            "模型评价": "可解释。",
+            "参考文献": "列出参考资料。",
+            "附录": "代码见附录。",
+        },
+    )
+
+    report = evaluate_paper(paper)
+
+    assert report.passed is False
+    assert any("内部上下文" in item or "internal" in item for item in report.required_fixes)
+    assert any("章节内容过短" in item for item in report.required_fixes)
+
+
+@pytest.mark.parametrize("marker", BANNED_INTERNAL_MARKERS)
+def test_paper_gate_rejects_banned_markers_in_latex(tmp_path, marker):
+    latex_path = tmp_path / "paper.tex"
+    latex_path.write_text(
+        "\\documentclass{ctexart}\n"
+        "\\begin{document}\n"
+        f"{marker}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    paper = PaperDraft(
+        markdown_path=tmp_path / "paper.md",
+        latex_path=latex_path,
+        sections=_complete_paper_sections(),
+    )
+
+    report = evaluate_paper(paper)
+
+    assert report.passed is False
+    assert any("内部上下文" in item or "占" + "位" in item for item in report.required_fixes)
+
+
 def test_paper_gate_requires_section_key_even_if_body_mentions_section(tmp_path):
     paper = PaperDraft(
         markdown_path=tmp_path / "paper.md",
@@ -165,29 +285,34 @@ def test_paper_gate_allows_normal_words_containing_lue(tmp_path):
 
 
 def test_paper_gate_accepts_complete_paper(tmp_path):
+    latex_path = tmp_path / "paper.tex"
+    latex_path.write_text(
+        "\\documentclass{ctexart}\n\\begin{document}\n\\section{摘要} 完整论文。\n\\end{document}\n",
+        encoding="utf-8",
+    )
     paper = PaperDraft(
         markdown_path=tmp_path / "paper.md",
-        latex_path=tmp_path / "paper.tex",
-        sections={
-            "摘要": "本文分析问题",
-            "关键词": "建模",
-            "问题重述": "重述赛题要求",
-            "模型假设": "样本独立",
-            "符号说明": "x 表示需求量",
-            "问题分析": "分析约束与目标",
-            "模型建立与求解": "建立规划模型并求解",
-            "结果分析": "结果稳定",
-            "灵敏度": "扰动参数后结果稳定",
-            "模型评价": "模型可解释",
-            "参考文献": "列出参考资料",
-            "附录": "代码见附录",
-        },
+        latex_path=latex_path,
+        sections=_complete_paper_sections(),
     )
 
     report = evaluate_paper(paper)
 
     assert report.passed is True
     assert report.score == 1.0
+
+
+def test_paper_gate_rejects_missing_latex_file(tmp_path):
+    paper = PaperDraft(
+        markdown_path=tmp_path / "paper.md",
+        latex_path=tmp_path / "paper.tex",
+        sections=_complete_paper_sections(),
+    )
+
+    report = evaluate_paper(paper)
+
+    assert report.passed is False
+    assert "缺少 paper.tex" in report.required_fixes
 
 
 def test_submission_gate_requires_core_artifacts():
@@ -216,3 +341,133 @@ def test_submission_gate_accepts_core_artifacts():
 
     assert report.passed is True
     assert report.score == 1.0
+
+
+def test_submission_gate_rejects_placeholder_artifact_content(tmp_path):
+    files = {
+        "modeling_report.md": "# Modeling Plan\nDeepAgent generated model\n",
+        "solve.py": "print('DeepAgent competition experiment placeholder')\n",
+        "paper.tex": (
+            "\\documentclass{article}\n"
+            "\\begin{document}\n"
+            "This draft summarizes the local modeling workflow.\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert any("占位" in item for item in report.required_fixes)
+
+
+def test_submission_gate_does_not_infer_benchmark_from_model_text(tmp_path):
+    files = {
+        "modeling_report.md": "# Modeling Report\n\n" + "通用抽样问题使用二项抽样估计参数，但不是 2024 B benchmark。\n" * 80,
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    main()\n"
+        ),
+        "paper.tex": "\\documentclass{ctexart}\n\\begin{document}\n\\section{摘要} 通用问题。\n\\end{document}\n",
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is True
+
+
+def test_submission_gate_requires_benchmark_results_when_explicit(tmp_path):
+    files = {
+        "modeling_report.md": "# Modeling Report\n\n" + "显式 benchmark 需要固定结果文件。\n" * 80,
+        "solve.py": (
+            "def expected_profit():\n"
+            "    return 1.0\n"
+            "\n"
+            "def main():\n"
+            "    print(expected_profit())\n"
+        ),
+        "paper.tex": "\\documentclass{ctexart}\n\\begin{document}\n\\section{摘要} Benchmark。\n\\end{document}\n",
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(
+        artifacts,
+        artifact_root=tmp_path,
+        require_benchmark_results=True,
+    )
+
+    assert report.passed is False
+    assert any("B 题子问题求解结果" in item for item in report.required_fixes)
+
+
+def test_submission_gate_accepts_explicit_benchmark_canonical_results(tmp_path):
+    files = {
+        "modeling_report.md": "# Modeling Report\n\n" + "显式 benchmark 已生成 canonical 结果文件。\n" * 80,
+        "solve.py": (
+            "def expected_profit():\n"
+            "    return 1.0\n"
+            "\n"
+            "def main():\n"
+            "    print(expected_profit())\n"
+        ),
+        "paper.tex": "\\documentclass{ctexart}\n\\begin{document}\n\\section{摘要} Benchmark。\n\\end{document}\n",
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    result_files = {
+        "results/q1_sampling_plan.csv": "case,n,k\nq1,100,10\n",
+        "results/q2_table1_decisions.csv": "case,expected_profit\n1,1.0\n",
+        "results/q3_table2_tree_decisions.csv": "node,decision\nroot,inspect\n",
+        "results/q4_uncertainty_re_solve.csv": "case,decision\nbase,stable\n",
+        "results/parameter_audit.json": "{}\n",
+        "results/model_equations.md": "# Equations\n",
+    }
+    for relative_path, content in result_files.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(
+        artifacts,
+        artifact_root=tmp_path,
+        require_benchmark_results=True,
+    )
+
+    assert report.passed is True

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from agent_app.domain.models import RunOptions, RunSpec
 from agent_app.services.run_store import RunStore
 from agent_app.tools.competition import make_competition_tools
@@ -278,6 +280,293 @@ def test_generic_run_experiment_ignores_injected_generation_service(tmp_path):
         q1_rows[0]["solver_mode"]
         == plan["modeling_plan"]["subproblem_plans"][0]["solver_mode"]
     )
+
+
+def test_package_blocks_when_claim_gate_failed(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    tools = _tools_for(store)
+
+    tools["draft_competition_paper"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": {
+                "workflow_type": GENERIC_CUMCM_WORKFLOW,
+                "subproblems": [{"id": "q1", "title": "水质评价"}],
+            },
+            "data_audit": {},
+            "modeling_plan": {
+                "workflow_type": GENERIC_CUMCM_WORKFLOW,
+                "subproblem_plans": [
+                    {
+                        "id": "q1",
+                        "title": "水质评价",
+                        "result_file": "results/q1_result.csv",
+                    }
+                ],
+            },
+            "experiment_result": {},
+            "evidence_notes": [],
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="claim_q1_result"):
+        tools["package_submission"].invoke({"run_id": state.run_id})
+
+    saved_state = store.load_state(state.run_id)
+    claim_reports = [
+        report
+        for report in saved_state.quality_reports
+        if report.gate_name == "claim"
+    ]
+    assert len(claim_reports) == 1
+    assert claim_reports[0].passed is False
+
+
+def test_package_blocks_when_submission_gate_failed(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text("内容过短\n", encoding="utf-8")
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\n"
+        "\\begin{document}\n"
+        "\\section{摘要} 水质评价模型摘要。\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (run_dir / "review_report.md").write_text("# Review\n", encoding="utf-8")
+    tools = _tools_for(store)
+
+    with pytest.raises(RuntimeError, match="modeling_report.md 内容过短"):
+        tools["package_submission"].invoke({"run_id": state.run_id})
+
+
+def test_package_submission_can_recover_after_submission_gate_fix(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text("内容过短\n", encoding="utf-8")
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\n"
+        "\\begin{document}\n"
+        "\\section{摘要} 水质评价模型摘要。\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (run_dir / "review_report.md").write_text("# Review\n", encoding="utf-8")
+    tools = _tools_for(store)
+
+    with pytest.raises(RuntimeError, match="modeling_report.md 内容过短"):
+        tools["package_submission"].invoke({"run_id": state.run_id})
+
+    (run_dir / "modeling_report.md").write_text(
+        "# Modeling Report\n\n"
+        + "本报告包含变量、目标函数、约束、实验流程、结果解释和论文结论映射。\n" * 80,
+        encoding="utf-8",
+    )
+
+    result = tools["package_submission"].invoke({"run_id": state.run_id})
+
+    assert result["final_synthesis_path"].endswith("final_synthesis.md")
+    submission_reports = [
+        report
+        for report in store.load_state(state.run_id).quality_reports
+        if report.gate_name == "submission"
+    ]
+    assert len(submission_reports) == 1
+    assert submission_reports[0].passed is True
+
+
+def test_package_blocks_when_stale_marker_exists(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    stale_dir = run_dir / "stale"
+    stale_dir.mkdir()
+    (stale_dir / "sections.json").write_text(
+        json.dumps({"reason": "claims changed"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    tools = _tools_for(store)
+
+    with pytest.raises(RuntimeError, match="stale/sections.json"):
+        tools["package_submission"].invoke({"run_id": state.run_id})
+
+
+def test_review_submission_writes_paper_gate_report_when_markdown_is_missing(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text(
+        "模型报告说明水质评价问题、指标归一化、综合评分公式和结果解释。"
+        * 12,
+        encoding="utf-8",
+    )
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\section{摘要} 水质评价模型摘要。\n",
+        encoding="utf-8",
+    )
+    tools = _tools_for(store)
+
+    tools["review_submission"].invoke(
+        {
+            "run_id": state.run_id,
+            "paper_draft": {},
+            "experiment_result": {},
+            "artifacts": ["modeling_report.md", "solve.py", "paper.tex"],
+        }
+    )
+
+    paper_gate_path = run_dir / "trace" / "gate_reports" / "paper_gate.json"
+    paper_review = (run_dir / "reviews" / "paper_review.md").read_text(encoding="utf-8")
+
+    assert paper_gate_path.exists()
+    assert "缺少论文章节" in paper_gate_path.read_text(encoding="utf-8")
+    assert "缺少论文章节" in paper_review
+
+
+def test_review_submission_records_paper_gate_when_latex_is_not_file(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text(
+        "模型报告说明水质评价问题、指标归一化、综合评分公式和结果解释。"
+        * 12,
+        encoding="utf-8",
+    )
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").mkdir()
+    tools = _tools_for(store)
+
+    result = tools["review_submission"].invoke(
+        {
+            "run_id": state.run_id,
+            "paper_draft": {},
+            "experiment_result": {},
+            "artifacts": ["modeling_report.md", "solve.py", "paper.tex"],
+        }
+    )
+
+    paper_gate_path = run_dir / "trace" / "gate_reports" / "paper_gate.json"
+    paper_review = (run_dir / "reviews" / "paper_review.md").read_text(encoding="utf-8")
+
+    assert result["quality_report"]["passed"] is False
+    assert paper_gate_path.exists()
+    assert "缺少 paper.tex" in paper_gate_path.read_text(encoding="utf-8")
+    assert "缺少 paper.tex" in paper_review
+
+
+def test_review_submission_records_paper_gate_when_latex_has_invalid_encoding(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text(
+        "模型报告说明水质评价问题、指标归一化、综合评分公式和结果解释。"
+        * 12,
+        encoding="utf-8",
+    )
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_bytes(b"\xff\xfe\xff")
+    tools = _tools_for(store)
+
+    result = tools["review_submission"].invoke(
+        {
+            "run_id": state.run_id,
+            "paper_draft": {},
+            "experiment_result": {},
+            "artifacts": ["modeling_report.md", "solve.py", "paper.tex"],
+        }
+    )
+
+    paper_gate_path = run_dir / "trace" / "gate_reports" / "paper_gate.json"
+
+    assert result["quality_report"]["passed"] is False
+    assert paper_gate_path.exists()
+    assert "缺少 paper.tex" in paper_gate_path.read_text(encoding="utf-8")
+
+
+def test_review_submission_does_not_infer_benchmark_from_model_text(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 通用抽样评价。问题1：建立抽样评价模型。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text(
+        "# Modeling Report\n\n"
+        + "本通用问题使用二项抽样估计指标置信区间，但不属于 2024 B benchmark。\n" * 80,
+        encoding="utf-8",
+    )
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\n"
+        "\\begin{document}\n"
+        "\\section{摘要} 通用抽样评价模型。\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    tools = _tools_for(store)
+
+    result = tools["review_submission"].invoke(
+        {
+            "run_id": state.run_id,
+            "paper_draft": {},
+            "experiment_result": {},
+            "artifacts": ["modeling_report.md", "solve.py", "paper.tex"],
+        }
+    )
+
+    required_fixes = result["quality_report"]["required_fixes"]
+    assert not any("B 题子问题求解结果" in fix for fix in required_fixes)
 
 
 def test_plan_model_uses_analyzed_problem_text_when_run_spec_question_is_placeholder(tmp_path):
