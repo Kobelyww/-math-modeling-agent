@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_app.domain.models import RunSpec
+from agent_app.domain.models import RunOptions, RunSpec
 from agent_app.services.artifact_service import ArtifactService
 from agent_app.services.run_store import RunStore
 from agent_app.tools.competition import make_competition_tools
@@ -102,12 +102,14 @@ def test_competition_tools_return_required_structured_shapes(tmp_path):
             "evidence_notes": evidence["evidence_notes"],
         }
     )
-    assert plan["modeling_plan"]["selected_model"] == "动态子问题 baseline 建模工作流"
-    assert plan["modeling_plan"]["workflow_type"] == "dynamic_subproblem_workflow"
+    assert plan["modeling_plan"]["selected_model"] == "CUMCM dynamic contract workflow"
+    assert plan["modeling_plan"]["workflow_type"] == "generic_cumcm_contract_workflow"
     assert plan["modeling_plan"]["subproblem_plans"][0]["id"] == "q1"
     assert plan["modeling_plan"]["experiment_conclusion_links"]
     assert "论文结论" in plan["modeling_plan"]["experiment_conclusion_links"][0]
     assert "关系" in plan["modeling_plan"]["experiment_conclusion_links"][0]
+    assert plan["model_plan_path"].endswith("model_plan.json")
+    assert plan["solver_strategy_path"].endswith("contracts/solver_strategies.json")
     assert plan["modeling_report_path"].endswith("modeling_report.md")
     modeling_report = Path(plan["modeling_report_path"]).read_text(encoding="utf-8")
     assert "Experiment-to-Conclusion Mapping" in modeling_report
@@ -241,14 +243,23 @@ def test_b_problem_tools_generate_executable_model_code_and_paper(tmp_path):
         "并结合表 1 与表 2 的次品率、检测成本、拆解费用和调换损失完成建模。"
     )
     store = RunStore(output_root=tmp_path)
-    state = store.create_run(RunSpec(question=question))
+    state = store.create_run(
+        RunSpec(
+            question=question,
+            options=RunOptions(
+                workflow_mode="benchmark",
+                benchmark_id="cumcm_2024_b_production_decision",
+            ),
+        )
+    )
     tool_by_name = {tool.name: tool for tool in make_competition_tools(run_store=store)}
 
     problem = tool_by_name["analyze_problem"].invoke(
         {"run_id": state.run_id, "question": question}
     )
     subproblems = problem["problem_brief"]["subproblems"]
-    assert [item["id"] for item in subproblems] == ["q1", "q2", "q3", "q4"]
+    assert problem["problem_brief"]["workflow_type"] == "cumcm_b_problem_benchmark_workflow"
+    assert [item["id"] for item in subproblems] == ["q1"]
     assert all(item["result_file"] for item in subproblems)
 
     plan = tool_by_name["plan_model"].invoke(
@@ -291,7 +302,8 @@ def test_b_problem_tools_generate_executable_model_code_and_paper(tmp_path):
     }
 
     assert plan["modeling_plan"]["selected_model"] == "二项抽样 + 0-1检测拆解决策优化"
-    assert plan["modeling_plan"]["workflow_type"] == "cumcm_b_problem_contract_workflow"
+    assert plan["modeling_plan"]["workflow_type"] == "cumcm_b_problem_benchmark_workflow"
+    assert plan["modeling_plan"]["benchmark_id"] == "cumcm_2024_b_production_decision"
     assert {item["id"] for item in plan["modeling_plan"]["subproblem_plans"]} == {"q1", "q2", "q3", "q4"}
     assert (run_dir / "contracts" / "problem_contract.json").exists()
     for subproblem_id in ["q1", "q2", "q3", "q4"]:
@@ -355,7 +367,15 @@ def test_review_submission_runs_three_subagent_reviews_for_b_problem_contract_wo
         "并结合表 1 与表 2 的次品率、检测成本、拆解费用和调换损失完成建模。"
     )
     store = RunStore(output_root=tmp_path)
-    state = store.create_run(RunSpec(question=question))
+    state = store.create_run(
+        RunSpec(
+            question=question,
+            options=RunOptions(
+                workflow_mode="benchmark",
+                benchmark_id="cumcm_2024_b_production_decision",
+            ),
+        )
+    )
     tool_by_name = {tool.name: tool for tool in make_competition_tools(run_store=store)}
 
     problem = tool_by_name["analyze_problem"].invoke(
@@ -440,7 +460,7 @@ def test_generic_problem_dynamically_identifies_all_subproblems_and_runs_baselin
     assert [item["problem_type"] for item in subproblems] == [
         "prediction",
         "optimization",
-        "sensitivity",
+        "analysis",
     ]
     assert subproblems[2]["dependencies"] == ["q1", "q2"]
 

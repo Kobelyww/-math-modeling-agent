@@ -34,15 +34,23 @@ from agent_app.services.paper_sections import (
     section_path,
 )
 from agent_app.services.problem_package import build_problem_package
+from agent_app.services.run_trace import RunTraceWriter
 from agent_app.services.run_store import RunStore
 from agent_app.services.section_writer import write_section_files as write_claim_section_files
+from agent_app.workflow_packs.cumcm.contracts import (
+    CumcmContractBundle,
+    build_generic_cumcm_contract_bundle,
+)
 from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision import (
     build_b_problem_experiment_contracts,
     build_b_problem_model_contracts,
-    is_b_problem,
 )
 from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision_solver import run_b_problem_solver
 from agent_app.workflow_packs.cumcm.problem_builder import build_cumcm_problem_contract
+from agent_app.workflow_packs.cumcm.routing import (
+    BENCHMARK_2024_B_ID,
+    select_cumcm_route,
+)
 
 
 def make_competition_tools(run_store: RunStore, **services: Any) -> list:
@@ -75,6 +83,18 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         if not path.exists():
             return {}
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _trace_for_state(state: RunState) -> RunTraceWriter:
+        return RunTraceWriter(run_store.run_dir(state.run_id))
+
+    def _route_for_state(state: RunState, problem_text: str) -> dict[str, Any]:
+        route = select_cumcm_route(problem_text, state.spec.options)
+        route_payload = to_json_dict(route)
+        _trace_for_state(state).write_json("routing_decision.json", route_payload)
+        return route_payload
+
+    def _is_benchmark_route(state: RunState, problem_text: str) -> bool:
+        return select_cumcm_route(problem_text, state.spec.options).is_benchmark
 
     def _quality_report_from_dict(report: dict[str, Any]) -> QualityReport:
         return QualityReport(
@@ -283,10 +303,10 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         text: str = "",
         modeling_plan: dict[str, Any] | None = None,
     ) -> bool:
-        if modeling_plan and modeling_plan.get("workflow_type") == "cumcm_b_problem_contract_workflow":
+        if modeling_plan and modeling_plan.get("workflow_type") == "cumcm_b_problem_benchmark_workflow":
             return True
         combined = " ".join([state.spec.question, text])
-        return is_b_problem(combined) or _is_production_decision_problem(combined)
+        return _is_benchmark_route(state, combined)
 
     def _b_problem_result_files() -> list[str]:
         return [
@@ -372,7 +392,7 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
         path.write_text(json.dumps(to_json_dict(payload), ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 
-    def _ensure_b_problem_contract_bundle(
+    def _ensure_benchmark_b_contract_bundle(
         state: RunState,
         problem_text: str,
     ) -> dict[str, Any]:
@@ -413,8 +433,58 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             "experiment_paths": experiment_paths,
         }
 
+    def _write_generic_contract_bundle(
+        state: RunState,
+        problem_text: str,
+        data_files: list[str] | None = None,
+    ) -> dict[str, Any]:
+        run_dir = run_store.run_dir(state.run_id)
+        store = ContractStore(run_dir)
+        data_paths = [Path(path) for path in (data_files or [])] or list(state.spec.data_files)
+        bundle = build_generic_cumcm_contract_bundle(
+            problem_text=problem_text or state.spec.question,
+            source_text_path=Path("question.md"),
+            tables=(_read_json_artifact(state, "tables.json").get("tables") or []),
+            figures=(_read_json_artifact(state, "figures.json").get("figures") or []),
+            data_files=data_paths,
+        )
+        problem_contract_path = store.write_problem_contract(bundle.problem_contract)
+        model_paths = {
+            contract.subproblem_id: _write_contract_json(
+                run_dir,
+                f"contracts/models/{contract.subproblem_id}.json",
+                contract,
+            )
+            for contract in bundle.model_contracts
+        }
+        experiment_paths = {
+            contract.subproblem_id: _write_contract_json(
+                run_dir,
+                f"contracts/experiments/{contract.subproblem_id}.json",
+                contract,
+            )
+            for contract in bundle.experiment_contracts
+        }
+        solver_strategy_path = _write_contract_json(
+            run_dir,
+            "contracts/solver_strategies.json",
+            bundle.solver_strategies,
+        )
+        return {
+            "bundle": bundle,
+            "problem_contract": bundle.problem_contract,
+            "model_contracts": bundle.model_contracts,
+            "experiment_contracts": bundle.experiment_contracts,
+            "solver_strategies": bundle.solver_strategies,
+            "problem_contract_path": problem_contract_path,
+            "model_paths": model_paths,
+            "experiment_paths": experiment_paths,
+            "solver_strategy_path": solver_strategy_path,
+        }
+
     def _b_problem_modeling_plan(
         bundle: dict[str, Any],
+        route: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         problem_contract: ProblemContract = bundle["problem_contract"]
         model_contracts: list[ModelContract] = bundle["model_contracts"]
@@ -443,7 +513,8 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             )
         return {
             "selected_model": "二项抽样 + 0-1检测拆解决策优化",
-            "workflow_type": "cumcm_b_problem_contract_workflow",
+            "workflow_type": (route or {}).get("workflow_type", "cumcm_b_problem_benchmark_workflow"),
+            "benchmark_id": (route or {}).get("selected_benchmark_id", BENCHMARK_2024_B_ID),
             "problem_contract_path": str(bundle["problem_contract_path"]),
             "model_contract_paths": {
                 key: str(path)
@@ -873,8 +944,59 @@ if __name__ == "__main__":
                 question = question.split(stop, 1)[0]
         return question.strip()
 
-    def _is_production_decision_problem(question: str) -> bool:
-        return all(token in question for token in ["生产过程中的决策问题", "零配件", "拆解"])
+    def _model_name_for_problem_type(problem_type: SubproblemType) -> str:
+        return {
+            SubproblemType.SAMPLING_TEST: "统计抽样检验模型",
+            SubproblemType.OPTIMIZATION: "约束优化 baseline 模型",
+            SubproblemType.MULTI_OBJECTIVE_DECISION: "多目标决策 baseline 模型",
+            SubproblemType.PREDICTION: "预测 baseline 模型",
+            SubproblemType.EVALUATION: "综合评价 baseline 模型",
+            SubproblemType.SIMULATION: "仿真 baseline 模型",
+            SubproblemType.GRAPH_NETWORK: "图网络分析 baseline 模型",
+            SubproblemType.STATISTICS: "统计推断 baseline 模型",
+            SubproblemType.OPERATIONS_RESEARCH: "运筹优化 baseline 模型",
+            SubproblemType.DIFFERENTIAL_OR_PHYSICAL_MODEL: "机理方程 baseline 模型",
+            SubproblemType.DATA_MINING: "数据挖掘 baseline 模型",
+            SubproblemType.ANALYSIS: "通用可复现 baseline 模型",
+        }.get(problem_type, "通用可复现 baseline 模型")
+
+    def _algorithm_for_problem_type(problem_type: SubproblemType) -> str:
+        return {
+            SubproblemType.SAMPLING_TEST: "构造样本量、置信度和判定阈值的可复现计算表。",
+            SubproblemType.OPTIMIZATION: "识别目标与约束，枚举或启发式搜索可行 baseline 策略。",
+            SubproblemType.MULTI_OBJECTIVE_DECISION: "构造候选方案、指标权衡和 Pareto/加权 baseline 排序。",
+            SubproblemType.PREDICTION: "生成描述统计与基准预测流程，保留评估指标接口。",
+            SubproblemType.EVALUATION: "构造指标归一化与加权评分 baseline。",
+            SubproblemType.SIMULATION: "生成场景参数表和重复仿真 baseline。",
+            SubproblemType.GRAPH_NETWORK: "抽取节点、边和路径指标，生成网络分析 baseline。",
+            SubproblemType.STATISTICS: "估计关键统计量并记录置信区间或显著性检验结果。",
+            SubproblemType.OPERATIONS_RESEARCH: "建立变量、约束和目标函数，调用可复现优化 baseline。",
+            SubproblemType.DIFFERENTIAL_OR_PHYSICAL_MODEL: "列出状态变量和机理关系，生成可审阅的数值 baseline。",
+            SubproblemType.DATA_MINING: "执行特征构造、聚类/分类 baseline 和结果解释。",
+            SubproblemType.ANALYSIS: "生成子问题摘要、输入依赖和可审阅 baseline 结果。",
+        }.get(problem_type, "生成子问题摘要、输入依赖和可审阅 baseline 结果。")
+
+    def _title_for_subproblem(subproblem: SubproblemContract) -> str:
+        text = " ".join(subproblem.question_text.split())
+        title = re.split(r"[。；;]", text, maxsplit=1)[0].strip()
+        return title[:64] or subproblem.subproblem_id
+
+    def _brief_item_from_subproblem(subproblem: SubproblemContract) -> dict[str, Any]:
+        result_file = (
+            subproblem.expected_outputs[0]
+            if subproblem.expected_outputs
+            else f"results/{subproblem.subproblem_id}_result.csv"
+        )
+        return {
+            "id": subproblem.subproblem_id,
+            "title": _title_for_subproblem(subproblem),
+            "objective": subproblem.question_text,
+            "problem_type": subproblem.primary_type.value,
+            "model": _model_name_for_problem_type(subproblem.primary_type),
+            "algorithm": _algorithm_for_problem_type(subproblem.primary_type),
+            "dependencies": subproblem.dependencies,
+            "result_file": result_file,
+        }
 
     def _problem_brief_text(problem_brief: dict[str, Any]) -> str:
         parts = [
@@ -1052,6 +1174,57 @@ if __name__ == "__main__":
             "## Experiment-to-Conclusion Mapping\n"
             f"{links}\n"
         )
+
+    def _subproblem_plans_from_generic_bundle(bundle: CumcmContractBundle) -> list[dict[str, Any]]:
+        model_by_id = {item.subproblem_id: item for item in bundle.model_contracts}
+        experiment_by_id = {item.subproblem_id: item for item in bundle.experiment_contracts}
+        plans: list[dict[str, Any]] = []
+        for subproblem in bundle.problem_contract.subproblems:
+            model = model_by_id[subproblem.subproblem_id]
+            experiment = experiment_by_id[subproblem.subproblem_id]
+            plans.append(
+                {
+                    "id": subproblem.subproblem_id,
+                    "title": _title_for_subproblem(subproblem),
+                    "objective": subproblem.question_text,
+                    "problem_type": subproblem.primary_type.value,
+                    "dependencies": subproblem.dependencies,
+                    "model": model.algorithm,
+                    "algorithm": model.algorithm,
+                    "result_file": model.result_files[0] if model.result_files else f"results/{subproblem.subproblem_id}_result.csv",
+                    "experiment_contract": to_json_dict(experiment),
+                }
+            )
+        return plans
+
+    def _generic_cumcm_modeling_plan(
+        bundle_info: dict[str, Any],
+        route: dict[str, Any],
+    ) -> dict[str, Any]:
+        bundle: CumcmContractBundle = bundle_info["bundle"]
+        subproblem_plans = _subproblem_plans_from_generic_bundle(bundle)
+        return {
+            "selected_model": "CUMCM dynamic contract workflow",
+            "workflow_type": route["workflow_type"],
+            "problem_contract_path": str(bundle_info["problem_contract_path"]),
+            "model_contract_paths": {
+                key: str(path)
+                for key, path in bundle_info["model_paths"].items()
+            },
+            "experiment_contract_paths": {
+                key: str(path)
+                for key, path in bundle_info["experiment_paths"].items()
+            },
+            "solver_strategy_path": str(bundle_info["solver_strategy_path"]),
+            "subproblem_plans": subproblem_plans,
+            "candidate_models": sorted({item["model"] for item in subproblem_plans}),
+            "algorithm_plan": "读取 CUMCM ProblemContract，为每个动态识别的子问题写入 ModelContract、ExperimentContract 和 solver strategy，再生成可复现 baseline 实验与论文结论映射。",
+            "evaluation_metrics": ["contract_coverage", "schema_matches_contract", "reproducibility", "claim_traceability"],
+            "experiment_conclusion_links": [
+                f"{item['id']} contract baseline -> 对应论文结论：{item['title']}；关系：支撑；结果文件：{item['result_file']}"
+                for item in subproblem_plans
+            ],
+        }
 
     def _generic_solve_code(subproblem_plans: list[dict[str, Any]]) -> str:
         encoded = json.dumps(subproblem_plans, ensure_ascii=False, indent=2)
@@ -1476,67 +1649,42 @@ if __name__ == "__main__":
         """Create a deterministic problem brief from the competition question."""
         state = _load_state(run_id)
         clean_question = _clean_question_text(question)
-        if _is_production_decision_problem(clean_question):
-            subproblems = _production_subproblems()
-            brief = {
-                "background": "生产过程中的决策问题：在零配件检测、成品检测、拆解返工和售后调换损失之间进行联合决策。",
-                "questions": [
-                    "问题 1：根据标称次品率设计抽样检测规则，在给定信度下决定接收或拒收零配件批次。",
-                    "问题 2：基于表 1 的 6 种情形，确定零配件检测、成品检测和不合格品拆解策略。",
-                    "问题 3：将两零配件结构推广到多零配件、半成品和成品的装配链，建立递归决策模型。",
-                    "问题 4：结合抽样检测结果修正次品率参数，分析决策对估计误差的稳健性。",
-                ],
-                "objectives": [
-                    "最大化单位成品期望利润",
-                    "最小化检测、拆解、返工和调换构成的期望总成本",
-                    "给出可复现代码和可审阅的论文结论映射",
-                ],
-                "constraints": [
-                    "检测、拆解和售后调换均需计入成本",
-                    "每个实验方案必须说明其与论文结论的关系",
-                    "不得使用占位脚本或脱离表 1/表 2 的泛化模板",
-                ],
-                "deliverables": ["modeling_report.md", "solve.py", "paper.md", "paper.tex"],
-                "subproblems": subproblems,
-            }
-            problem_markdown = (
-                "# Problem Brief\n\n"
-                f"## Background\n{brief['background']}\n\n"
-                "## Questions\n"
-                + "\n".join(f"- {item}" for item in brief["questions"])
-                + "\n\n## Subproblems\n"
-                + "\n".join(
-                    f"- {item['id']}: {item['title']} -> {item['result_file']}"
-                    for item in subproblems
-                )
-                + "\n\n## Objectives\n"
-                + "\n".join(f"- {item}" for item in brief["objectives"])
-                + "\n\n## Constraints\n"
-                + "\n".join(f"- {item}" for item in brief["constraints"])
-                + "\n"
+        route = _route_for_state(state, clean_question)
+        problem_contract = build_cumcm_problem_contract(
+            clean_question or state.spec.question,
+            source_text_path=Path("question.md"),
+            tables=(_read_json_artifact(state, "tables.json").get("tables") or []),
+            figures=(_read_json_artifact(state, "figures.json").get("figures") or []),
+        )
+        subproblems = [
+            _brief_item_from_subproblem(subproblem)
+            for subproblem in problem_contract.subproblems
+        ]
+        brief = {
+            "background": clean_question[:200],
+            "questions": [item["objective"] for item in subproblems],
+            "objectives": ["建立可解释、可复现实证模型"],
+            "constraints": ["使用本地输入文件", "记录假设与局限", "按路由结果选择生产或基准工作流"],
+            "deliverables": problem_contract.required_deliverables,
+            "workflow_type": route["workflow_type"],
+            "benchmark_id": route.get("selected_benchmark_id", ""),
+            "subproblems": subproblems,
+        }
+        problem_markdown = (
+            "# Problem Brief\n\n"
+            f"## Workflow\n{route['workflow_type']}\n\n"
+            f"## Background\n{brief['background']}\n\n"
+            "## Subproblems\n"
+            + "\n".join(
+                f"- {item['id']}: {item['title']} ({item['problem_type']}) -> {item['result_file']}"
+                for item in subproblems
             )
-        else:
-            subproblems = _extract_generic_subproblems(clean_question)
-            brief = {
-                "background": clean_question[:200],
-                "questions": [item["objective"] for item in subproblems],
-                "objectives": ["建立可解释、可复现实证模型"],
-                "constraints": ["使用本地输入文件", "记录假设与局限"],
-                "deliverables": ["modeling_report.md", "solve.py", "paper.tex"],
-                "subproblems": subproblems,
-            }
-            problem_markdown = (
-                "# Problem Brief\n\n"
-                f"## Background\n{brief['background']}\n\n"
-                "## Subproblems\n"
-                + "\n".join(
-                    f"- {item['id']}: {item['title']} ({item['problem_type']}) -> {item['result_file']}"
-                    for item in subproblems
-                )
-                + "\n\n"
-                "## Objectives\n- 建立可解释、可复现实证模型\n\n"
-                "## Constraints\n- 使用本地输入文件\n- 记录假设与局限\n"
-            )
+            + "\n\n"
+            "## Objectives\n- 建立可解释、可复现实证模型\n\n"
+            "## Constraints\n"
+            + "\n".join(f"- {item}" for item in brief["constraints"])
+            + "\n"
+        )
         path = _write_for_state(
             state,
             "problem_brief.md",
@@ -1590,10 +1738,11 @@ if __name__ == "__main__":
     ) -> dict[str, Any]:
         """Draft a modeling plan artifact from problem, data, and evidence context."""
         state = _load_state(run_id)
-        problem_text = " ".join([state.spec.question, _problem_brief_text(problem_brief)])
-        if _is_b_problem_context(state, problem_text):
-            bundle = _ensure_b_problem_contract_bundle(state, problem_text)
-            modeling_plan = _b_problem_modeling_plan(bundle)
+        problem_text = _problem_brief_text(problem_brief) or state.spec.question
+        route = _route_for_state(state, problem_text)
+        if route["is_benchmark"]:
+            bundle = _ensure_benchmark_b_contract_bundle(state, problem_text)
+            modeling_plan = _b_problem_modeling_plan(bundle, route)
             report_text = _b_problem_modeling_report(bundle)
             artifact_service = _artifacts_for_state(state)
             model_plan_path = artifact_service.write_json("model_plan.json", modeling_plan)
@@ -1612,59 +1761,29 @@ if __name__ == "__main__":
                     for key, path in bundle["experiment_paths"].items()
                 },
             }
-
-        if generation_service is not None:
-            messages = _planner_messages(state, problem_brief, data_audit, evidence_notes)
-            modeling_plan = generation_service.generate_json("modeling_planner", messages)
-            report_text = generation_service.generate_markdown("modeling_planner", messages)
-            artifact_service = _artifacts_for_state(state)
-            model_plan_path = artifact_service.write_json("model_plan.json", modeling_plan)
-            report_path = artifact_service.write_text("modeling_report.md", report_text)
-            return {
-                "modeling_plan": modeling_plan,
-                "model_plan_path": str(model_plan_path),
-                "modeling_report_path": str(report_path),
-            }
-
-        if _is_production_decision_problem(problem_text):
-            subproblem_plans = problem_brief.get("subproblems") or _production_subproblems()
-            modeling_plan = {
-                "selected_model": "二项抽样 + 0-1检测拆解决策优化",
-                "subproblem_plans": subproblem_plans,
-                "candidate_models": ["二项抽样检验", "0-1 策略枚举", "装配树动态规划", "次品率敏感性分析"],
-                "algorithm_plan": "先求抽样接收/拒收规则，再枚举表 1 的 16 种检测拆解策略，并把表 2 推广为装配树递归成本模型。",
-                "evaluation_metrics": ["单位期望利润", "期望总成本", "策略稳定性", "抽样检测次数"],
-                "experiment_conclusion_links": [
-                    "二项抽样搜索 -> 对应论文结论：给出满足信度要求的最少抽检次数；关系：支撑",
-                    "表 1 的 16 种策略枚举 -> 对应论文结论：六种情形下是否检测零配件、成品和是否拆解；关系：支撑",
-                    "表 2 装配树递推 -> 对应论文结论：多零件多工序生产中的分层检测策略；关系：扩展",
-                    "次品率扰动 -> 对应论文结论：策略对抽样估计误差的稳健边界；关系：限制",
-                ],
-            }
-            report_text = _production_model_markdown(problem_text)
-            path = _write_for_state(state, "modeling_report.md", report_text)
-            return {"modeling_plan": modeling_plan, "modeling_report_path": str(path)}
-
-        experiment_conclusion_links = _experiment_conclusion_links()
-        subproblem_plans = problem_brief.get("subproblems") or _extract_generic_subproblems(problem_text)
-        modeling_plan = {
-            "selected_model": "动态子问题 baseline 建模工作流",
-            "workflow_type": "dynamic_subproblem_workflow",
-            "subproblem_plans": subproblem_plans,
-            "candidate_models": sorted({item.get("model", "通用 baseline") for item in subproblem_plans}),
-            "algorithm_plan": "识别题面中的 N 个子问题，为每个子问题生成类型化 baseline 求解器、结果文件和论文结论映射。",
-            "evaluation_metrics": ["reproducibility", "data coverage", "interpretability"],
-            "experiment_conclusion_links": [
-                f"{item['id']} baseline -> 对应论文结论：{item['title']}；关系：支撑；结果文件：{item['result_file']}"
-                for item in subproblem_plans
-            ] or experiment_conclusion_links,
-        }
-        path = _write_for_state(
-            state,
+        bundle_info = _write_generic_contract_bundle(state, problem_text)
+        modeling_plan = _generic_cumcm_modeling_plan(bundle_info, route)
+        artifact_service = _artifacts_for_state(state)
+        model_plan_path = artifact_service.write_json("model_plan.json", modeling_plan)
+        report_path = artifact_service.write_text(
             "modeling_report.md",
-            _generic_model_markdown({"subproblems": subproblem_plans}),
+            _generic_model_markdown({"subproblems": modeling_plan["subproblem_plans"]}),
         )
-        return {"modeling_plan": modeling_plan, "modeling_report_path": str(path)}
+        return {
+            "modeling_plan": modeling_plan,
+            "model_plan_path": str(model_plan_path),
+            "modeling_report_path": str(report_path),
+            "problem_contract_path": str(bundle_info["problem_contract_path"]),
+            "model_contract_paths": {
+                key: str(path)
+                for key, path in bundle_info["model_paths"].items()
+            },
+            "experiment_contract_paths": {
+                key: str(path)
+                for key, path in bundle_info["experiment_paths"].items()
+            },
+            "solver_strategy_path": str(bundle_info["solver_strategy_path"]),
+        }
 
     @tool("run_experiment")
     def run_experiment(
@@ -1677,7 +1796,7 @@ if __name__ == "__main__":
         artifact_service = _artifacts_for_state(state)
         if _is_b_problem_context(state, modeling_plan=modeling_plan):
             run_dir = run_store.run_dir(run_id)
-            bundle = _ensure_b_problem_contract_bundle(state, state.spec.question)
+            bundle = _ensure_benchmark_b_contract_bundle(state, state.spec.question)
             solver_result = run_b_problem_solver(run_dir)
             root_code = _b_problem_compat_solve_code("Path(__file__).resolve().parent")
             code_path = artifact_service.write_text("solve.py", root_code)
@@ -1778,43 +1897,6 @@ if __name__ == "__main__":
                 "figure_paths": [],
             }
 
-        if modeling_plan.get("selected_model") == "二项抽样 + 0-1检测拆解决策优化":
-            code_path = artifact_service.write_text("solve.py", _production_solve_code())
-            run_dir = run_store.run_dir(run_id)
-            completed = subprocess.run(
-                [sys.executable, str(code_path)],
-                cwd=run_dir,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-            results_dir = run_dir / "results"
-            result_paths = [
-                str(path)
-                for path in sorted(results_dir.iterdir())
-                if path.is_file()
-            ] if results_dir.exists() else []
-            experiment_result = {
-                "success": completed.returncode == 0,
-                "execution_status": "success" if completed.returncode == 0 else "failed",
-                "script_generated": True,
-                "code_path": str(code_path),
-                "data_files": data_files,
-                "result_paths": result_paths,
-                "figure_paths": [],
-                "stdout": completed.stdout,
-                "stderr": completed.stderr,
-                "notes": "Executed B problem decision model against reconstructed Table 1 parameters.",
-                "reproducibility_notes": "Run solve.py from the run directory to regenerate results/decision_results.csv and results/sampling_rules.txt.",
-            }
-            return {
-                "experiment_result": experiment_result,
-                "code_path": str(code_path),
-                "result_paths": result_paths,
-                "figure_paths": [],
-            }
-
         subproblem_plans = modeling_plan.get("subproblem_plans") or []
         code_path = artifact_service.write_text("solve.py", _generic_solve_code(subproblem_plans))
         run_dir = run_store.run_dir(run_id)
@@ -1869,7 +1951,7 @@ if __name__ == "__main__":
             modeling_plan=modeling_plan,
         ):
             run_dir = run_store.run_dir(run_id)
-            bundle = _ensure_b_problem_contract_bundle(state, state.spec.question)
+            bundle = _ensure_benchmark_b_contract_bundle(state, state.spec.question)
             claims = build_b_problem_claims(run_dir)
             claim_map_path = ContractStore(run_dir).write_claim_map(claims)
             claim_report = evaluate_claims(claims, artifact_root=run_dir)
