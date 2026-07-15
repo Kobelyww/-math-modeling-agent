@@ -49,6 +49,8 @@ class RunOptions:
     max_repair_attempts: int = 2
     compile_pdf: bool = True
     allow_online_search: bool = False
+    workflow_mode: str = "production"
+    benchmark_id: str = ""
 
 
 @dataclass
