@@ -1,12 +1,14 @@
 import csv
 import json
 
-from agent_app.workflow_packs.cumcm.templates.production_decision import (
+from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision import (
     build_b_problem_experiment_contracts,
     build_b_problem_model_contracts,
     is_b_problem,
 )
-from agent_app.workflow_packs.cumcm.templates.production_decision_solver import run_b_problem_solver
+from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision_solver import (
+    run_b_problem_solver,
+)
 
 
 B_PROBLEM_TEXT = "B 题 生产过程中的决策问题。问题1：抽样检测。问题2：检测拆解决策。问题3：多工序。问题4：抽样不确定性。"
@@ -47,6 +49,10 @@ def test_b_problem_model_and_experiment_contract_ids_stay_aligned():
     assert [contract.subproblem_id for contract in models] == [
         contract.subproblem_id for contract in experiments
     ]
+
+
+def test_b_problem_solver_is_imported_from_benchmark_namespace():
+    assert run_b_problem_solver.__module__.endswith("benchmarks.y2024_b_production_decision_solver")
 
 
 def _read_csv(path):

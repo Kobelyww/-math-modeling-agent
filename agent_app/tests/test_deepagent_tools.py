@@ -313,6 +313,11 @@ def test_b_problem_tools_generate_executable_model_code_and_paper(tmp_path):
         assert (store.run_dir(state.run_id) / "results" / filename).exists()
     assert "DeepAgent competition experiment placeholder" not in solve_code
     assert "0.35" not in solve_code
+    assert "agent_app.workflow_packs.cumcm.templates.production_decision_solver" not in solve_code
+    assert (
+        "agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision_solver"
+        in solve_code
+    )
     rerun = subprocess.run(
         [sys.executable, "solve.py"],
         cwd=run_dir,

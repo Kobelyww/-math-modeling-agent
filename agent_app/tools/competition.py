@@ -36,13 +36,13 @@ from agent_app.services.paper_sections import (
 from agent_app.services.problem_package import build_problem_package
 from agent_app.services.run_store import RunStore
 from agent_app.services.section_writer import write_section_files as write_claim_section_files
-from agent_app.workflow_packs.cumcm.problem_builder import build_cumcm_problem_contract
-from agent_app.workflow_packs.cumcm.templates.production_decision import (
+from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision import (
     build_b_problem_experiment_contracts,
     build_b_problem_model_contracts,
     is_b_problem,
 )
-from agent_app.workflow_packs.cumcm.templates.production_decision_solver import run_b_problem_solver
+from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision_solver import run_b_problem_solver
+from agent_app.workflow_packs.cumcm.problem_builder import build_cumcm_problem_contract
 
 
 def make_competition_tools(run_store: RunStore, **services: Any) -> list:
@@ -534,7 +534,7 @@ PROJECT_ROOT = Path({str(project_root)!r})
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent_app.workflow_packs.cumcm.templates.production_decision_solver import run_b_problem_solver
+from agent_app.workflow_packs.cumcm.benchmarks.y2024_b_production_decision_solver import run_b_problem_solver
 
 
 def expected_profit() -> str:
