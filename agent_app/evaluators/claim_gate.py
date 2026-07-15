@@ -17,6 +17,8 @@ def evaluate_claims(claims: list[Claim], artifact_root: Path) -> QualityReport:
             evidence_path = evidence.path if evidence.path.is_absolute() else artifact_root / evidence.path
             if not evidence_path.exists():
                 fixes.append(f"{claim.claim_id} 引用的证据不存在: {evidence.path}")
+            if not evidence.locator.strip():
+                fixes.append(f"{claim.claim_id} 缺少 evidence locator")
     return QualityReport(
         gate_name="claim",
         passed=not fixes,

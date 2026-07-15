@@ -5,6 +5,32 @@ from pathlib import Path
 from agent_app.domain.contracts import Claim, ClaimEvidence, ClaimStatus
 
 
+def build_generic_claims(subproblem_plans: list[dict], run_dir: Path | str) -> list[Claim]:
+    root = Path(run_dir)
+    claims: list[Claim] = []
+    for item in subproblem_plans:
+        subproblem_id = str(item["id"])
+        title = str(item.get("title") or subproblem_id)
+        relative_path = Path(str(item.get("result_file") or f"results/{subproblem_id}_result.csv"))
+        status = ClaimStatus.SUPPORTED if (root / relative_path).exists() else ClaimStatus.UNSUPPORTED
+        evidence = (
+            [ClaimEvidence(kind="result_file", path=relative_path, locator="row:1")]
+            if status == ClaimStatus.SUPPORTED
+            else []
+        )
+        claims.append(
+            Claim(
+                claim_id=f"claim_{subproblem_id}_result",
+                section="result_analysis",
+                text=f"{title} 的结论由 {relative_path.as_posix()} 支撑。",
+                evidence=evidence,
+                status=status,
+                confidence="medium" if status == ClaimStatus.SUPPORTED else "",
+            )
+        )
+    return claims
+
+
 def build_b_problem_claims(run_dir: Path | str) -> list[Claim]:
     root = Path(run_dir)
     specs = [
@@ -16,6 +42,10 @@ def build_b_problem_claims(run_dir: Path | str) -> list[Claim]:
     claims: list[Claim] = []
     for claim_id, section, text, relative_path in specs:
         status = ClaimStatus.SUPPORTED if (root / relative_path).exists() else ClaimStatus.UNSUPPORTED
-        evidence = [ClaimEvidence(kind="result_file", path=Path(relative_path))] if status == ClaimStatus.SUPPORTED else []
+        evidence = (
+            [ClaimEvidence(kind="result_file", path=Path(relative_path), locator="row:1")]
+            if status == ClaimStatus.SUPPORTED
+            else []
+        )
         claims.append(Claim(claim_id=claim_id, section=section, text=text, evidence=evidence, status=status))
     return claims
