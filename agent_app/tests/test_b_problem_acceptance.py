@@ -116,6 +116,7 @@ def test_b_problem_full_chain_uses_structured_tables_and_sections(tmp_path):
     )
 
     assert (run_dir / "tables.json").exists()
+    assert plan["modeling_plan"]["workflow_type"] == "cumcm_b_problem_benchmark_workflow"
     assert (run_dir / "contracts" / "problem_contract.json").exists()
     assert (run_dir / "contracts" / "models" / "q1.json").exists()
     assert (run_dir / "contracts" / "experiments" / "q4.json").exists()

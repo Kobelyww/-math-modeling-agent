@@ -11,6 +11,10 @@ from agent_app.domain.models import RunOptions, RunSpec
 from agent_app.services.artifact_service import ArtifactService
 from agent_app.services.run_store import RunStore
 from agent_app.tools.competition import make_competition_tools
+from agent_app.workflow_packs.cumcm.routing import (
+    BENCHMARK_2024_B_ID,
+    GENERIC_CUMCM_WORKFLOW,
+)
 
 
 def test_competition_tools_expose_expected_names(tmp_path):
@@ -263,7 +267,65 @@ def test_review_submission_uses_run_directory_artifacts_when_model_argument_is_e
     assert result["quality_report"]["required_fixes"] == []
 
 
-def test_b_problem_tools_generate_executable_model_code_and_paper(tmp_path):
+def test_b_like_problem_in_production_uses_generic_workflow(tmp_path):
+    question = (
+        "生产过程中的决策问题。企业购买零配件 1 和零配件 2 装配成成品，"
+        "需要决定是否检测零配件、是否检测成品、是否拆解不合格成品，"
+        "并结合表 1 与表 2 的次品率、检测成本、拆解费用和调换损失完成建模。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tool_by_name = {tool.name: tool for tool in make_competition_tools(run_store=store)}
+
+    problem = tool_by_name["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tool_by_name["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tool_by_name["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+    paper = tool_by_name["draft_competition_paper"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "modeling_plan": plan["modeling_plan"],
+            "experiment_result": experiment["experiment_result"],
+            "evidence_notes": [],
+        }
+    )
+
+    modeling_report = Path(plan["modeling_report_path"]).read_text(encoding="utf-8")
+    paper_markdown = Path(paper["paper_markdown_path"]).read_text(encoding="utf-8")
+    run_dir = store.run_dir(state.run_id)
+
+    assert problem["problem_brief"]["workflow_type"] == GENERIC_CUMCM_WORKFLOW
+    assert plan["modeling_plan"]["workflow_type"] == GENERIC_CUMCM_WORKFLOW
+    assert "cumcm_b_problem" not in modeling_report
+    assert not (run_dir / "results" / "q2_table1_decisions.csv").exists()
+    assert (run_dir / "contracts" / "problem_contract.json").exists()
+    assert (run_dir / "contracts" / "solver_strategies.json").exists()
+    assert experiment["experiment_result"]["execution_status"] == "success"
+    assert any(
+        Path(path).name == "subproblem_summary.csv"
+        for path in experiment["experiment_result"]["result_paths"]
+    )
+    assert "results/q2_table1_decisions.csv" not in paper_markdown
+    assert "生产过程中的决策问题" in paper_markdown
+
+
+def test_explicit_b_problem_benchmark_generates_deterministic_q1_q4_files(tmp_path):
     question = (
         "生产过程中的决策问题。企业购买零配件 1 和零配件 2 装配成成品，"
         "需要决定是否检测零配件、是否检测成品、是否拆解不合格成品，"
@@ -275,7 +337,7 @@ def test_b_problem_tools_generate_executable_model_code_and_paper(tmp_path):
             question=question,
             options=RunOptions(
                 workflow_mode="benchmark",
-                benchmark_id="cumcm_2024_b_production_decision",
+                benchmark_id=BENCHMARK_2024_B_ID,
             ),
         )
     )
@@ -330,7 +392,7 @@ def test_b_problem_tools_generate_executable_model_code_and_paper(tmp_path):
 
     assert plan["modeling_plan"]["selected_model"] == "二项抽样 + 0-1检测拆解决策优化"
     assert plan["modeling_plan"]["workflow_type"] == "cumcm_b_problem_benchmark_workflow"
-    assert plan["modeling_plan"]["benchmark_id"] == "cumcm_2024_b_production_decision"
+    assert plan["modeling_plan"]["benchmark_id"] == BENCHMARK_2024_B_ID
     assert {item["id"] for item in plan["modeling_plan"]["subproblem_plans"]} == {"q1", "q2", "q3", "q4"}
     assert (run_dir / "contracts" / "problem_contract.json").exists()
     for subproblem_id in ["q1", "q2", "q3", "q4"]:

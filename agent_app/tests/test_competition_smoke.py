@@ -109,6 +109,10 @@ def test_minimal_competition_workflow_smoke(tmp_path):
     )
 
     run_dir = tmp_path / "runs" / result.run_id
+    assert (run_dir / "trace" / "routing_decision.json").exists()
+    assert (run_dir / "trace" / "stage_events.jsonl").exists()
+    assert (run_dir / "contracts" / "problem_contract.json").exists()
+    assert (run_dir / "contracts" / "solver_strategies.json").exists()
     assert result.status == RunStatus.COMPLETED
     assert "final_synthesis.md" in result.summary
     assert result.artifacts
