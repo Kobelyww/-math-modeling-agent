@@ -123,3 +123,51 @@ class Claim:
 
     def is_supported(self) -> bool:
         return self.status in {ClaimStatus.SUPPORTED, ClaimStatus.LIMITED} and bool(self.evidence)
+
+
+@dataclass
+class PaperOutline:
+    title: str
+    problem_background_summary: str
+    subproblem_ids: list[str] = field(default_factory=list)
+    section_order: list[str] = field(default_factory=list)
+    early_sections: list[str] = field(default_factory=list)
+    deferred_sections: list[str] = field(default_factory=list)
+    abstract_policy: str = "write_last_after_results"
+
+
+@dataclass
+class SymbolDefinition:
+    symbol: str
+    meaning: str
+    unit: str
+    source_subproblem_id: str
+    first_used_in: Path
+    definition_artifact: Path
+
+
+@dataclass
+class SubproblemSolutionContract:
+    subproblem_id: str
+    question_text: str
+    problem_type: str
+    dependencies: list[str] = field(default_factory=list)
+    input_artifacts: list[Path] = field(default_factory=list)
+    model_derivation_path: Path = Path("")
+    algorithm_path: Path = Path("")
+    solver_path: Path = Path("")
+    result_path: Path = Path("")
+    result_interpretation_path: Path = Path("")
+    symbol_delta_path: Path = Path("")
+    claim_delta_path: Path = Path("")
+    status: str = "pending"
+
+
+@dataclass
+class StagedPaperManifest:
+    outline_path: Path
+    early_section_paths: list[Path] = field(default_factory=list)
+    subproblem_contract_paths: list[Path] = field(default_factory=list)
+    symbol_table_path: Path = Path("symbol_table.json")
+    final_section_paths: list[Path] = field(default_factory=list)
+    abstract_generated_after_results: bool = False
