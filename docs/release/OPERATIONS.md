@@ -77,3 +77,5 @@ MINIO_SECURE=false
 - Redis unavailable: switch to `ZH_VIDEO_QUEUE_BACKEND=memory` for local development or restore Redis.
 - MinIO unavailable: switch to `ZH_OBJECT_STORAGE_BACKEND=local` for local development or restore MinIO.
 - `401 Unauthorized`: send `Authorization: Bearer <ZH_WEB_API_TOKEN>` or disable auth only in development.
+- Docker build cannot fetch `python:3.13-slim`: set `PYTHON_IMAGE` to an approved local mirror image and rebuild.
+- Host port already allocated: override `ZH_WEB_PORT`, `ZH_REDIS_PORT`, `ZH_MINIO_API_PORT`, or `ZH_MINIO_CONSOLE_PORT`.
