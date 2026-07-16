@@ -88,6 +88,77 @@ def make_project() -> DramaProject:
     )
 
 
+def _valid_stage_content(stage: str) -> str:
+    samples = {
+        "script": """角色：林晚。
+地点：运城。
+限制：真相不能提前揭露。
+风格：冷暖对比。
+场次：第一集开场，林晚在医院走廊发现被涂改的检测报告。
+对白：林晚：这份报告不该是空白，我要知道昨晚到底发生了什么。
+冲突：家人劝她停止调查，污染线索却指向更大的利益链。
+钩子：孩子咳出粉色泡沫。
+悬念：报告最后一页出现被划掉的企业名称。""",
+        "style": """风格：冷暖对比。
+视觉：低饱和城市夜景。
+镜头：手持纪实。
+灯光：医院走廊使用冷白灯，家庭场景保留微弱暖光。
+一致性：林晚始终保持白衬衫、黑色长发、疲惫但警觉的气质。
+负面约束：避免夸张滤镜，避免喜剧化表演，避免过度赛博化。""",
+        "plot": """集数：三集短剧结构。
+第一集：异味爆发，小满送医，林晚发现官方通报缺少关键信息。
+第二集：检测报告被涂改，家人因工作和房贷阻止调查。
+第三集：林晚提交证据，企业被限产整改，家人关系留下裂痕。
+反转：真正问题不是一次偷排，而是多年分期建设无人验收。
+情绪：恐惧、愤怒、两难、克制的希望。
+爽点：用证据链逼出调查组进驻。""",
+        "character_refs": """角色：林晚。
+外貌：32岁，黑色长发，白衬衫，眼下有疲惫感但目光警觉。
+服装：医院阶段穿浅色衬衫，调查阶段加深灰外套。
+气质：冷静、压抑、专业，面对家人时有明显挣扎。
+参考图Prompt：竖屏短剧女主，现实主义环境律师，黑色长发，白衬衫，低饱和城市医院灯光。
+一致性Prompt：保持同一面部轮廓、发型、服装色系和疲惫但坚定的表情。""",
+        "storyboard": """1. 场景：医院走廊 夜晚
+人物：林晚、小满
+动作：林晚抱着咳嗽的小满冲向抢救室，护士从画面边缘快速经过。
+对白：林晚：医生，她喘不上气了！
+镜头：手持中近景快速推进，制造压迫感。
+时长：6秒
+视频生成Prompt：竖屏短剧，医院走廊，冷白灯，焦急奔跑，现实主义纪实风格""",
+    }
+    return samples[stage]
+
+
+def test_drama_video_stage_quality_reports_invalid_draft():
+    client = TestClient(server_mod.app)
+
+    response = client.post(
+        "/api/drama-video/stage/quality",
+        json={"stage": "script", "content": "script confirmed"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["stage"] == "script"
+    assert data["label"] == "剧本"
+    assert data["valid"] is False
+    assert "内容过短" in data["errors"]
+    assert "缺少剧本结构" in data["errors"]
+    assert data["summary"]["char_count"] == len("script confirmed")
+
+
+def test_drama_video_stage_quality_rejects_unknown_stage():
+    client = TestClient(server_mod.app)
+
+    response = client.post(
+        "/api/drama-video/stage/quality",
+        json={"stage": "unknown", "content": "内容"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "stage must be one of script, style, plot, character_refs, storyboard"
+
+
 def test_drama_video_endpoint_submits_limited_shots(monkeypatch, tmp_path):
     project = make_project()
     story_dir = tmp_path / "测试主题"
@@ -1241,7 +1312,7 @@ def test_drama_video_deepagent_advances_after_stage_confirmation(monkeypatch, tm
             "stage": stage,
             "label": server_mod._VIDEO_STAGE_DRAFT_LABELS[stage],
             "model": "deepseek-v4-pro",
-            "content": f"{stage} draft",
+            "content": _valid_stage_content(stage),
         }
 
     monkeypatch.setattr(server_mod, "APP_ROOT", tmp_path)
@@ -1266,11 +1337,11 @@ def test_drama_video_deepagent_advances_after_stage_confirmation(monkeypatch, tm
     repeated = client.post("/api/drama-video/deepagent/advance", json={"run_id": run_id})
     assert repeated.status_code == 200
     assert repeated.json()["stage"] == "script"
-    assert repeated.json()["content"] == "script draft"
+    assert repeated.json()["content"] == _valid_stage_content("script")
 
     confirmed = client.post(
         "/api/drama-video/deepagent/confirm",
-        json={"run_id": run_id, "stage": "script", "content": "confirmed script"},
+        json={"run_id": run_id, "stage": "script", "content": _valid_stage_content("script")},
     )
     assert confirmed.status_code == 200
     assert confirmed.json()["next_stage"] == "style"
@@ -1280,18 +1351,18 @@ def test_drama_video_deepagent_advances_after_stage_confirmation(monkeypatch, tm
     assert second.json()["stage"] == "style"
     assert captured_contexts == [
         ("测试主题/小说正文.md", "script", {}),
-        ("测试主题/小说正文.md", "style", {"script": "confirmed script"}),
+        ("测试主题/小说正文.md", "style", {"script": _valid_stage_content("script")}),
     ]
 
     persisted = server_mod.workspace_repo.get_drama_session(run_id)
     assert persisted.story_path == "测试主题/小说正文.md"
-    assert persisted.stage_drafts == {"script": "confirmed script"}
+    assert persisted.stage_drafts == {"script": _valid_stage_content("script")}
     assert persisted.confirmed_stages == ["script"]
     versions = server_mod.workspace_repo.list_drama_stage_versions(run_id)
     assert [(version.stage, version.event, version.content) for version in versions] == [
-        ("script", "draft", "script draft"),
-        ("script", "confirmation", "confirmed script"),
-        ("style", "draft", "style draft"),
+        ("script", "draft", _valid_stage_content("script")),
+        ("script", "confirmation", _valid_stage_content("script")),
+        ("style", "draft", _valid_stage_content("style")),
     ]
 
 
@@ -1431,14 +1502,14 @@ def test_drama_video_deepagent_starts_video_after_storyboard_confirmation(monkey
     for stage in ("script", "style", "plot", "character_refs"):
         confirmed = client.post(
             "/api/drama-video/deepagent/confirm",
-            json={"run_id": run_id, "stage": stage, "content": f"{stage} confirmed"},
+            json={"run_id": run_id, "stage": stage, "content": _valid_stage_content(stage)},
         )
         assert confirmed.status_code == 200
         assert confirmed.json()["status"] == "ready_for_next_stage"
 
     final = client.post(
         "/api/drama-video/deepagent/confirm",
-        json={"run_id": run_id, "stage": "storyboard", "content": "storyboard confirmed"},
+        json={"run_id": run_id, "stage": "storyboard", "content": _valid_stage_content("storyboard")},
     )
 
     assert final.status_code == 200
@@ -1449,11 +1520,11 @@ def test_drama_video_deepagent_starts_video_after_storyboard_confirmation(monkey
     assert data["stream_url"] == f"/api/drama-video/stream/{data['video_run_id']}"
     assert server_mod._video_specs[data["video_run_id"]]["shot_limit"] == 3
     assert server_mod._video_specs[data["video_run_id"]]["stage_drafts"] == {
-        "script": "script confirmed",
-        "style": "style confirmed",
-        "plot": "plot confirmed",
-        "character_refs": "character_refs confirmed",
-        "storyboard": "storyboard confirmed",
+        "script": _valid_stage_content("script"),
+        "style": _valid_stage_content("style"),
+        "plot": _valid_stage_content("plot"),
+        "character_refs": _valid_stage_content("character_refs"),
+        "storyboard": _valid_stage_content("storyboard"),
     }
     persisted_video = server_mod.workspace_repo.get_drama_video_run(data["video_run_id"])
     assert persisted_video.status == "queued"
@@ -1483,14 +1554,14 @@ def test_drama_video_deepagent_storyboard_confirmation_requires_cost_confirmatio
     for stage in ("script", "style", "plot", "character_refs"):
         confirmed = client.post(
             "/api/drama-video/deepagent/confirm",
-            json={"run_id": run_id, "stage": stage, "content": f"{stage} confirmed"},
+            json={"run_id": run_id, "stage": stage, "content": _valid_stage_content(stage)},
         )
         assert confirmed.status_code == 200
 
     run_ids_before = {run.id for run in server_mod.workspace_repo.list_drama_video_runs()}
     blocked = client.post(
         "/api/drama-video/deepagent/confirm",
-        json={"run_id": run_id, "stage": "storyboard", "content": "storyboard confirmed"},
+        json={"run_id": run_id, "stage": "storyboard", "content": _valid_stage_content("storyboard")},
     )
 
     assert blocked.status_code == 409
@@ -1509,7 +1580,7 @@ def test_drama_video_deepagent_storyboard_confirmation_requires_cost_confirmatio
         json={
             "run_id": run_id,
             "stage": "storyboard",
-            "content": "storyboard confirmed",
+            "content": _valid_stage_content("storyboard"),
             "confirm_cost": True,
         },
     )
@@ -1541,17 +1612,19 @@ def test_drama_video_deepagent_storyboard_confirmation_validates_content_before_
     for stage in ("script", "style", "plot", "character_refs"):
         confirmed = client.post(
             "/api/drama-video/deepagent/confirm",
-            json={"run_id": run_id, "stage": stage, "content": f"{stage} confirmed"},
+            json={"run_id": run_id, "stage": stage, "content": _valid_stage_content(stage)},
         )
         assert confirmed.status_code == 200
 
+    run_ids_before = {run.id for run in server_mod.workspace_repo.list_drama_video_runs()}
     response = client.post(
         "/api/drama-video/deepagent/confirm",
-        json={"run_id": run_id, "stage": "storyboard", "content": ""},
+        json={"run_id": run_id, "stage": "storyboard", "content": "storyboard confirmed"},
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "content is required"
+    assert "分镜质量未达标" in response.json()["detail"]
+    assert {run.id for run in server_mod.workspace_repo.list_drama_video_runs()} == run_ids_before
 
 
 def test_drama_video_deepagent_session_and_versions_api(monkeypatch, tmp_path):
@@ -1701,7 +1774,7 @@ def test_drama_video_project_package_export_persists_asset(monkeypatch, tmp_path
     run_id = started.json()["run_id"]
     client.post(
         "/api/drama-video/deepagent/confirm",
-        json={"run_id": run_id, "stage": "script", "content": "confirmed script"},
+        json={"run_id": run_id, "stage": "script", "content": _valid_stage_content("script")},
     )
 
     exported = client.post("/api/drama-video/package/export", json={"run_id": run_id})
@@ -1713,7 +1786,8 @@ def test_drama_video_project_package_export_persists_asset(monkeypatch, tmp_path
     assert data["asset"]["content_type"] == "application/json"
     stored_path = tmp_path / "data" / "workspace" / "assets" / data["asset"]["key"]
     payload = stored_path.read_text(encoding="utf-8")
-    assert '"confirmed script"' in payload
+    assert '"stage_drafts"' in payload
+    assert "报告最后一页出现被划掉的企业名称" in payload
 
 
 def test_video_page_serves_standalone_video_workspace():

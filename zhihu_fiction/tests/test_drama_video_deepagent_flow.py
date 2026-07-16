@@ -34,6 +34,52 @@ def _trace_deps(repo, tmp_path):
     )
 
 
+VALID_SCRIPT = """角色：林晚。
+地点：运城。
+限制：女主不能提前知道真相。
+风格：冷暖对比。
+场次：第一集开场，林晚在医院走廊发现被涂改的检测报告。
+对白：林晚：这份报告不该是空白，我要知道昨晚到底发生了什么。
+冲突：家人劝她停止调查，污染线索却指向更大的利益链。
+钩子：孩子咳出粉色泡沫。
+悬念：报告最后一页出现被划掉的企业名称。"""
+
+
+VALID_STYLE = """风格：冷暖对比。
+视觉：低饱和城市夜景。
+镜头：手持纪实。
+灯光：医院走廊使用冷白灯，家庭场景保留微弱暖光。
+一致性：林晚始终保持白衬衫、黑色长发、疲惫但警觉的气质。
+负面约束：避免夸张滤镜，避免喜剧化表演，避免过度赛博化。"""
+
+
+VALID_PLOT = """集数：三集短剧结构。
+第一集：异味爆发，小满送医，林晚发现官方通报缺少关键信息。
+第二集：检测报告被涂改，家人因工作和房贷阻止调查。
+第三集：林晚提交证据，企业被限产整改，家人关系留下裂痕。
+反转：真正问题不是一次偷排，而是多年分期建设无人验收。
+情绪：恐惧、愤怒、两难、克制的希望。
+爽点：用证据链逼出调查组进驻。"""
+
+
+VALID_CHARACTER_REFS = """角色：林晚。
+外貌：32岁，黑色长发，白衬衫，眼下有疲惫感但目光警觉。
+服装：医院阶段穿浅色衬衫，调查阶段加深灰外套。
+气质：冷静、压抑、专业，面对家人时有明显挣扎。
+参考图Prompt：竖屏短剧女主，现实主义环境律师，黑色长发，白衬衫，低饱和城市医院灯光。
+一致性Prompt：保持同一面部轮廓、发型、服装色系和疲惫但坚定的表情。"""
+
+
+VALID_STORYBOARD = """1. 场景：医院走廊 夜晚
+人物：林晚、小满
+动作：林晚抱着咳嗽的小满冲向抢救室，护士从画面边缘快速经过。
+对白：林晚：医生，她喘不上气了！
+镜头：手持中近景快速推进，制造压迫感。
+时长：6秒
+视频生成Prompt：竖屏短剧，医院走廊，冷白灯，焦急奔跑，现实主义纪实风格
+"""
+
+
 def test_start_deepagent_run_initializes_spec_and_persists_session(monkeypatch, tmp_path):
     story_dir = tmp_path / "测试主题"
     story_dir.mkdir()
@@ -91,7 +137,7 @@ def test_start_and_confirm_stage_record_operation_logs(monkeypatch, tmp_path):
         state,
         "deepagent_fixed",
         "script",
-        "确认剧本",
+        VALID_SCRIPT,
         video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
     )
 
@@ -134,7 +180,7 @@ def test_confirm_stage_updates_consistency_profile(monkeypatch, tmp_path):
         state,
         "deepagent_consistency",
         "script",
-        "角色：林晚。地点：运城。限制：女主不能提前知道真相。",
+        VALID_SCRIPT,
         video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
     )
 
@@ -171,7 +217,7 @@ def test_confirm_stage_records_agent_trace_and_memory_patch(tmp_path):
         "project_id": "project-a",
         "shot_limit": 1,
         "stage_drafts": {},
-        "drafts": {"script": "林晚以黑色长发出场，发现账本线索。"},
+        "drafts": {"script": VALID_SCRIPT},
         "confirmed_stages": [],
         "pending_stage": "script",
         "video_run_id": "",
@@ -221,7 +267,7 @@ def test_confirm_stage_merges_consistency_profile_without_losing_prior_data(tmp_
         state,
         "run_1",
         "script",
-        "角色：林晚。风格：冷暖对比。",
+        VALID_SCRIPT,
         video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
     )
     confirm_stage(
@@ -229,7 +275,7 @@ def test_confirm_stage_merges_consistency_profile_without_losing_prior_data(tmp_
         state,
         "run_1",
         "style",
-        "视觉：低饱和城市夜景。镜头：手持纪实。",
+        VALID_STYLE,
         video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
     )
     profile = repo.latest_consistency_profile_for_session("run_1")
@@ -241,7 +287,7 @@ def test_confirm_stage_merges_consistency_profile_without_losing_prior_data(tmp_
         state,
         "run_1",
         "plot",
-        "剧情：异味线索逐步升级。",
+        VALID_PLOT,
         video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
     )
     confirm_stage(
@@ -249,7 +295,7 @@ def test_confirm_stage_merges_consistency_profile_without_losing_prior_data(tmp_
         state,
         "run_1",
         "character_refs",
-        "角色：林晚。人物参考图：白衬衫，疲惫但警觉。",
+        VALID_CHARACTER_REFS,
         video_starter=lambda state, story_path, shot_limit, drafts, project_id="": "video_unused",
     )
 
@@ -432,7 +478,7 @@ def test_confirm_stage_can_resume_pending_draft_from_repository(tmp_path):
             "stage": stage,
             "label": "剧本",
             "model": "deepseek-v4-pro",
-            "content": "durable script draft",
+            "content": VALID_SCRIPT,
             "events": [],
         },
     )
@@ -449,8 +495,38 @@ def test_confirm_stage_can_resume_pending_draft_from_repository(tmp_path):
 
     assert response["status"] == "ready_for_next_stage"
     assert response["next_stage"] == "style"
-    assert resumed_state.video_deepagent_specs["run_1"]["stage_drafts"]["script"] == "durable script draft"
-    assert repo.get_drama_session("run_1").stage_drafts["script"] == "durable script draft"
+    assert resumed_state.video_deepagent_specs["run_1"]["stage_drafts"]["script"] == VALID_SCRIPT
+    assert repo.get_drama_session("run_1").stage_drafts["script"] == VALID_SCRIPT
+
+
+def test_confirm_stage_rejects_placeholder_stage_content(tmp_path):
+    repo = WorkspaceRepository(tmp_path)
+    deps = _deps(repo)
+    state = AppState()
+    state.video_deepagent_specs["run_1"] = {
+        "story_path": "故事.md",
+        "shot_limit": 1,
+        "stage_drafts": {},
+        "drafts": {"script": "script confirmed"},
+        "confirmed_stages": [],
+        "pending_stage": "script",
+        "video_run_id": "",
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        confirm_stage(
+            deps,
+            state,
+            "run_1",
+            "script",
+            "",
+            video_starter=lambda state, story_path, shot_limit, drafts: "video_unused",
+        )
+
+    assert exc.value.status_code == 400
+    assert "剧本质量未达标" in exc.value.detail
+    assert state.video_deepagent_specs["run_1"]["confirmed_stages"] == []
+    assert repo.list_drama_stage_versions("run_1") == []
 
 
 def test_confirm_stage_starts_video_after_final_confirmation(monkeypatch, tmp_path):
@@ -468,10 +544,10 @@ def test_confirm_stage_starts_video_after_final_confirmation(monkeypatch, tmp_pa
         "project_id": "project_1",
         "shot_limit": 3,
         "stage_drafts": {
-            "script": "script",
-            "style": "style",
-            "plot": "plot",
-            "character_refs": "refs",
+            "script": VALID_SCRIPT,
+            "style": VALID_STYLE,
+            "plot": VALID_PLOT,
+            "character_refs": VALID_CHARACTER_REFS,
         },
         "drafts": {},
         "confirmed_stages": ["script", "style", "plot", "character_refs"],
@@ -484,13 +560,13 @@ def test_confirm_stage_starts_video_after_final_confirmation(monkeypatch, tmp_pa
         state,
         "run_1",
         "storyboard",
-        "storyboard confirmed",
+        VALID_STORYBOARD,
         video_starter=lambda state, story_path, shot_limit, drafts, project_id="": f"video_for_{project_id}",
     )
 
     assert response["status"] == "video_started"
     assert response["video_run_id"] == "video_for_project_1"
-    assert state.video_deepagent_specs["run_1"]["stage_drafts"]["storyboard"] == "storyboard confirmed"
+    assert state.video_deepagent_specs["run_1"]["stage_drafts"]["storyboard"] == VALID_STORYBOARD
 
 
 def test_revise_stage_records_human_feedback(tmp_path):

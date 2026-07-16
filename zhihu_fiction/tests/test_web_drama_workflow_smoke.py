@@ -14,6 +14,47 @@ from zhihu_fiction.workspace.models import Project, Story
 from zhihu_fiction.workspace.repositories import WorkspaceRepository
 
 
+def _valid_stage_content(stage: str) -> str:
+    samples = {
+        "script": """角色：林晚。
+地点：运城。
+限制：真相不能提前揭露。
+风格：冷暖对比。
+场次：第一集开场，林晚在医院走廊发现被涂改的检测报告。
+对白：林晚：这份报告不该是空白，我要知道昨晚到底发生了什么。
+冲突：家人劝她停止调查，污染线索却指向更大的利益链。
+钩子：孩子咳出粉色泡沫。
+悬念：报告最后一页出现被划掉的企业名称。""",
+        "style": """风格：冷暖对比。
+视觉：低饱和城市夜景。
+镜头：手持纪实。
+灯光：医院走廊使用冷白灯，家庭场景保留微弱暖光。
+一致性：林晚始终保持白衬衫、黑色长发、疲惫但警觉的气质。
+负面约束：避免夸张滤镜，避免喜剧化表演，避免过度赛博化。""",
+        "plot": """集数：三集短剧结构。
+第一集：异味爆发，小满送医，林晚发现官方通报缺少关键信息。
+第二集：检测报告被涂改，家人因工作和房贷阻止调查。
+第三集：林晚提交证据，企业被限产整改，家人关系留下裂痕。
+反转：真正问题不是一次偷排，而是多年分期建设无人验收。
+情绪：恐惧、愤怒、两难、克制的希望。
+爽点：用证据链逼出调查组进驻。""",
+        "character_refs": """角色：林晚。
+外貌：32岁，黑色长发，白衬衫，眼下有疲惫感但目光警觉。
+服装：医院阶段穿浅色衬衫，调查阶段加深灰外套。
+气质：冷静、压抑、专业，面对家人时有明显挣扎。
+参考图Prompt：竖屏短剧女主，现实主义环境律师，黑色长发，白衬衫，低饱和城市医院灯光。
+一致性Prompt：保持同一面部轮廓、发型、服装色系和疲惫但坚定的表情。""",
+        "storyboard": """1. 场景：医院走廊 夜晚
+人物：林晚、小满
+动作：林晚抱着咳嗽的小满冲向抢救室，护士从画面边缘快速经过。
+对白：林晚：医生，她喘不上气了！
+镜头：手持中近景快速推进，制造压迫感。
+时长：6秒
+视频生成Prompt：竖屏短剧，医院走廊，冷白灯，焦急奔跑，现实主义纪实风格""",
+    }
+    return samples[stage]
+
+
 def test_project_workspace_guides_deepagent_stage_loop_from_story_to_video(monkeypatch, tmp_path):
     story_rel_path = "output/smoke_story/小说正文.md"
     story_file = tmp_path / story_rel_path
@@ -52,7 +93,7 @@ def test_project_workspace_guides_deepagent_stage_loop_from_story_to_video(monke
             "label": stage,
             "model": "deepseek-v4-pro",
             "agent": "deepagent",
-            "content": f"{stage} draft for {story_path}; confirmed={','.join(stage_drafts)}",
+            "content": _valid_stage_content(stage),
             "events": [{"type": "tool_call", "name": f"draft_{stage}"}],
         }
 
@@ -105,7 +146,7 @@ def test_project_workspace_guides_deepagent_stage_loop_from_story_to_video(monke
         json={
             "run_id": run_id,
             "stage": "script",
-            "content": "角色：林晚。地点：运城。限制：真相不能提前揭露。",
+            "content": _valid_stage_content("script"),
         },
     )
     assert confirmed_script.status_code == 200

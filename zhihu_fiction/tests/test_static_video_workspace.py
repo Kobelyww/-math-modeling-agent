@@ -147,6 +147,22 @@ def test_video_workspace_can_retry_failed_deepagent_stage():
     assert html.count("this.deepAgentFailed = false") >= 5
 
 
+def test_video_workspace_exposes_stage_quality_preflight():
+    html = _html()
+
+    assert 'id="stage-quality-panel"' in html
+    assert "stageQuality: null" in html
+    assert "stageQualityLoading: false" in html
+    assert "validateActiveStageQuality()" in html
+    assert "'/api/drama-video/stage/quality'" in html
+    assert "@input.debounce.700ms=\"validateActiveStageQuality()\"" in html
+    assert "stageQualitySummary()" in html
+    assert "stageQualityErrors()" in html
+    assert "stageQualityWarnings()" in html
+    assert "await this.validateActiveStageQuality()" in html
+    assert "草稿质量未达标，请根据提示调整后再确认" in html
+
+
 def test_video_workspace_mentions_consistency_and_human_loop_controls():
     html = _html()
 

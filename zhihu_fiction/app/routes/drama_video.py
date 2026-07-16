@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from ..request_parsing import json_body, require_stripped, stripped_or_none
 from ..sse import queue_streaming_response
 from ...drama import DramaAdapterError
-from ...drama.stage_assets import estimate_video_cost
+from ...drama.stage_assets import estimate_video_cost, validate_stage_asset
 from ...drama.video import DramaVideoError, VideoJobStore
 from ..services import drama_video_deepagent_flow as deepagent_flow
 from ..services import drama_video_jobs
@@ -50,6 +50,16 @@ async def create_drama_video_stage(req: Request):
         return runtime.generate_video_stage_draft(deps, story_path, stage, stage_drafts)
     except DramaAdapterError as exc:
         raise HTTPException(500, f"短剧阶段创作失败: {exc}") from exc
+
+
+@router.post("/api/drama-video/stage/quality")
+async def validate_drama_video_stage_quality(req: Request):
+    body = await json_body(req)
+    stage = stripped_or_none(body, "stage") or ""
+    if stage not in runtime.VIDEO_DEEPAGENT_STAGES:
+        raise HTTPException(400, "stage must be one of script, style, plot, character_refs, storyboard")
+    content = stripped_or_none(body, "content") or ""
+    return validate_stage_asset(stage, content)
 
 
 @router.post("/api/drama-video/deepagent/run")
@@ -384,6 +394,12 @@ def _require_deepagent_video_cost_confirmation(deps, state, run_id: str, stage: 
     content = stripped_or_none(body, "content") or (spec.get("drafts") or {}).get(stage, "").strip()
     if not content:
         return
+    quality = validate_stage_asset(stage, content)
+    if not quality["valid"]:
+        raise HTTPException(
+            400,
+            f"分镜质量未达标: {'；'.join(quality['errors'])}",
+        )
     confirmed = set(spec.get("confirmed_stages") or [])
     required_previous = set(runtime.VIDEO_DEEPAGENT_STAGES) - {"storyboard"}
     if not required_previous.issubset(confirmed):

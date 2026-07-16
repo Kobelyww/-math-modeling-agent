@@ -4,6 +4,7 @@ from __future__ import annotations
 from zhihu_fiction.drama.stage_assets import (
     estimate_video_cost,
     normalize_stage_asset,
+    validate_stage_asset,
 )
 
 
@@ -75,3 +76,30 @@ def test_estimate_video_cost_uses_guardrails():
         "unit_price_cny": 0.8,
         "estimated_total_cny": 5.6,
     }
+
+
+def test_validate_stage_asset_rejects_placeholder_script():
+    result = validate_stage_asset("script", "script confirmed")
+
+    assert result["valid"] is False
+    assert result["stage"] == "script"
+    assert "内容过短" in result["errors"]
+    assert "缺少剧本结构" in result["errors"]
+
+
+def test_validate_stage_asset_accepts_production_storyboard():
+    text = """
+1. 场景：陆家小院 夜晚
+人物：陆沉舟、小满
+动作：小满突然剧烈咳嗽，陆沉舟抱起孩子冲向院门。
+对白：陆沉舟：打120！不要等！
+镜头：手持中近景快速推进，压迫感强
+时长：6秒
+视频生成Prompt：竖屏短剧，夜晚小院，淡黄色雾气，焦急奔跑，真实纪实风格
+"""
+
+    result = validate_stage_asset("storyboard", text)
+
+    assert result["valid"] is True
+    assert result["score"] >= 0.8
+    assert result["summary"]["shot_count"] == 1

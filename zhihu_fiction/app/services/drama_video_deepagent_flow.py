@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from fastapi import HTTPException
 
+from ...drama.stage_assets import validate_stage_asset
 from ..drama_video_stages import (
     DEEPAGENT_STAGES,
     STAGE_LABELS,
@@ -283,6 +284,12 @@ def confirm_stage(
         content = (spec.get("drafts") or {}).get(stage, "").strip()
     if not content:
         raise HTTPException(400, "content is required")
+    quality = validate_stage_asset(stage, content)
+    if not quality["valid"]:
+        raise HTTPException(
+            400,
+            f"{STAGE_LABELS[stage]}质量未达标: {'；'.join(quality['errors'])}",
+        )
 
     spec.setdefault("stage_drafts", {})[stage] = content[:12000]
     confirmed = spec.setdefault("confirmed_stages", [])

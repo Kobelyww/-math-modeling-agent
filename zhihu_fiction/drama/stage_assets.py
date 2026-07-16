@@ -5,6 +5,70 @@ import re
 from typing import Any
 
 
+STAGE_QUALITY_RULES = {
+    "script": {
+        "label": "剧本",
+        "min_chars": 120,
+        "required_any": (
+            ("集数规划", "第一集", "第1集", "场次", "场景"),
+            ("对白", "台词"),
+            ("冲突", "钩子", "悬念"),
+        ),
+    },
+    "style": {
+        "label": "风格设计",
+        "min_chars": 90,
+        "required_any": (
+            ("视觉", "视觉基调", "色彩"),
+            ("灯光", "镜头语言", "镜头"),
+            ("一致性", "负面约束", "服化道"),
+        ),
+    },
+    "plot": {
+        "label": "剧情设计",
+        "min_chars": 140,
+        "required_any": (
+            ("每集", "第一集", "第1集", "集数"),
+            ("反转", "冲突", "信息揭露"),
+            ("情绪", "爽点", "节奏"),
+        ),
+    },
+    "character_refs": {
+        "label": "人物参考图",
+        "min_chars": 140,
+        "required_any": (
+            ("角色", "人物", "主角"),
+            ("外貌", "年龄", "服装", "气质"),
+            ("Prompt", "prompt", "提示词", "一致性"),
+        ),
+    },
+    "storyboard": {
+        "label": "分镜",
+        "min_chars": 120,
+        "required_any": (
+            ("场景",),
+            ("人物", "角色"),
+            ("动作", "镜头"),
+            ("Prompt", "prompt", "视频生成"),
+        ),
+    },
+}
+
+PLACEHOLDER_PATTERNS = (
+    "script",
+    "style",
+    "plot",
+    "refs",
+    "reference",
+    "storyboard",
+    "draft",
+    "confirmed",
+    "确认剧本",
+    "确认稿",
+    "不太好的小说",
+)
+
+
 def normalize_stage_asset(stage: str, content: str) -> dict[str, Any]:
     raw = str(content or "").strip()
     asset: dict[str, Any] = {"stage": stage, "raw": raw}
@@ -13,6 +77,64 @@ def normalize_stage_asset(stage: str, content: str) -> dict[str, Any]:
     else:
         asset["sections"] = _parse_colon_sections(raw)
     return asset
+
+
+def validate_stage_asset(stage: str, content: str) -> dict[str, Any]:
+    """Return a production-readiness report for one short-drama stage draft."""
+    raw = str(content or "").strip()
+    rule = STAGE_QUALITY_RULES.get(stage, {"label": stage, "min_chars": 80, "required_any": ()})
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if len(raw) < int(rule["min_chars"]):
+        errors.append("内容过短")
+
+    if _looks_like_placeholder(raw):
+        errors.append("疑似占位稿")
+
+    missing_groups = [
+        tuple(group)
+        for group in rule.get("required_any", ())
+        if not _contains_any(raw, group)
+    ]
+    if missing_groups:
+        errors.append(f"缺少{rule['label']}结构")
+
+    asset = normalize_stage_asset(stage, raw)
+    summary: dict[str, Any] = {"char_count": len(raw)}
+    if stage == "storyboard":
+        shots = asset.get("shots") or []
+        summary["shot_count"] = len(shots)
+        if not shots:
+            errors.append("缺少可解析镜头")
+        else:
+            incomplete = [
+                shot.get("index")
+                for shot in shots
+                if not shot.get("scene") or not shot.get("action") or not shot.get("camera")
+            ]
+            if incomplete:
+                errors.append("镜头字段不完整")
+            prompt_count = sum(1 for block in _split_numbered_blocks(raw) if "prompt" in block["body"].lower() or "视频生成" in block["body"])
+            summary["prompt_count"] = prompt_count
+            if prompt_count < len(shots):
+                warnings.append("部分镜头缺少视频生成Prompt")
+    else:
+        sections = asset.get("sections") or {}
+        summary["section_count"] = len(sections)
+        if len(sections) < 2:
+            warnings.append("结构化小节偏少")
+
+    score = _quality_score(errors, warnings, summary)
+    return {
+        "stage": stage,
+        "label": rule["label"],
+        "valid": not errors,
+        "score": score,
+        "errors": errors,
+        "warnings": warnings,
+        "summary": summary,
+    }
 
 
 def estimate_video_cost(
@@ -33,6 +155,29 @@ def estimate_video_cost(
         "unit_price_cny": unit_price,
         "estimated_total_cny": round(safe_shot_count * unit_price, 2),
     }
+
+
+def _looks_like_placeholder(raw: str) -> bool:
+    compact = re.sub(r"[\s_\-：:。.!！]+", "", raw).lower()
+    if not compact:
+        return True
+    if compact in {re.sub(r"[\s_\-：:。.!！]+", "", item).lower() for item in PLACEHOLDER_PATTERNS}:
+        return True
+    return bool(re.fullmatch(r"(script|style|plot|refs|storyboard)(draft|confirmed|稿|确认)?", compact))
+
+
+def _contains_any(raw: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in raw for needle in needles)
+
+
+def _quality_score(errors: list[str], warnings: list[str], summary: dict[str, Any]) -> float:
+    if errors:
+        return 0.0
+    score = 1.0
+    score -= 0.1 * len(warnings)
+    if summary.get("char_count", 0) < 240:
+        score -= 0.1
+    return round(max(0.0, min(1.0, score)), 2)
 
 
 def _parse_storyboard_shots(raw: str) -> list[dict[str, Any]]:
