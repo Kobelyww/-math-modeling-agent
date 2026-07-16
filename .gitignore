@@ -101,3 +101,10 @@ newtest/ppt-pdf-study-agent-run-lifecycle/
 # IDE/example entrypoint stubs
 main.py
 newtest/main.py
+
+# local scratch exercises and root-level experimental fixtures
+/bubble_sort.py
+/decorator_study.py
+/tests/test_bubble_sort.py
+/tests/test_workspace_imports.py
+/data/
