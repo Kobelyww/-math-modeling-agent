@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from agent_app.domain.contracts import SubproblemSolutionContract
 from agent_app.domain.models import ArtifactRef, QualityReport
+from agent_app.domain.serialization import from_json_dict
+from agent_app.evaluators.staged_quality import evaluate_staged_solution_package
 
 REQUIRED_FILES = {
     "modeling_report.md",
@@ -79,6 +83,8 @@ def evaluate_submission(
             if name == "paper.tex" and "\\section" not in text:
                 fixes.append("paper.tex 缺少论文分节内容")
 
+        fixes.extend(_staged_solution_contract_fixes(artifact_root))
+
     passed = not missing
     if fixes:
         passed = False
@@ -90,3 +96,36 @@ def evaluate_submission(
         findings=findings,
         required_fixes=fixes,
     )
+
+
+def _staged_solution_contract_fixes(artifact_root: Path) -> list[str]:
+    fixes: list[str] = []
+    subproblem_root = artifact_root / "subproblems"
+    if not subproblem_root.exists():
+        return fixes
+
+    for contract_path in sorted(subproblem_root.glob("*/solution_contract.json")):
+        relative_contract_path = contract_path.relative_to(artifact_root)
+        try:
+            payload = json.loads(contract_path.read_text(encoding="utf-8"))
+            contract = from_json_dict(SubproblemSolutionContract, payload)
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            fixes.append(f"无法读取子问题求解合同: {relative_contract_path} ({exc})")
+            continue
+
+        report = evaluate_staged_solution_package(contract, artifact_root)
+        if not report.passed:
+            detail = "；".join(report.required_fixes[:4])
+            if detail:
+                fixes.append(
+                    f"{contract.subproblem_id} 子问题求解包未通过门禁: {detail}"
+                )
+            else:
+                fixes.append(f"{contract.subproblem_id} 子问题求解包未通过门禁")
+    return fixes

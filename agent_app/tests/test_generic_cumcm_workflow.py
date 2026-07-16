@@ -282,6 +282,358 @@ def test_generic_run_experiment_ignores_injected_generation_service(tmp_path):
     )
 
 
+def test_generic_run_experiment_writes_staged_subproblem_packages(tmp_path):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+        "问题2：预测未来三个月水质等级。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+    q1_contract_path = run_dir / "subproblems" / "q1" / "solution_contract.json"
+    q1_result_path = run_dir / "subproblems" / "q1" / "result.csv"
+    assert q1_contract_path.exists()
+    assert (run_dir / "subproblems" / "q1" / "model_derivation.md").exists()
+    assert (run_dir / "subproblems" / "q1" / "algorithm.md").exists()
+    assert (run_dir / "subproblems" / "q1" / "result_interpretation.md").exists()
+    assert (run_dir / "symbol_table.json").exists()
+    assert experiment["experiment_result"]["subproblem_solution_paths"] == [
+        str(q1_contract_path),
+        str(run_dir / "subproblems" / "q2" / "solution_contract.json"),
+    ]
+    assert experiment["experiment_result"]["symbol_table_path"] == str(
+        run_dir / "symbol_table.json"
+    )
+    contract = json.loads(q1_contract_path.read_text(encoding="utf-8"))
+    assert contract["status"] == "draft"
+    claims = json.loads(
+        (run_dir / "subproblems" / "q1" / "claim_delta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert claims[0]["status"] == "unsupported"
+    with q1_result_path.open("r", encoding="utf-8", newline="") as handle:
+        q1_rows = list(csv.DictReader(handle))
+    assert q1_rows == []
+    assert "baseline" not in q1_result_path.read_text(encoding="utf-8").lower()
+
+
+def test_generic_run_experiment_clears_stale_subproblem_packages_on_rerun(tmp_path):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+        "问题2：预测未来三个月水质等级。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+    assert (run_dir / "subproblems" / "q2" / "solution_contract.json").exists()
+
+    reduced_plan = {
+        **plan["modeling_plan"],
+        "subproblem_plans": plan["modeling_plan"]["subproblem_plans"][:1],
+    }
+    tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": reduced_plan,
+            "data_files": [],
+        }
+    )
+
+    assert not (run_dir / "subproblems" / "q2").exists()
+    symbol_table = json.loads((run_dir / "symbol_table.json").read_text(encoding="utf-8"))
+    assert {item["source_subproblem_id"] for item in symbol_table} == {"q1"}
+
+
+def test_generic_staged_package_rejects_sanitized_workflow_summary_result(
+    tmp_path, monkeypatch
+):
+    question = "C 题 河流水质评价。问题1：建立水质综合评价指标体系。"
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    run_dir = store.run_dir(state.run_id)
+    result_path = run_dir / "results" / "q1_result.csv"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(
+        "decision,objective_value,estimate,workflow_summary\n"
+        "inspect,12.5,0.91,solver strategy 选择求解方式\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0] if args else [],
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+    )
+
+    tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+
+    contract = json.loads(
+        (run_dir / "subproblems" / "q1" / "solution_contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert contract["status"] == "draft"
+
+
+def test_generic_staging_reads_canonical_results_basename_for_absolute_plan_path(
+    tmp_path, monkeypatch
+):
+    question = "C 题 河流水质评价。问题1：建立水质综合评价指标体系。"
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    run_dir = store.run_dir(state.run_id)
+    outside_result_path = tmp_path / "outside_q1_result.csv"
+    outside_result_path.write_text(
+        "decision,objective_value,estimate,diagnostic\n"
+        "outside-decision,1,0.1,wrong file\n",
+        encoding="utf-8",
+    )
+    plan["modeling_plan"]["subproblem_plans"][0]["result_file"] = str(
+        outside_result_path
+    )
+    canonical_result_path = run_dir / "results" / outside_result_path.name
+
+    def fake_successful_solver(*args, **kwargs):
+        canonical_result_path.parent.mkdir(parents=True, exist_ok=True)
+        canonical_result_path.write_text(
+            "decision,objective_value,estimate,diagnostic\n"
+            "inside-decision,12.5,0.91,canonical result\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(
+            args=args[0] if args else [],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        fake_successful_solver,
+    )
+
+    tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+
+    staged_result = (run_dir / "subproblems" / "q1" / "result.csv").read_text(
+        encoding="utf-8"
+    )
+    contract = json.loads(
+        (run_dir / "subproblems" / "q1" / "solution_contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "inside-decision" in staged_result
+    assert "outside-decision" not in staged_result
+    assert contract["status"] == "complete"
+
+
+def test_generic_failed_solver_does_not_stage_stale_canonical_result(
+    tmp_path, monkeypatch
+):
+    question = "C 题 河流水质评价。问题1：建立水质综合评价指标体系。"
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    run_dir = store.run_dir(state.run_id)
+    stale_result_path = run_dir / "results" / "q1_result.csv"
+    stale_result_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_result_path.write_text(
+        "decision,objective_value,estimate,diagnostic\n"
+        "stale-decision,12.5,0.91,old successful run\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0] if args else [],
+            returncode=1,
+            stdout="",
+            stderr="solver failed",
+        ),
+    )
+
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+
+    staged_result = (run_dir / "subproblems" / "q1" / "result.csv").read_text(
+        encoding="utf-8"
+    )
+    contract = json.loads(
+        (run_dir / "subproblems" / "q1" / "solution_contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert experiment["experiment_result"]["execution_status"] == "failed"
+    assert "stale-decision" not in staged_result
+    assert contract["status"] == "draft"
+
+
+def test_package_manifest_includes_staged_subproblem_artifacts(tmp_path):
+    from agent_app.services.subproblem_solution import write_subproblem_solution_packages
+
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text(
+        "# Modeling Report\n\n"
+        + "本报告包含变量、目标函数、约束、实验流程、结果解释和论文结论映射。\n"
+        * 80,
+        encoding="utf-8",
+    )
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\n"
+        "\\begin{document}\n"
+        "\\section{摘要} 水质评价模型摘要。\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (run_dir / "review_report.md").write_text("# Review\n", encoding="utf-8")
+    write_subproblem_solution_packages(
+        run_dir,
+        [
+            {
+                "id": "q1",
+                "title": "水质评价",
+                "problem_type": "optimization",
+                "model": "综合评价模型",
+                "algorithm": "枚举候选权重并排序",
+                "result_rows": [
+                    {
+                        "decision": "采用综合评价方案",
+                        "objective_value": 12.5,
+                        "estimate": 0.91,
+                        "diagnostic": "参数来自有效结果记录",
+                    }
+                ],
+            }
+        ],
+    )
+    tools = _tools_for(store)
+
+    result = tools["package_submission"].invoke({"run_id": state.run_id})
+
+    artifact_paths = {
+        artifact["path"] for artifact in result["package_manifest"]["artifacts"]
+    }
+    assert "subproblems/q1/solution_contract.json" in artifact_paths
+    assert "subproblems/q1/model_derivation.md" in artifact_paths
+
+
 def test_package_blocks_when_claim_gate_failed(tmp_path):
     store = RunStore(output_root=tmp_path)
     state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))

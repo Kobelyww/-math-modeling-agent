@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 from dataclasses import dataclass
 from io import StringIO
@@ -51,6 +52,11 @@ DERIVATION_REQUIRED_MARKERS = {
     "参数": ("参数", "parameter"),
     "假设": ("假设", "assumption"),
 }
+PARAMETER_SOURCE_MARKERS = (
+    "参数来源",
+    "parameter source",
+    "source of parameter",
+)
 CONCLUSION_LINK_MARKERS = (
     "论文结论",
     "结论关系",
@@ -63,11 +69,30 @@ ALGORITHM_REQUIRED_MARKERS = {
     "输出": ("输出", "output schema", "output"),
     "步骤": ("步骤", "step", "pseudocode", "伪代码"),
 }
+ALGORITHM_STRATEGY_PATTERN = re.compile(
+    r"(算法策略|算法|strategy|method)[^\S\r\n]*[:：][^\S\r\n]*\S",
+    re.IGNORECASE,
+)
+ALGORITHM_COMPLEXITY_MARKERS = (
+    "复杂度",
+    "搜索空间",
+    "search-space",
+    "search space",
+    "complexity",
+)
+ALGORITHM_FALLBACK_MARKERS = (
+    "失败",
+    "回退",
+    "fallback",
+    "failure",
+)
 FORMULA_PATTERN = re.compile(
     r"(\$[^$]+\$|\\\(|\\\[|\\sum|\\frac|[A-Za-z]\w*\s*[=<>≤≥])"
 )
 BASELINE_RESULT_MARKERS = (
+    "accept_generated_plan",
     "baseline_score",
+    "derived_decision",
     "generic_cumcm_contract_workflow",
     "solved_baseline",
     "solver strategy 选择求解方式",
@@ -76,15 +101,18 @@ BASELINE_RESULT_MARKERS = (
     "workflow summary",
 )
 RESULT_COLUMN_TERMS = (
-    "decision",
-    "objective",
-    "estimate",
-    "diagnostic",
-    "决策",
-    "目标",
-    "估计",
-    "诊断",
+    ("decision", "决策"),
+    ("objective", "目标"),
+    ("estimate", "估计"),
+    ("diagnostic", "诊断"),
 )
+INTERPRETATION_REQUIRED_MARKERS = {
+    "直接回答": ("直接回答", "direct answer"),
+    "结果表引用": ("结果表引用", "result.csv", "result table"),
+    "模型解释": ("为什么成立", "follows from", "模型"),
+    "局限": ("局限", "灵敏度", "sensitivity", "limitation"),
+    "claim": ("claim", "claim id", "声明"),
+}
 REQUIRED_ARTIFACT_FIELDS = {
     "model_derivation_path": "model_derivation",
     "algorithm_path": "algorithm",
@@ -162,6 +190,8 @@ def evaluate_derivation_artifact(path: Path, problem_type: str) -> QualityReport
         for label, markers in DERIVATION_REQUIRED_MARKERS.items():
             if not any(marker.lower() in normalized_text for marker in markers):
                 fixes.append(f"模型推导缺少{label}说明")
+        if not any(marker.lower() in normalized_text for marker in PARAMETER_SOURCE_MARKERS):
+            fixes.append("模型推导需要说明参数来源")
         if not any(marker in text for marker in CONCLUSION_LINK_MARKERS):
             fixes.append("模型推导需要说明与论文结论的关系")
 
@@ -188,17 +218,23 @@ def evaluate_algorithm_artifact(algorithm_path: Path, result_path: Path) -> Qual
         for label, markers in ALGORITHM_REQUIRED_MARKERS.items():
             if not any(marker.lower() in normalized_algorithm for marker in markers):
                 fixes.append(f"算法说明缺少{label}schema或步骤")
+        if not ALGORITHM_STRATEGY_PATTERN.search(algorithm_text):
+            fixes.append("算法说明缺少算法策略或名称")
+        if not any(marker.lower() in normalized_algorithm for marker in ALGORITHM_COMPLEXITY_MARKERS):
+            fixes.append("算法说明缺少复杂度或搜索空间说明")
+        if not any(marker.lower() in normalized_algorithm for marker in ALGORITHM_FALLBACK_MARKERS):
+            fixes.append("算法说明缺少失败与回退条件")
 
     if result_text:
-        normalized_result = result_text.lower()
-        if any(marker in normalized_result for marker in BASELINE_RESULT_MARKERS):
+        if contains_baseline_result_marker(result_text):
             fixes.append("结果文件仍包含 baseline/workflow 摘要标记，需要真实求解结果")
 
         result_shape = _result_shape(Path(result_path), result_text)
         if not result_shape.has_records:
             fixes.append("结果文件缺少非空数据行或结果记录")
-        if not _has_required_result_column(result_shape.columns):
+        if not _has_required_result_columns(result_shape.columns):
             fixes.append("结果文件缺少 decision/objective/estimate/diagnostic 列")
+        fixes.extend(_result_numeric_value_fixes(Path(result_path), result_text))
 
     return _quality_report("algorithm", fixes, total_checks=4)
 
@@ -245,6 +281,17 @@ def evaluate_symbol_table(
     return _quality_report("symbol_table", fixes, total_checks=max(2, len(symbols) + 1))
 
 
+def contains_baseline_result_marker(value: Any) -> bool:
+    raw_text = " ".join(_flatten_marker_text(value)).lower()
+    normalized_text = _normalize_marker_text(raw_text)
+    for marker in BASELINE_RESULT_MARKERS:
+        raw_marker = marker.lower()
+        normalized_marker = _normalize_marker_text(raw_marker)
+        if raw_marker in raw_text or normalized_marker in normalized_text:
+            return True
+    return False
+
+
 def evaluate_staged_solution_package(
     contract: SubproblemSolutionContract, artifact_root: Path
 ) -> QualityReport:
@@ -274,7 +321,18 @@ def evaluate_staged_solution_package(
         algorithm_report = evaluate_algorithm_artifact(
             resolved_paths["algorithm_path"], resolved_paths["result_path"]
         )
-        for report in (derivation_report, algorithm_report):
+        interpretation_report = _evaluate_result_interpretation_artifact(
+            resolved_paths["result_interpretation_path"]
+        )
+        claim_report = _evaluate_claim_delta_artifact(
+            resolved_paths["claim_delta_path"], root
+        )
+        for report in (
+            derivation_report,
+            algorithm_report,
+            interpretation_report,
+            claim_report,
+        ):
             fixes.extend(report.required_fixes)
 
     return _quality_report(
@@ -322,6 +380,56 @@ def _json_result_shape(text: str) -> ResultShape:
     return ResultShape(columns=[], has_records=False)
 
 
+def _result_numeric_value_fixes(path: Path, text: str) -> list[str]:
+    records = _result_records(path, text)
+    fixes: list[str] = []
+    for index, record in enumerate(records, start=1):
+        for label, terms in (
+            ("objective", RESULT_COLUMN_TERMS[1]),
+            ("estimate", RESULT_COLUMN_TERMS[2]),
+        ):
+            value = _matching_result_value(record, terms)
+            if value is None:
+                continue
+            if not _is_finite_number(value):
+                fixes.append(f"结果文件第 {index} 行 {label} 不是有限数值")
+    return fixes
+
+
+def _result_records(path: Path, text: str) -> list[dict[str, Any]]:
+    if path.suffix.lower() == ".json":
+        try:
+            payload: Any = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(payload, dict):
+            return [payload]
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        return []
+
+    try:
+        return list(csv.DictReader(StringIO(text)))
+    except csv.Error:
+        return []
+
+
+def _matching_result_value(record: dict[str, Any], terms: tuple[str, ...]) -> Any | None:
+    for key, value in record.items():
+        normalized_key = _normalize_column(str(key))
+        if any(term in normalized_key for term in terms):
+            return value
+    return None
+
+
+def _is_finite_number(value: Any) -> bool:
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number)
+
+
 def _has_non_empty_value(value: Any) -> bool:
     if value is None:
         return False
@@ -334,13 +442,145 @@ def _has_non_empty_value(value: Any) -> bool:
     return True
 
 
-def _has_required_result_column(columns: list[str]) -> bool:
+def _has_required_result_columns(columns: list[str]) -> bool:
     normalized_columns = [_normalize_column(column) for column in columns]
-    return any(
-        term in column
-        for column in normalized_columns
-        for term in RESULT_COLUMN_TERMS
-    )
+    candidate_indices = [
+        [
+            index
+            for index, column in enumerate(normalized_columns)
+            if any(term in column for term in term_group)
+        ]
+        for term_group in RESULT_COLUMN_TERMS
+    ]
+    if any(not indices for indices in candidate_indices):
+        return False
+    return _can_assign_distinct_columns(candidate_indices, used=set(), group_index=0)
+
+
+def _can_assign_distinct_columns(
+    candidate_indices: list[list[int]], *, used: set[int], group_index: int
+) -> bool:
+    if group_index >= len(candidate_indices):
+        return True
+    for index in candidate_indices[group_index]:
+        if index in used:
+            continue
+        if _can_assign_distinct_columns(
+            candidate_indices,
+            used={*used, index},
+            group_index=group_index + 1,
+        ):
+            return True
+    return False
+
+
+def _evaluate_result_interpretation_artifact(path: Path) -> QualityReport:
+    fixes: list[str] = []
+    text = _read_required_text(Path(path), "result_interpretation", fixes)
+    normalized_text = text.lower()
+    if text:
+        for label, markers in INTERPRETATION_REQUIRED_MARKERS.items():
+            if not any(marker.lower() in normalized_text for marker in markers):
+                fixes.append(f"结果解释缺少{label}说明")
+    return _quality_report("result_interpretation", fixes, total_checks=5)
+
+
+def _evaluate_claim_delta_artifact(path: Path, artifact_root: Path) -> QualityReport:
+    fixes: list[str] = []
+    text = _read_required_text(Path(path), "claim_delta", fixes)
+    if not text:
+        return _quality_report("claim_delta", fixes, total_checks=2)
+    try:
+        payload: Any = json.loads(text)
+    except json.JSONDecodeError as exc:
+        fixes.append(f"claim_delta.json 不是有效 JSON: {exc}")
+        return _quality_report("claim_delta", fixes, total_checks=2)
+    if not isinstance(payload, list):
+        fixes.append("claim_delta.json 必须是 claim 列表")
+        return _quality_report("claim_delta", fixes, total_checks=2)
+    supported_claims: list[dict[str, Any]] = []
+    for index, claim in enumerate(payload):
+        status = str(claim.get("status", "")).lower() if isinstance(claim, dict) else ""
+        if status not in {"supported", "limited"}:
+            continue
+        claim_fixes = _claim_record_fixes(claim, artifact_root)
+        if claim_fixes:
+            fixes.append(
+                f"claim_delta.json 第 {index + 1} 条 claim 格式错误: "
+                + "、".join(claim_fixes)
+            )
+            continue
+        supported_claims.append(claim)
+    if not supported_claims:
+        fixes.append("claim_delta.json 缺少带 evidence 的 supported/limited claim")
+    return _quality_report("claim_delta", fixes, total_checks=2)
+
+
+def _claim_record_fixes(claim: Any, artifact_root: Path) -> list[str]:
+    fixes: list[str] = []
+    if not isinstance(claim, dict):
+        return ["claim 不是对象"]
+    required_text_fields = ("claim_id", "section", "text")
+    for field in required_text_fields:
+        if not str(claim.get(field, "")).strip():
+            fixes.append(f"缺少 {field}")
+    if str(claim.get("status", "")).lower() not in {"supported", "limited"}:
+        fixes.append("status 不是 supported/limited")
+    evidence = claim.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        fixes.append("evidence 必须是非空列表")
+        return fixes
+    for evidence_index, item in enumerate(evidence):
+        evidence_fixes = _claim_evidence_fixes(item, artifact_root)
+        fixes.extend(f"evidence[{evidence_index}] {fix}" for fix in evidence_fixes)
+    return fixes
+
+
+def _claim_evidence_fixes(evidence: Any, artifact_root: Path) -> list[str]:
+    fixes: list[str] = []
+    if not isinstance(evidence, dict):
+        return ["不是对象"]
+    if not str(evidence.get("kind", "")).strip():
+        fixes.append("缺少 kind")
+    raw_path = str(evidence.get("path", "")).strip()
+    if not raw_path:
+        fixes.append("缺少 path")
+    if not str(evidence.get("locator", "")).strip():
+        fixes.append("缺少 locator")
+    if raw_path:
+        evidence_path = Path(raw_path)
+        resolved = (
+            evidence_path
+            if evidence_path.is_absolute()
+            else artifact_root / evidence_path
+        ).resolve(strict=False)
+        try:
+            resolved.relative_to(artifact_root)
+        except ValueError:
+            fixes.append("证据路径必须位于 artifact_root 内")
+        else:
+            if not resolved.exists() or not resolved.is_file():
+                fixes.append("证据不存在")
+    return fixes
+
+
+def _flatten_marker_text(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        items: list[str] = []
+        for key, item in value.items():
+            items.append(str(key))
+            items.extend(_flatten_marker_text(item))
+        return items
+    if isinstance(value, (list, tuple, set)):
+        items = []
+        for item in value:
+            items.extend(_flatten_marker_text(item))
+        return items
+    return [str(value)]
+
+
+def _normalize_marker_text(text: str) -> str:
+    return re.sub(r"[\s_\-]+", " ", text.lower())
 
 
 def _normalize_column(column: str) -> str:

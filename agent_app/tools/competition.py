@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from agent_app.domain.contracts import (
 from agent_app.domain.models import ArtifactRef, PaperDraft, QualityReport, RunSpec, RunState, RunStatus
 from agent_app.domain.serialization import to_json_dict
 from agent_app.evaluators import evaluate_claims, evaluate_paper, evaluate_submission
+from agent_app.evaluators.staged_quality import contains_baseline_result_marker
 from agent_app.services.artifact_service import ArtifactService
 from agent_app.services.claim_map import build_b_problem_claims, build_generic_claims
 from agent_app.services.contract_store import ContractStore
@@ -37,6 +39,10 @@ from agent_app.services.problem_package import build_problem_package
 from agent_app.services.run_trace import RunTraceWriter
 from agent_app.services.run_store import RunStore
 from agent_app.services.section_writer import write_section_files as write_claim_section_files
+from agent_app.services.subproblem_solution import (
+    aggregate_symbol_deltas,
+    write_subproblem_solution_packages,
+)
 from agent_app.workflow_packs.cumcm.contracts import (
     CumcmContractBundle,
     build_generic_cumcm_contract_bundle,
@@ -230,6 +236,102 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             for path in sorted(results_dir.rglob("*"))
             if path.is_file()
         ]
+
+    def _collect_run_artifacts(run_dir: Path) -> list[ArtifactRef]:
+        return [
+            ArtifactRef(
+                name=path.name,
+                path=path.relative_to(run_dir),
+                kind=_kind_for_path(path),
+            )
+            for path in sorted(run_dir.rglob("*"))
+            if path.is_file()
+        ]
+
+    def _clear_staged_subproblem_packages(run_dir: Path) -> None:
+        subproblem_root = run_dir / "subproblems"
+        if subproblem_root.exists():
+            shutil.rmtree(subproblem_root)
+
+    def _clear_canonical_staged_result_files(
+        run_dir: Path, subproblem_plans: list[dict[str, Any]]
+    ) -> None:
+        for plan in subproblem_plans:
+            result_path = _canonical_staged_result_path(
+                run_dir, plan.get("result_file")
+            )
+            if result_path is None:
+                continue
+            try:
+                if result_path.is_file():
+                    result_path.unlink()
+            except OSError:
+                continue
+
+    def _attach_staged_result_rows(
+        run_dir: Path, subproblem_plans: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        staged_plans: list[dict[str, Any]] = []
+        for plan in subproblem_plans:
+            staged_plan = dict(plan)
+            result_path = _canonical_staged_result_path(
+                run_dir, plan.get("result_file")
+            )
+            result_row = (
+                _result_row_from_generic_result(result_path, plan)
+                if result_path is not None
+                else {}
+            )
+            if result_row:
+                staged_plan["result_rows"] = [result_row]
+            staged_plans.append(staged_plan)
+        return staged_plans
+
+    def _canonical_staged_result_path(
+        run_dir: Path, result_file: Any
+    ) -> Path | None:
+        raw_result_file = str(result_file or "").strip()
+        if not raw_result_file:
+            return None
+        result_name = Path(raw_result_file).name
+        if not result_name or result_name in {".", ".."}:
+            return None
+        root = run_dir.resolve(strict=False)
+        candidate = (root / "results" / result_name).resolve(strict=False)
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        return candidate
+
+    def _result_row_from_generic_result(
+        result_path: Path, plan: dict[str, Any]
+    ) -> dict[str, str]:
+        if not result_path.exists() or not result_path.is_file():
+            return {}
+        try:
+            with result_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+        except (OSError, UnicodeDecodeError, csv.Error):
+            return {}
+        if not rows:
+            return {}
+        row = rows[0]
+        if contains_baseline_result_marker(row):
+            return {}
+        objective_value = row.get("objective_value") or row.get("objective") or ""
+        estimate = row.get("estimate") or row.get("probability") or ""
+        decision = row.get("decision") or ""
+        diagnostic = row.get("diagnostic") or ""
+        required_values = (decision, objective_value, estimate, diagnostic)
+        if not all(str(item).strip() for item in required_values):
+            return {}
+        return {
+            "decision": str(decision),
+            "objective_value": str(objective_value),
+            "estimate": str(estimate),
+            "diagnostic": str(diagnostic),
+        }
 
     def _run_artifact_names(run_id: str) -> set[str]:
         run_dir = run_store.run_dir(run_id)
@@ -1998,6 +2100,7 @@ if __name__ == "__main__":
         subproblem_plans = modeling_plan.get("subproblem_plans") or []
         code_path = artifact_service.write_text("solve.py", _generic_solve_code(subproblem_plans))
         run_dir = run_store.run_dir(run_id)
+        _clear_canonical_staged_result_files(run_dir, subproblem_plans)
         completed = subprocess.run(
             [sys.executable, str(code_path)],
             cwd=run_dir,
@@ -2007,6 +2110,24 @@ if __name__ == "__main__":
             check=False,
         )
         result_paths = _collect_result_paths(run_dir)
+        staged_plans = (
+            _attach_staged_result_rows(run_dir, subproblem_plans)
+            if completed.returncode == 0
+            else list(subproblem_plans)
+        )
+        _clear_staged_subproblem_packages(run_dir)
+        solution_contracts = write_subproblem_solution_packages(run_dir, staged_plans)
+        aggregate_symbol_deltas(run_dir)
+        subproblem_solution_paths = [
+            str(
+                run_dir
+                / "subproblems"
+                / contract.subproblem_id
+                / "solution_contract.json"
+            )
+            for contract in solution_contracts
+        ]
+        symbol_table_path = str(run_dir / "symbol_table.json")
         experiment_result = {
             "success": completed.returncode == 0,
             "execution_status": "success" if completed.returncode == 0 else "failed",
@@ -2016,6 +2137,8 @@ if __name__ == "__main__":
             "data_files": data_files,
             "result_paths": result_paths,
             "figure_paths": [],
+            "subproblem_solution_paths": subproblem_solution_paths,
+            "symbol_table_path": symbol_table_path,
             "stdout": completed.stdout,
             "stderr": completed.stderr,
             "notes": "Executed dynamic subproblem baseline workflow.",
@@ -2027,6 +2150,8 @@ if __name__ == "__main__":
             {
                 "workflow_type": modeling_plan.get("workflow_type"),
                 "result_paths": result_paths,
+                "subproblem_solution_paths": subproblem_solution_paths,
+                "symbol_table_path": symbol_table_path,
                 "execution_status": experiment_result["execution_status"],
             },
         )
@@ -2036,6 +2161,8 @@ if __name__ == "__main__":
             "code_path": str(code_path),
             "result_paths": result_paths,
             "figure_paths": [],
+            "subproblem_solution_paths": subproblem_solution_paths,
+            "symbol_table_path": symbol_table_path,
         }
 
     def _write_writer_service_paper_sidecars(
@@ -2619,15 +2746,7 @@ if __name__ == "__main__":
             "# Final Synthesis\n\n"
             "Structured DeepAgent competition artifacts are ready for review.\n",
         )
-        state.artifacts = [
-            ArtifactRef(
-                name=path.name,
-                path=path.relative_to(run_dir),
-                kind=_kind_for_path(path),
-            )
-            for path in sorted(run_dir.iterdir())
-            if path.is_file()
-        ]
+        state.artifacts = _collect_run_artifacts(run_dir)
         require_benchmark_results = (
             state.spec.options.workflow_mode == "benchmark"
             and state.spec.options.benchmark_id == BENCHMARK_2024_B_ID

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from agent_app.domain.contracts import SubproblemSolutionContract
 from agent_app.domain.models import (
     ArtifactRef,
     ExperimentResult,
     ModelingPlan,
     PaperDraft,
 )
+from agent_app.domain.serialization import to_json_dict
 from agent_app.evaluators import (
     evaluate_experiment,
     evaluate_input,
@@ -428,6 +431,62 @@ def test_submission_gate_does_not_infer_benchmark_from_model_text(tmp_path):
     report = evaluate_submission(artifacts, artifact_root=tmp_path)
 
     assert report.passed is True
+
+
+def test_submission_gate_rejects_incomplete_subproblem_solution_contract(tmp_path):
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    main()\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    contract = SubproblemSolutionContract(
+        subproblem_id="q1",
+        question_text="评价水质",
+        problem_type="optimization",
+        status="draft",
+        model_derivation_path=Path("subproblems/q1/model_derivation.md"),
+        algorithm_path=Path("subproblems/q1/algorithm.md"),
+        solver_path=Path("subproblems/q1/solver.py"),
+        result_path=Path("subproblems/q1/result.csv"),
+        result_interpretation_path=Path("subproblems/q1/result_interpretation.md"),
+        symbol_delta_path=Path("subproblems/q1/symbol_delta.json"),
+        claim_delta_path=Path("subproblems/q1/claim_delta.json"),
+    )
+    contract_path = tmp_path / "subproblems" / "q1" / "solution_contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(
+        json.dumps(to_json_dict(contract), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert any("子问题求解包" in item for item in report.required_fixes)
 
 
 def test_submission_gate_requires_benchmark_results_when_explicit(tmp_path):
