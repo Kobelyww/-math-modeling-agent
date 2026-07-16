@@ -1065,8 +1065,34 @@ if __name__ == "__main__":
         }
 
     def _problem_brief_text(problem_brief: dict[str, Any]) -> str:
+        background = str(problem_brief.get("background", ""))
+        subproblem_lines = []
+        for item in problem_brief.get("subproblems", []):
+            if not isinstance(item, dict):
+                continue
+            raw_id = str(item.get("id", "")).strip()
+            number = raw_id[1:] if raw_id.lower().startswith("q") else raw_id
+            label = f"问题{number}" if number else "问题"
+            objective = str(item.get("objective") or item.get("title") or "").strip()
+            if objective:
+                subproblem_lines.append(f"{label}：{objective}")
+        if subproblem_lines:
+            title_prefix = re.split(
+                r"问题\s*[0-9一二三四五六七八九十]+",
+                background,
+                maxsplit=1,
+            )[0].strip()
+            return "\n".join(
+                item
+                for item in [
+                    title_prefix,
+                    "\n".join(subproblem_lines),
+                    " ".join(str(item) for item in problem_brief.get("objectives", [])),
+                ]
+                if item
+            )
         parts = [
-            str(problem_brief.get("background", "")),
+            background,
             " ".join(str(item) for item in problem_brief.get("questions", [])),
             " ".join(str(item) for item in problem_brief.get("objectives", [])),
         ]
