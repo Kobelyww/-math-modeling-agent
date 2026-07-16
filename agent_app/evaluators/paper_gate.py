@@ -33,7 +33,14 @@ BANNED_INTERNAL_MARKERS = [
     "暂无已支持结论",
     "this is a scaffold",
 ]
+BASELINE_ONLY_MARKERS = [
+    "solver strategy 选择求解方式",
+    "claim map 追踪到具体文件",
+    "baseline 求解流程",
+    "workflow summary",
+]
 MIN_SECTION_CHARS = 18
+MIN_TOTAL_CHARS = 2200
 MIN_SECTION_CHARS_BY_NAME = {
     "关键词": 2,
 }
@@ -77,6 +84,21 @@ def evaluate_paper(paper: PaperDraft) -> QualityReport:
     ]
     if leaked_markers:
         fixes.append(f"论文泄露内部上下文: {', '.join(leaked_markers)}")
+    baseline_markers = [
+        marker
+        for marker in BASELINE_ONLY_MARKERS
+        if marker.lower() in normalized_text
+    ]
+    if baseline_markers:
+        fixes.append(
+            "论文包含 baseline/workflow 摘要痕迹，缺少真实推导、算法细节和结果解释"
+        )
+    total_body_chars = sum(len(str(value).strip()) for value in paper.sections.values())
+    if total_body_chars < MIN_TOTAL_CHARS:
+        fixes.append(
+            f"论文正文过短，需要扩展真实推导、算法说明、结果解释和讨论"
+            f"（当前 {total_body_chars} 字，至少 {MIN_TOTAL_CHARS} 字）"
+        )
     if latex_missing:
         fixes.append("缺少 paper.tex")
 

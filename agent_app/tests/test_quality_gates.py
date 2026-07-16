@@ -21,19 +21,22 @@ from agent_app.evaluators.paper_gate import BANNED_INTERNAL_MARKERS
 
 
 def _complete_paper_sections() -> dict[str, str]:
+    def expanded(sentence: str, repeat: int = 12) -> str:
+        return " ".join([sentence] * repeat)
+
     return {
-        "摘要": "本文围绕赛题目标建立可复现实验流程，并给出主要结论。",
+        "摘要": expanded("本文围绕赛题目标建立可复现实验流程，并给出主要结论。", 6),
         "关键词": "数学建模；优化决策；证据追踪",
-        "问题重述": "本节重述赛题要求、输入数据、约束条件与需要提交的结果。",
-        "模型假设": "样本相互独立，参数均来自题面、数据文件或显式实验估计。",
-        "符号说明": "x 表示核心决策变量，c 表示成本参数，y 表示输出指标。",
-        "问题分析": "本节分析约束与目标之间的关系，并说明各子问题依赖顺序。",
-        "模型建立与求解": "建立规划模型并给出求解算法、变量定义、约束和结果文件。",
-        "结果分析": "结果显示主要指标稳定，并能追踪到对应实验表格和 claim。",
-        "灵敏度": "扰动关键参数后比较目标值变化，用于限定结论的适用范围。",
-        "模型评价": "模型具有可解释性和可复现性，但对数据质量仍存在依赖。",
-        "参考文献": "列出质量控制、运筹优化和统计推断相关参考资料。",
-        "附录": "附录包含代码入口、实验数据、结果文件和审查报告路径。",
+        "问题重述": expanded("本节重述赛题要求、输入数据、约束条件与需要提交的结果。"),
+        "模型假设": expanded("样本相互独立，参数均来自题面、数据文件或显式实验估计。"),
+        "符号说明": expanded("x 表示核心决策变量，c 表示成本参数，y 表示输出指标。"),
+        "问题分析": expanded("本节分析约束与目标之间的关系，并说明各子问题依赖顺序。"),
+        "模型建立与求解": expanded("建立规划模型并给出求解算法、变量定义、约束和结果文件。"),
+        "结果分析": expanded("结果显示主要指标稳定，并能追踪到对应实验表格和 claim。"),
+        "灵敏度": expanded("扰动关键参数后比较目标值变化，用于限定结论的适用范围。"),
+        "模型评价": expanded("模型具有可解释性和可复现性，但对数据质量仍存在依赖。"),
+        "参考文献": expanded("列出质量控制、运筹优化和统计推断相关参考资料。"),
+        "附录": expanded("附录包含代码入口、实验数据、结果文件和审查报告路径。"),
     }
 
 
@@ -313,6 +316,35 @@ def test_paper_gate_rejects_missing_latex_file(tmp_path):
 
     assert report.passed is False
     assert "缺少 paper.tex" in report.required_fixes
+
+
+def test_paper_gate_rejects_workflow_summary_even_with_required_sections(tmp_path):
+    latex_path = tmp_path / "paper.tex"
+    latex_path.write_text(
+        "\\documentclass{ctexart}\n\\begin{document}\n\\section{摘要} 完整论文。\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    sections = _complete_paper_sections()
+    sections["模型建立与求解"] = (
+        "solver strategy 选择求解方式；baseline 求解流程；workflow summary。"
+    )
+    sections["结果分析"] = (
+        "claim map 追踪到具体文件，但这里只是 workflow summary，没有真实结果解释。"
+    )
+    paper = PaperDraft(
+        markdown_path=tmp_path / "paper.md",
+        latex_path=latex_path,
+        sections=sections,
+    )
+
+    report = evaluate_paper(paper)
+
+    assert report.passed is False
+    assert any(
+        ("baseline" in item.lower() or "workflow" in item.lower())
+        and ("真实推导" in item or "真实" in item)
+        for item in report.required_fixes
+    )
 
 
 def test_submission_gate_requires_core_artifacts():
