@@ -1,0 +1,1 @@
+"""CUMCM specialized templates."""

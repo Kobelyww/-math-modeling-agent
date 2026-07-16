@@ -49,6 +49,8 @@ class RunOptions:
     max_repair_attempts: int = 2
     compile_pdf: bool = True
     allow_online_search: bool = False
+    workflow_mode: str = "production"
+    benchmark_id: str = ""
 
 
 @dataclass
@@ -153,6 +155,7 @@ class ModelingPlan:
     algorithm_plan: str = ""
     evaluation_metrics: list[str] = field(default_factory=list)
     sensitivity_plan: str = ""
+    experiment_conclusion_links: list[str] = field(default_factory=list)
 
 
 @dataclass

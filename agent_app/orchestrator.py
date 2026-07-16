@@ -361,7 +361,13 @@ class Orchestrator:
         pt = usage.get("prompt_tokens", 0) if usage else 0
         ct = usage.get("completion_tokens", 0) if usage else 0
         if self.memory:
-            self.memory.remember(role, content)
+            self.memory.remember(
+                role,
+                content,
+                triggered_by=triggered_by,
+                prompt_tokens=pt,
+                completion_tokens=ct,
+            )
         else:
             stm.post(role, content, triggered_by=triggered_by,
                      prompt_tokens=pt, completion_tokens=ct)

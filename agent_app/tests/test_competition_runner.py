@@ -166,3 +166,40 @@ def test_runner_preserves_tool_saved_state_on_failure(tmp_path):
     assert [report.gate_name for report in persisted.quality_reports] == ["pre_failure_gate"]
     assert Path("results/output.csv") in {artifact.path for artifact in result.artifacts}
     assert Path("results/output.csv") in {artifact.path for artifact in persisted.artifacts}
+
+
+def test_runner_reports_partial_when_post_review_exception_happens(tmp_path):
+    class FailingAfterReviewCoordinator:
+        def __init__(self, run_store):
+            self.run_store = run_store
+
+        def invoke(self, payload):
+            run_id = payload["run_id"]
+            run_dir = Path(payload["run_dir"])
+            (run_dir / "modeling_report.md").write_text("# Model\n", encoding="utf-8")
+            (run_dir / "solve.py").write_text("print('ok')\n", encoding="utf-8")
+            (run_dir / "paper.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+            state = self.run_store.load_state(run_id)
+            state.quality_reports.append(
+                QualityReport(
+                    gate_name="review",
+                    passed=False,
+                    score=0.5,
+                    required_fixes=["rewrite paper"],
+                )
+            )
+            self.run_store.save_state(state)
+            raise FileNotFoundError(str(run_dir.parent / "run_test" / "run.json"))
+
+    runner = CompetitionPaperRunner(
+        output_root=tmp_path,
+        coordinator_factory=lambda **kwargs: FailingAfterReviewCoordinator(kwargs["run_store"]),
+    )
+
+    result = runner.run(RunSpec(question="生产过程中的决策问题"))
+    persisted = runner.run_store.load_state(result.run_id)
+
+    assert result.status == RunStatus.PARTIAL
+    assert persisted.status == RunStatus.PARTIAL
+    assert "质量审查未通过" in result.summary
+    assert "rewrite paper" in result.summary

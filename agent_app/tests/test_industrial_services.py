@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import subprocess
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from agent_app.services.code_execution import CodeExecutionService
 from agent_app.services.latex_service import LatexService
 from agent_app.services.literature_service import LiteratureService
 from agent_app.services.rag_service import RagService
+from agent_app.rag import INDEX_VERSION
 
 
 def test_code_execution_service_runs_in_working_directory(tmp_path):
@@ -488,6 +490,42 @@ def test_rag_service_queries_reloaded_index_from_fresh_instance(tmp_path):
     hits = second.query("评价问题", run_id="run_test", top_k=1)
 
     assert hits
+
+
+def test_rag_service_returns_empty_for_malformed_reloaded_index(tmp_path):
+    ref_dir = tmp_path / "refs"
+    ref_dir.mkdir()
+    (ref_dir / "paper.md").write_text("层次分析法 可用于评价问题", encoding="utf-8")
+
+    index_root = tmp_path / "index"
+    first = RagService(index_root=index_root)
+    first.build_index(ref_dir, run_id="run_test")
+    with (index_root / "run_test_rag.pkl").open("wb") as fp:
+        pickle.dump({"version": INDEX_VERSION}, fp)
+
+    second = RagService(index_root=index_root)
+
+    assert second.query("评价问题", run_id="run_test", top_k=1) == []
+
+
+def test_rag_service_rejects_reloaded_index_with_mismatched_payload_metadata(tmp_path):
+    ref_dir = tmp_path / "refs"
+    ref_dir.mkdir()
+    (ref_dir / "paper.md").write_text("层次分析法 可用于评价问题", encoding="utf-8")
+
+    index_root = tmp_path / "index"
+    first = RagService(index_root=index_root)
+    first.build_index(ref_dir, run_id="run_test")
+    index_path = index_root / "run_test_rag.pkl"
+    with index_path.open("rb") as fp:
+        payload = pickle.load(fp)
+    payload["metadata"] = {"version": INDEX_VERSION, "knowledge_dir": str(ref_dir), "source_fingerprint": []}
+    with index_path.open("wb") as fp:
+        pickle.dump(payload, fp)
+
+    second = RagService(index_root=index_root)
+
+    assert second.query("评价问题", run_id="run_test", top_k=1) == []
 
 
 def test_rag_service_rejects_unsafe_run_id(tmp_path):

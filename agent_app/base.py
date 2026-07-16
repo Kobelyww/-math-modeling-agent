@@ -242,10 +242,14 @@ class BaseAgent(ABC):
         ]
 
         full_output: list[str] = []
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
 
         for _round in range(max_tool_rounds + 1):
             response = tool_llm.invoke(messages)
-            self._last_usage = extract_token_usage(response)
+            usage = extract_token_usage(response)
+            total_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+            total_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+            self._last_usage = total_usage.copy()
 
             tool_calls = getattr(response, "tool_calls", None) or []
             if not tool_calls:
@@ -270,7 +274,10 @@ class BaseAgent(ABC):
 
         # Max rounds — force final answer
         final = tool_llm.invoke(messages)
-        self._last_usage = extract_token_usage(final)
+        usage = extract_token_usage(final)
+        total_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+        total_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+        self._last_usage = total_usage.copy()
         result = normalize_llm_content(final.content)
         full_output.append(result)
         return "".join(full_output)
