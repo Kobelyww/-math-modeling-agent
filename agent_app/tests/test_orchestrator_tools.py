@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -147,6 +148,61 @@ class TestSafeStreamLegacyBehavior:
         assert errors == []
 
 
+class TestUsageTracking:
+    def test_tool_loop_accumulates_usage_across_rounds(self, monkeypatch):
+        from agent_app.base import BaseAgent
+
+        class FakeToolLLM:
+            def __init__(self):
+                self.calls = 0
+
+            def bind_tools(self, tools):
+                return self
+
+            def invoke(self, messages):
+                self.calls += 1
+                response = MagicMock()
+                if self.calls == 1:
+                    response.content = ""
+                    response.tool_calls = [{
+                        "name": "echo",
+                        "args": {"value": "hello"},
+                        "id": "call-1",
+                    }]
+                    response.usage_metadata = {"input_tokens": 5, "output_tokens": 2}
+                else:
+                    response.content = "final answer"
+                    response.tool_calls = []
+                    response.usage_metadata = {"input_tokens": 7, "output_tokens": 3}
+                response.response_metadata = {}
+                return response
+
+        class FakeChatDeepSeek:
+            def __init__(self, **kwargs):
+                self.llm = FakeToolLLM()
+
+            def bind_tools(self, tools):
+                return self.llm
+
+        class FakeParentLLM:
+            api_key = "test-key"
+            api_base = ""
+
+        monkeypatch.setattr("langchain_deepseek.ChatDeepSeek", FakeChatDeepSeek)
+
+        def echo(value):
+            return value
+
+        monkeypatch.setitem(__import__("agent_app.base").base._TOOL_EXECUTORS, "echo", echo)
+
+        agent = BaseAgent(FakeParentLLM())
+        agent.role = "test-agent"
+        result = agent.invoke_with_tools("prompt", tools=[MagicMock(name="echo")], max_tool_rounds=2)
+
+        assert result == "\n[工具调用: echo(value='hello')]\nfinal answer"
+        assert agent.last_usage == {"prompt_tokens": 12, "completion_tokens": 5}
+
+
 class TestWriteFileTool:
     def test_write_file_allows_subdir(self, tmp_path, monkeypatch):
         from agent_app.exploration import write_file
@@ -165,3 +221,178 @@ class TestWriteFileTool:
         monkeypatch.setattr(config, "APP_ROOT", tmp_path)
         msg = write_file.invoke({"filepath": "../escape.py", "content": "bad"})
         assert "Invalid" in msg
+
+
+class TestToolPathSecurity:
+    def test_read_file_rejects_outside_workspace(self, tmp_path, monkeypatch):
+        from agent_app import config
+        from agent_app.exploration import read_file
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_text("secret", encoding="utf-8")
+        monkeypatch.setattr(config, "APP_ROOT", workspace / "agent_app")
+
+        msg = read_file.invoke({"filepath": str(secret)})
+
+        assert "outside workspace" in msg
+
+    def test_search_files_rejects_outside_workspace(self, tmp_path, monkeypatch):
+        from agent_app import config
+        from agent_app.exploration import search_files
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.setattr(config, "APP_ROOT", workspace / "agent_app")
+
+        msg = search_files.invoke({"pattern": "*.py", "directory": str(outside)})
+
+        assert "outside workspace" in msg
+
+    def test_read_csv_info_rejects_outside_workspace(self, tmp_path, monkeypatch):
+        from agent_app import config
+        from agent_app.tools import read_csv_info
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside_csv = tmp_path / "data.csv"
+        outside_csv.write_text("x\n1\n", encoding="utf-8")
+        monkeypatch.setattr(config, "APP_ROOT", workspace / "agent_app")
+
+        msg = read_csv_info.invoke({"filepath": str(outside_csv)})
+
+        assert "outside workspace" in msg
+
+
+class TestWebToolApi:
+    def test_web_tool_api_executes_python_tool(self, monkeypatch):
+        import asyncio
+
+        from agent_app.web import routes
+
+        class FakeTool:
+            @staticmethod
+            def invoke(args):
+                return f"ran {args['code']}"
+
+        monkeypatch.setitem(routes.WEB_TOOL_REGISTRY, "python_exec", FakeTool())
+
+        result = asyncio.run(routes.run_tool("python_exec", {"code": "print(1)"}))
+
+        assert result == {"result": "ran print(1)"}
+
+    def test_web_tool_api_normalizes_latex_content_key(self, monkeypatch):
+        import asyncio
+
+        from agent_app.web import routes
+
+        seen = {}
+
+        class FakeLatexTool:
+            @staticmethod
+            def invoke(args):
+                seen.update(args)
+                return "Compilation successful. PDF at: /tmp/paper.pdf"
+
+        monkeypatch.setitem(routes.WEB_TOOL_REGISTRY, "latex_compile", FakeLatexTool())
+
+        result = asyncio.run(routes.run_tool("latex_compile", {"tex_content": "\\documentclass{article}"}))
+
+        assert seen == {"content": "\\documentclass{article}"}
+        assert result["result"].startswith("Compilation successful")
+
+    def test_frontend_uses_latex_compile_content_parameter(self):
+        from pathlib import Path
+
+        js = Path("agent_app/web/static/app.js").read_text(encoding="utf-8")
+
+        assert "body: JSON.stringify({ content: latex })" in js
+        assert "tex_content" not in js
+
+    def test_web_tool_api_rejects_latex_filename_traversal(self, monkeypatch):
+        import asyncio
+
+        from agent_app.web import routes
+
+        seen = {}
+
+        class FakeLatexTool:
+            @staticmethod
+            def invoke(args):
+                seen.update(args)
+                return "should not run"
+
+        monkeypatch.setitem(routes.WEB_TOOL_REGISTRY, "latex_compile", FakeLatexTool())
+
+        result = asyncio.run(
+            routes.run_tool(
+                "latex_compile",
+                {"content": "\\documentclass{article}", "filename": "../escape"},
+            )
+        )
+
+        assert "error" in result
+        assert seen == {}
+
+    def test_http_tool_api_does_not_expose_python_exec(self):
+        from fastapi.testclient import TestClient
+
+        from agent_app.web.main import app
+
+        client = TestClient(app)
+        response = client.post("/api/tools/python_exec", json={"code": "print(1)"})
+
+        assert response.status_code == 404
+
+
+class TestDockerSandbox:
+    def test_build_image_skips_build_when_image_already_exists(self, monkeypatch, tmp_path):
+        from agent_app.sandbox.docker_sandbox import DockerSandbox, SandboxConfig
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            return result
+
+        monkeypatch.setattr("agent_app.sandbox.docker_sandbox.SANDBOX_DIR", tmp_path)
+        monkeypatch.setattr("agent_app.sandbox.docker_sandbox.shutil.which", lambda name: "/usr/bin/docker")
+        monkeypatch.setattr("agent_app.sandbox.docker_sandbox.subprocess.run", fake_run)
+
+        sandbox = DockerSandbox(SandboxConfig(image="agent-app-sandbox:test"))
+
+        assert sandbox.build_image() is True
+
+        assert calls == [["docker", "image", "inspect", "agent-app-sandbox:test"]]
+
+    def test_build_image_falls_back_to_build_when_image_inspect_raises(self, monkeypatch, tmp_path):
+        from agent_app.sandbox.docker_sandbox import DockerSandbox, SandboxConfig
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd == ["docker", "image", "inspect", "agent-app-sandbox:test"]:
+                raise subprocess.TimeoutExpired(cmd, timeout=kwargs.get("timeout"))
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            return result
+
+        monkeypatch.setattr("agent_app.sandbox.docker_sandbox.SANDBOX_DIR", tmp_path)
+        monkeypatch.setattr("agent_app.sandbox.docker_sandbox.shutil.which", lambda name: "/usr/bin/docker")
+        monkeypatch.setattr("agent_app.sandbox.docker_sandbox.subprocess.run", fake_run)
+
+        sandbox = DockerSandbox(SandboxConfig(image="agent-app-sandbox:test"))
+
+        assert sandbox.build_image() is True
+        assert calls[0] == ["docker", "image", "inspect", "agent-app-sandbox:test"]
+        assert calls[1][:4] == ["docker", "build", "-t", "agent-app-sandbox:test"]

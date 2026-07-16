@@ -1,8 +1,11 @@
 """Tests for context compressor, STM segmented storage, retry logic, conditions, and token extraction."""
 
+import os
+
 import pytest
 
 from agent_app.base import normalize_llm_content, _is_retryable, extract_token_usage
+from agent_app.config import Settings, load_settings
 from agent_app.conditions import (
     StopMessage,
     MaxRoundCondition,
@@ -30,6 +33,98 @@ class TestNormalizeLLMContent:
     def test_none_like(self):
         assert normalize_llm_content(None) == "None"
         assert normalize_llm_content(42) == "42"
+
+
+class TestSettings:
+    def test_load_settings_routes_deepseek_text_when_legacy_mimo_has_deepseek_key(self, tmp_path, monkeypatch):
+        for key in [
+            "LLM_PROVIDER",
+            "DEEPSEEK_API_KEY",
+            "DEEPSEEK_API_BASE",
+            "DEEPSEEK_MODEL",
+            "TEXT_AGENT_PROVIDER",
+            "VISION_PROVIDER",
+            "MIMO_API_KEY",
+            "MIMO_API_BASE",
+            "MIMO_VISION_MODEL",
+            "MIMO_MODEL",
+        ]:
+            monkeypatch.delenv(key, raising=False)
+
+        env_path = tmp_path / ".env"
+        env_path.write_text(
+            "\n".join(
+                [
+                    "LLM_PROVIDER=mimo",
+                    "DEEPSEEK_API_KEY=deepseek-key",
+                    "DEEPSEEK_API_BASE=https://api.deepseek.com",
+                    "DEEPSEEK_MODEL=deepseek-chat",
+                    "MIMO_API_KEY=mimo-key",
+                    "MIMO_API_BASE=https://api.xiaomimimo.com/v1",
+                    "MIMO_MODEL=mimo-v2.5-pro",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        settings = load_settings(env_path)
+
+        assert settings.llm_provider == "deepseek"
+        assert settings.text_agent_provider == "deepseek"
+        assert settings.vision_provider == "mimo"
+        assert settings.vision_api_key == "mimo-key"
+        assert settings.vision_api_base == "https://api.xiaomimimo.com/v1"
+        assert settings.vision_model == "mimo-v2.5-pro"
+        assert settings.api_key == "deepseek-key"
+        assert settings.api_base == "https://api.deepseek.com"
+        assert settings.model == "deepseek-chat"
+        assert os.environ["DEEPSEEK_API_KEY"] == "deepseek-key"
+
+
+class TestLLMFactory:
+    def test_create_llm_uses_settings_max_tokens_by_default(self, monkeypatch):
+        from agent_app import llm as llm_module
+
+        seen = {}
+
+        class FakeChatDeepSeek:
+            def __init__(self, **kwargs):
+                seen.update(kwargs)
+
+        monkeypatch.setattr(llm_module, "ChatDeepSeek", FakeChatDeepSeek)
+        settings = Settings(
+            api_key="test-key",
+            api_base=None,
+            model="deepseek-chat",
+            temperature=0.3,
+            max_tokens=2048,
+        )
+
+        llm_module.create_llm(settings)
+
+        assert seen["max_tokens"] == 2048
+
+    def test_create_llm_omits_zero_max_tokens(self, monkeypatch):
+        from agent_app import llm as llm_module
+
+        seen = {}
+
+        class FakeChatDeepSeek:
+            def __init__(self, **kwargs):
+                seen.update(kwargs)
+
+        monkeypatch.setattr(llm_module, "ChatDeepSeek", FakeChatDeepSeek)
+        settings = Settings(
+            api_key="test-key",
+            api_base=None,
+            model="deepseek-chat",
+            temperature=0.3,
+            max_tokens=0,
+        )
+
+        llm_module.create_llm(settings)
+
+        assert "max_tokens" not in seen
 
 
 class TestRetryClassification:

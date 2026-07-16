@@ -72,8 +72,21 @@ class MemoryManager:
 
     # ─── 短期记忆 ─────────────────────────────────────────────────────
 
-    def remember(self, role: str, content: str) -> AgentMessage:
-        msg = self.stm.post(role, content)
+    def remember(
+        self,
+        role: str,
+        content: str,
+        triggered_by: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ) -> AgentMessage:
+        msg = self.stm.post(
+            role,
+            content,
+            triggered_by=triggered_by,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
 
         if self.compressor and self.compressor.should_compress(
             self.stm.total_tokens, current_round=self.stm.round_idx

@@ -1,3 +1,4 @@
+
 """Hermes 风格自进化管线（对标 NousResearch/hermes-agent）。
 
 7 步文本优化管线：

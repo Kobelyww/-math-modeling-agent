@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from agent_app.agents import MODELER_PROMPT, PLANNER_PROMPT, PROGRAMMER_PROMPT, REVIEWER_PROMPT
 from agent_app.agent_loop import (
     ACTION_TO_ROLE,
     AgentLoopDecision,
@@ -35,6 +36,27 @@ def test_parse_coordinator_decision_accepts_json_object():
     assert decision.target_agent == "modeler"
     assert "mathematical" in decision.reason
     assert "constraints" in decision.instruction
+
+
+def test_planner_prompt_requires_research_framework_and_experiment_claim_links():
+    assert "问题陈述" in PLANNER_PROMPT
+    assert "动机与论证" in PLANNER_PROMPT
+    assert "相关工作" in PLANNER_PROMPT
+    assert "拟提出的方法" in PLANNER_PROMPT
+    assert "分阶段实验设计" in PLANNER_PROMPT
+    assert "论文结论" in PLANNER_PROMPT
+    assert "关系" in PLANNER_PROMPT
+    assert "遍历所有可能组合" in PLANNER_PROMPT
+    assert "3个月" not in PLANNER_PROMPT
+    assert "6个月" not in PLANNER_PROMPT
+
+
+def test_experiment_producing_agent_prompts_require_claim_linkage():
+    for prompt in (MODELER_PROMPT, PROGRAMMER_PROMPT, REVIEWER_PROMPT):
+        assert "论文结论" in prompt
+        assert "支撑" in prompt
+        assert "限制" in prompt
+        assert "证伪" in prompt
 
 
 def test_action_to_role_covers_routed_valid_actions():
@@ -294,6 +316,89 @@ def test_web_solver_selector_supports_agent_loop():
     assert solver.__name__ == "solve_agent_loop"
 
 
+def test_web_solve_registers_pending_task_without_requiring_websocket(monkeypatch):
+    import asyncio
+
+    from agent_app.web import routes
+
+    created_tasks = []
+
+    async def fake_runner(task_id, question, strategy, top_k):
+        created_tasks.append((task_id, question, strategy, top_k))
+
+    monkeypatch.setattr(routes, "_run_solve", fake_runner)
+    monkeypatch.setattr(routes.asyncio, "create_task", lambda coro: created_tasks.append(coro))
+
+    routes._pending_tasks.clear()
+    routes._active_tasks.clear()
+
+    result = asyncio.run(routes.solve({"question": "优化交通流", "strategy": "agent_loop", "top_k": 4}))
+
+    assert result["status"] == "pending"
+    assert result["task_id"] in routes._pending_tasks
+    assert routes._pending_tasks[result["task_id"]] == {
+        "question": "优化交通流",
+        "strategy": "agent_loop",
+        "top_k": 4,
+    }
+    assert created_tasks == []
+
+
+def test_websocket_connect_starts_pending_task(monkeypatch):
+    import asyncio
+
+    from agent_app.web import routes
+
+    scheduled = []
+
+    async def fake_runner(task_id, question, strategy, top_k):
+        return None
+
+    class FakeWebSocket:
+        async def accept(self):
+            return None
+
+        async def receive_text(self):
+            raise routes.WebSocketDisconnect()
+
+    routes._pending_tasks.clear()
+    routes._active_tasks.clear()
+    routes._pending_tasks["abc123"] = {
+        "question": "优化交通流",
+        "strategy": "agent_loop",
+        "top_k": 5,
+    }
+    monkeypatch.setattr(routes, "_run_solve", fake_runner)
+    monkeypatch.setattr(routes.asyncio, "create_task", lambda coro: scheduled.append(coro))
+
+    asyncio.run(routes.ws_solve(FakeWebSocket(), "abc123"))
+
+    assert "abc123" not in routes._pending_tasks
+    assert len(scheduled) == 1
+    scheduled[0].close()
+
+
+def test_web_health_reports_pending_task_count():
+    import asyncio
+
+    from agent_app.web import routes
+
+    routes._pending_tasks.clear()
+    routes._pending_tasks["waiting"] = {
+        "question": "优化交通流",
+        "strategy": "agent_loop",
+        "top_k": 5,
+    }
+
+    health_payload = asyncio.run(routes.health())
+    status_payload = asyncio.run(routes.status())
+
+    assert health_payload["pending_tasks"] == 1
+    assert status_payload["pending_tasks"] == 1
+
+    routes._pending_tasks.clear()
+
+
 def test_gui_default_mode_is_agent_loop():
     from agent_app.gui import COLLABORATION_MODES
 
@@ -310,6 +415,54 @@ def test_web_template_defaults_to_paper_chat_console():
     assert 'id="chat-log"' in html
     assert 'id="followup-input"' in html
     assert 'id="artifact-rail"' in html
+
+
+def test_web_paper_route_serves_paper_chat_console():
+    from fastapi.testclient import TestClient
+
+    from agent_app.web.main import app
+
+    client = TestClient(app)
+
+    response = client.get("/paper")
+
+    assert response.status_code == 200
+    assert "数模 DeepAgent 论文生产系统" in response.text
+    assert 'id="btn-paper"' in response.text
+    assert 'id="chat-log"' in response.text
+
+
+def test_mimo_table_reconstruction_renders_page_and_returns_markdown(monkeypatch):
+    from agent_app.web import routes
+
+    calls = {}
+
+    class FakePixmap:
+        def tobytes(self, fmt):
+            calls["format"] = fmt
+            return b"png-bytes"
+
+    class FakePage:
+        def get_pixmap(self, matrix, alpha):
+            calls["alpha"] = alpha
+            return FakePixmap()
+
+    monkeypatch.setattr(
+        routes,
+        "_mimo_table_vision_config",
+        lambda: {"api_key": "test", "api_base": "https://api.xiaomimimo.com/v1", "model": "mimo-v2.5-pro"},
+    )
+    monkeypatch.setattr(
+        routes,
+        "_call_mimo_table_vision",
+        lambda image_b64, config, page_number: "| 情况 | 次品率 |\n| --- | --- |\n| 1 | 10% |",
+    )
+
+    result = routes._reconstruct_tables_with_mimo(FakePage(), 1)
+
+    assert calls == {"alpha": False, "format": "png"}
+    assert "[Mimo 视觉重建表格 - 第 1 页]" in result
+    assert "| 情况 | 次品率 |" in result
 
 
 def test_web_assets_define_paper_chat_regions():

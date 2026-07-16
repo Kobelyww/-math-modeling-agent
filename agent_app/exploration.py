@@ -31,6 +31,29 @@ MAX_FILE_SIZE = 1_000_000  # 1MB
 DEFAULT_READ_LIMIT = 2000  # lines
 
 
+def _workspace_root() -> Path:
+    from . import config
+
+    return config.APP_ROOT.parent.resolve()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_workspace_path(path_text: str) -> tuple[Path | None, str | None]:
+    root = _workspace_root()
+    raw = Path(path_text or ".").expanduser()
+    path = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    if not _is_within(path, root):
+        return None, f"Path outside workspace is not allowed: {path_text}"
+    return path, None
+
+
 @tool
 def read_file(filepath: str, offset: int = 0, limit: int = DEFAULT_READ_LIMIT) -> str:
     """Read a file from the local filesystem. Returns file content with line numbers.
@@ -45,7 +68,9 @@ def read_file(filepath: str, offset: int = 0, limit: int = DEFAULT_READ_LIMIT) -
 
     Example: read_file('/path/to/file.py', offset=100, limit=50)
     """
-    path = Path(filepath).expanduser().resolve()
+    path, error = _resolve_workspace_path(filepath)
+    if error:
+        return error
 
     if not path.exists():
         return f"File not found: {filepath}"
@@ -101,7 +126,9 @@ def search_files(pattern: str, directory: str = ".", recursive: bool = True) -> 
     Example: search_files('*.py', '.')
     Example: search_files('test_*.py', 'src/', recursive=True)
     """
-    base = Path(directory).expanduser().resolve()
+    base, error = _resolve_workspace_path(directory)
+    if error:
+        return error
 
     if not base.exists():
         return f"Directory not found: {directory}"
@@ -157,7 +184,9 @@ def search_content(
     Example: search_content('def solve', '.', '*.py')
     Example: search_content('TODO', 'src/', '*.py', max_results=20)
     """
-    base = Path(directory).expanduser().resolve()
+    base, error = _resolve_workspace_path(directory)
+    if error:
+        return error
 
     if not base.exists():
         return f"Directory not found: {directory}"
@@ -219,7 +248,9 @@ def list_directory(path: str = ".", depth: int = 1) -> str:
     Example: list_directory('.')
     Example: list_directory('output/', depth=2)
     """
-    base = Path(path).expanduser().resolve()
+    base, error = _resolve_workspace_path(path)
+    if error:
+        return error
 
     if not base.exists():
         return f"Directory not found: {path}"

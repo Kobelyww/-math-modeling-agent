@@ -55,6 +55,68 @@ class TestLongTermMemory:
         ltm = LongTermMemory(db_path=db)
         yield ltm
 
+    def test_search_uses_each_row_rank(self, ltm, monkeypatch):
+        class FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class FakeConnection:
+            def __init__(self, rows):
+                self.rows = rows
+                self.executed = []
+                self.updated = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, query, params=None):
+                self.executed.append((query, params))
+                return FakeResult(self.rows)
+
+            def executemany(self, query, params):
+                self.updated.append((query, list(params)))
+
+        rows = [
+            {
+                "id": 1,
+                "type": "problem",
+                "title": "First",
+                "content": "content",
+                "tags": "[]",
+                "created_at": "2026-01-01T00:00:00",
+                "access_count": 0,
+                "importance": 0.1,
+                "scope": "/",
+                "rank": 0.1,
+            },
+            {
+                "id": 2,
+                "type": "pattern",
+                "title": "Second",
+                "content": "content",
+                "tags": "[]",
+                "created_at": "2026-01-01T00:00:00",
+                "access_count": 0,
+                "importance": 0.1,
+                "scope": "/",
+                "rank": 0.9,
+            },
+        ]
+
+        fake_conn = FakeConnection(rows)
+        monkeypatch.setattr(ltm, "_connect", lambda: fake_conn)
+        monkeypatch.setattr(ltm, "_compute_composite_score", lambda rank, entry: rank)
+
+        results = ltm.search("content", top_k=1, oversample=True)
+
+        assert [r.id for r in results] == [2]
+
     def test_add_and_search(self, ltm):
         ltm.add("problem", "交通流优化", "使用 NS 模型优化交通流", ["traffic"])
         results = ltm.search("交通流", top_k=3)
@@ -87,6 +149,22 @@ class TestMemoryManager:
         mm.remember("modeler", "建模测试输出")
         ctx = mm.get_context()
         assert "建模测试输出" in ctx
+
+    def test_remember_preserves_metadata(self):
+        mm = MemoryManager(use_redis=False)
+
+        msg = mm.remember(
+            "programming",
+            "代码输出",
+            triggered_by="modeling",
+            prompt_tokens=11,
+            completion_tokens=7,
+        )
+
+        assert msg.triggered_by == "modeling"
+        assert msg.prompt_tokens == 11
+        assert msg.completion_tokens == 7
+        assert mm.stm.latest_by_role("programming").total_tokens == 18
 
     def test_archive_solve(self):
         mm = MemoryManager(use_redis=False)

@@ -53,20 +53,22 @@ class CompetitionPaperRunner:
         state.status = RunStatus.RUNNING
         self.run_store.save_state(state)
 
+        requested_status = RunStatus.COMPLETED
         try:
             coordinator = self._create_coordinator()
             response = coordinator.invoke(self._build_coordinator_payload(state.run_id, run_dir, spec))
             state = self.run_store.load_state(state.run_id)
-            state.status = self._status_from_response(response)
+            requested_status = self._status_from_response(response)
             summary = self._summarize_response(response)
         except Exception as exc:
             state = self._load_latest_state(state)
-            state.status = RunStatus.FAILED
+            requested_status = RunStatus.FAILED
             summary = str(exc)
 
         state.artifacts = self._collect_artifacts(run_dir)
-        if state.status == RunStatus.COMPLETED and not self._has_core_submission_artifacts(state.artifacts):
-            state.status = RunStatus.PARTIAL
+        state.status = self._resolve_status(requested_status, state)
+        if state.status == RunStatus.PARTIAL and self._has_failed_quality_report(state):
+            summary = self._quality_failure_summary(state)
         self.run_store.save_state(state)
         return RunResult(
             run_id=state.run_id,
@@ -160,6 +162,37 @@ class CompetitionPaperRunner:
     def _has_core_submission_artifacts(self, artifacts: list[ArtifactRef]) -> bool:
         names = {artifact.path.name for artifact in artifacts}
         return {"modeling_report.md", "solve.py", "paper.tex"}.issubset(names)
+
+    def _has_failed_quality_report(self, state: Any) -> bool:
+        return any(not report.passed for report in state.quality_reports)
+
+    def _resolve_status(self, requested_status: RunStatus, state: Any) -> RunStatus:
+        has_core_artifacts = self._has_core_submission_artifacts(state.artifacts)
+        if self._has_failed_quality_report(state) and has_core_artifacts:
+            return RunStatus.PARTIAL
+        if requested_status == RunStatus.COMPLETED and not has_core_artifacts:
+            return RunStatus.PARTIAL
+        return requested_status
+
+    def _quality_failure_summary(self, state: Any) -> str:
+        failed_reports = [report for report in state.quality_reports if not report.passed]
+        fixes = [
+            fix
+            for report in failed_reports
+            for fix in report.required_fixes
+            if fix
+        ]
+        if fixes:
+            return "质量审查未通过，需要修改：" + "；".join(fixes[:6])
+        findings = [
+            finding
+            for report in failed_reports
+            for finding in report.findings
+            if finding
+        ]
+        if findings:
+            return "质量审查未通过，关键发现：" + "；".join(findings[:6])
+        return "质量审查未通过，需要修改后继续。"
 
     def _load_latest_state(self, state: Any) -> Any:
         try:

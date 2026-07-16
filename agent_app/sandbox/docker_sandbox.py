@@ -92,6 +92,18 @@ class DockerSandbox:
 
         dockerfile = SANDBOX_DIR / "Dockerfile"
 
+        if not force:
+            try:
+                inspect = subprocess.run(
+                    ["docker", "image", "inspect", self.config.image],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if inspect.returncode == 0:
+                    self._image_built = True
+                    return True
+            except Exception as exc:
+                logger.info("[Sandbox] Image inspect failed, building image: %s", exc)
+
         result = subprocess.run(
             ["docker", "build", "-t", self.config.image, "-f", str(dockerfile), str(SANDBOX_DIR)],
             capture_output=True, text=True, timeout=120,

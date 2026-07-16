@@ -294,6 +294,15 @@ async function rebuildRAG() {
   }
 }
 
+async function compileLatex(latex) {
+  const resp = await fetch('/api/tools/latex_compile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: latex }),
+  });
+  return resp.json();
+}
+
 async function loadSkills() {
   try {
     const resp = await fetch('/api/skills');

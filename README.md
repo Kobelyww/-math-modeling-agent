@@ -143,7 +143,7 @@ output/
 ```bash
 git clone git@github.com:Kobelyww/-math-modeling-agent.git
 cd -math-modeling-agent
-cp .env.example .env          # 编辑 .env 填入 DEEPSEEK_API_KEY
+cp agent_app/.env.example agent_app/.env  # 编辑 agent_app/.env 填入 DEEPSEEK_API_KEY / MIMO_API_KEY
 pip install -r agent_app/requirements.txt
 
 # 启动 Redis Stack（记忆系统后端，可选）

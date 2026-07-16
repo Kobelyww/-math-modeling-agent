@@ -155,6 +155,7 @@ class ModelingPlan:
     algorithm_plan: str = ""
     evaluation_metrics: list[str] = field(default_factory=list)
     sensitivity_plan: str = ""
+    experiment_conclusion_links: list[str] = field(default_factory=list)
 
 
 @dataclass

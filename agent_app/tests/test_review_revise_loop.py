@@ -1,3 +1,5 @@
+import pytest
+
 from agent_app.deepagent.runner import CompetitionPaperRunner
 from agent_app.domain.models import RunSpec, RunStatus
 from agent_app.services.run_store import RunStore
@@ -21,6 +23,11 @@ def test_failed_review_prevents_completed_package(tmp_path):
 
     assert review["quality_report"]["passed"] is False
     assert review["quality_report"]["required_fixes"]
+    persisted = store.load_state(state.run_id)
+    assert [(report.gate_name, report.passed) for report in persisted.quality_reports] == [("review", False)]
+    with pytest.raises(Exception, match="质量审查未通过"):
+        tools["package_submission"].invoke({"run_id": state.run_id})
+    assert not (run_dir / "final_synthesis.md").exists()
 
 
 class FakeTool:
