@@ -614,3 +614,41 @@ def test_plan_model_uses_analyzed_problem_text_when_run_spec_question_is_placeho
     assert (run_dir / "results" / "q2_result.csv").exists()
     assert "抽样检测方案" in problem_contract["subproblems"][0]["question_text"]
     assert "检测和拆解决策" in problem_contract["subproblems"][1]["question_text"]
+
+
+def test_plan_model_preserves_pdf_extracted_subproblems_after_long_preamble(tmp_path):
+    pdf_extracted_text = (
+        "2024 年高教社杯全国大学生数学建模竞赛题目\n"
+        "（请先阅读全国大学生数学建模竞赛论文格式规范）\n"
+        "B 题  生产过程中的决策问题\n"
+        + "某企业生产某种畅销的电子产品，需要分别购买两种零配件。"
+        * 12
+        + "\n请建立数学模型，解决以下问题：\n"
+        "问题1  供应商声称一批零配件的次品率不会超过某个标称值，请设计抽样检测方案。\n"
+        "问题2  已知两种零配件和成品次品率，请为企业生产过程的各个阶段作出检测和拆解决策。\n"
+        "问题3  对 m 道工序、n 个零配件，重复问题\n"
+        "2，给出生产过程的决策方案。\n"
+        "问题4  假设问题2 和问题3 中零配件、半成品和成品的次品率均是通过抽样检测方法得到的。\n"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=pdf_extracted_text))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": pdf_extracted_text}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+    problem_contract = json.loads((run_dir / "contracts" / "problem_contract.json").read_text(encoding="utf-8"))
+
+    assert [item["id"] for item in problem["problem_brief"]["subproblems"]] == ["q1", "q2", "q3", "q4"]
+    assert [item["id"] for item in plan["modeling_plan"]["subproblem_plans"]] == ["q1", "q2", "q3", "q4"]
+    assert [item["subproblem_id"] for item in problem_contract["subproblems"]] == ["q1", "q2", "q3", "q4"]
