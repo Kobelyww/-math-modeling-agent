@@ -26,6 +26,12 @@ build/
 
 # git worktrees
 .worktrees/
+.claude/worktrees/
+.claude/settings.local.json
+
+# local agent/index state
+.codegraph/
+.mcp.json
 
 # agent_app runtime artifacts
 agent_app/output/*
@@ -71,3 +77,20 @@ dump.rdb
 
 # local brainstorming mockups
 .superpowers/
+
+# LaTeX/generated document artifacts
+*.aux
+*.log
+*.toc
+*.out
+*.xdv
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.synctex(busy)
+resume/build/
+claude_and_hermes_agent_guide.pdf
+
+# copied/temporary implementation snapshots
+newtest/ppt-pdf-study-agent-mvp8/
+newtest/ppt-pdf-study-agent-run-lifecycle/
