@@ -49,6 +49,8 @@ Day2/
 FastAPI/
 DeepSeekV4Agent/
 distilled_skills/
+quant-trading/
+werewolf/
 
 # zhihu_fiction runtime artifacts
 zhihu_fiction/output/
