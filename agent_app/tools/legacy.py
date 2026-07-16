@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import operator
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -15,6 +16,29 @@ from ..literature import fetch_paper_to_kb, search_arxiv, search_crossref, searc
 NOTES_DIR = APP_ROOT / "notes"
 OUTPUT_DIR = APP_ROOT / "output"
 PYTHON_TIMEOUT = 30  # seconds
+
+
+def _workspace_root() -> Path:
+    from .. import config
+
+    return config.APP_ROOT.parent.resolve()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_workspace_file(filepath: str) -> tuple[Path | None, str | None]:
+    root = _workspace_root()
+    raw = Path(filepath).expanduser()
+    path = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    if not _is_within(path, root):
+        return None, f"Path outside workspace is not allowed: {filepath}"
+    return path, None
 
 _OPERATORS = {
     ast.Add: operator.add,
@@ -110,25 +134,23 @@ try:
 except (ValueError, AttributeError):
     pass
 
-# 限制危险操作
-__dangerous = {"os.system", "subprocess.call", "subprocess.run", "subprocess.Popen",
-               "eval", "exec", "__import__", "compile", "open"}
-__originals = {}
-for __name in __dangerous:
-    if hasattr(__builtins, __name):
-        __originals[__name] = getattr(__builtins, __name)
-        setattr(__builtins, __name,
-                lambda *a, __n=__name, **kw: (_ for _ in ()).throw(
-                    PermissionError(f"Operation blocked for safety: {__n}")))
-
 # 限制文件读写范围
 __orig_open = __builtins.open
 __allowed_dir = __os.path.abspath(".")
 def __safe_open(file, mode="r", *args, **kwargs):
     __abspath = __os.path.abspath(file)
-    if "w" in mode and not __abspath.startswith(__allowed_dir):
+    if ("w" in mode or "a" in mode or "+" in mode) and not __abspath.startswith(__allowed_dir):
         raise PermissionError(f"Write outside sandbox blocked: {file}")
     return __orig_open(file, mode, *args, **kwargs)
+
+# 限制危险操作
+__dangerous = {"os.system", "subprocess.call", "subprocess.run", "subprocess.Popen",
+               "eval", "exec", "__import__", "compile"}
+for __name in __dangerous:
+    if hasattr(__builtins, __name):
+        setattr(__builtins, __name,
+                lambda *a, __n=__name, **kw: (_ for _ in ()).throw(
+                    PermissionError(f"Operation blocked for safety: {__n}")))
 __builtins.open = __safe_open
 # --- end safety preamble ---
 
@@ -169,7 +191,9 @@ def read_csv_info(filepath: str) -> str:
     except ImportError:
         return "pandas is not installed. Run: pip install pandas"
 
-    path = Path(filepath).expanduser()
+    path, path_error = _resolve_workspace_file(filepath)
+    if path_error:
+        return path_error
     if not path.exists():
         return f"File not found: {filepath}"
     try:
@@ -190,6 +214,11 @@ def read_csv_info(filepath: str) -> str:
 def pip_install(package: str) -> str:
     """Install a Python package via pip. Use when the code needs a library
     that may not be installed yet, e.g. 'numpy pandas matplotlib'."""
+    if os.getenv("AGENT_APP_ALLOW_PIP_INSTALL", "").lower() not in {"1", "true", "yes"}:
+        return (
+            "pip_install is disabled by default for safety. "
+            "Install dependencies outside the agent or set AGENT_APP_ALLOW_PIP_INSTALL=1."
+        )
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", *package.split()],

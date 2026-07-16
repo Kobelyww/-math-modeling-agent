@@ -200,20 +200,19 @@ class LongTermMemory:
 
             entries = []
             for row in rows:
-                entries.append(KnowledgeEntry(
+                rank = float(row["rank"]) if "rank" in row.keys() else 1.0
+                entry = KnowledgeEntry(
                     id=row["id"], type=row["type"], title=row["title"],
                     content=row["content"], tags=json.loads(row["tags"]),
                     created_at=row["created_at"], access_count=row["access_count"],
                     importance=row["importance"] if "importance" in row.keys() else 0.5,
                     scope=row["scope"] if "scope" in row.keys() else "/",
-                ))
+                )
+                entry.relevance_score = self._compute_composite_score(rank, entry)
+                entries.append(entry)
 
             # 复合重排序
             if oversample and len(entries) > top_k:
-                for e in entries:
-                    e.relevance_score = self._compute_composite_score(
-                        float(dict(row).get("rank", 1.0)), e
-                    )
                 entries.sort(key=lambda e: e.relevance_score, reverse=True)
                 entries = entries[:top_k]
 

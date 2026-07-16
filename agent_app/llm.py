@@ -14,7 +14,8 @@ def create_llm(settings: Settings, temperature: float | None = None,
     }
     if settings.api_base:
         kwargs["api_base"] = settings.api_base
-    if max_tokens is not None:
-        kwargs["max_tokens"] = max_tokens
+    effective_max_tokens = max_tokens if max_tokens is not None else settings.max_tokens
+    if effective_max_tokens:
+        kwargs["max_tokens"] = effective_max_tokens
 
     return ChatDeepSeek(**kwargs)

@@ -5,11 +5,20 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import jieba
 import base64
 import io
+import json
 
-import fitz  # PyMuPDF
+try:
+    import jieba
+except ImportError:  # pragma: no cover - exercised in dependency-light envs
+    jieba = None
+
+try:
+    import fitz  # PyMuPDF
+except ImportError:  # pragma: no cover - exercised in dependency-light envs
+    fitz = None
+
 from pypdf import PdfReader
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -30,12 +39,15 @@ _MATH_DICT = [
     "熵权法", "TOPSIS法", "秩和比法", "优劣解距离法",
     "收敛性分析", "误差分析", "稳定性分析", "参数估计",
 ]
-for term in _MATH_DICT:
-    jieba.add_word(term)
+if jieba is not None:
+    for term in _MATH_DICT:
+        jieba.add_word(term)
 
 _LATEX_PATTERN = re.compile(
     r'(?:\$\$[\s\S]*?\$\$)|(?:\$[^\$]*?\$)|(?:\\\[[\s\S]*?\\\])|(?:\\\([\s\S]*?\\\))'
 )
+
+INDEX_VERSION = 2
 
 
 def _protect_formulas(text: str) -> tuple[str, dict[str, str]]:
@@ -63,7 +75,10 @@ def _restore_formulas(text: str, placeholders: dict[str, str]) -> str:
 
 def _jieba_tokenizer(text: str) -> list[str]:
     protected, formulas = _protect_formulas(text)
-    tokens = [w.strip() for w in jieba.cut(protected) if w.strip()]
+    if jieba is not None:
+        tokens = [w.strip() for w in jieba.cut(protected) if w.strip()]
+    else:
+        tokens = re.findall(r"__FORMULA_\d+__|[A-Za-z0-9_]+|[\u4e00-\u9fff]+", protected)
     return [_restore_formulas(t, formulas) for t in tokens]
 
 
@@ -76,6 +91,9 @@ class Chunk:
 
 def _extract_pdf_images(path: Path) -> list[bytes]:
     """使用 PyMuPDF 从 PDF 中提取嵌入图片的原始字节。"""
+    if fitz is None:
+        return []
+
     images: list[bytes] = []
     try:
         doc = fitz.open(str(path))
@@ -189,13 +207,37 @@ class PaperRAG:
         self.vl_api_key = vl_api_key or embedding_api_key
         self._embedding_matrix = None
 
-    def _iter_files(self) -> list[Path]:
-        if not self.knowledge_dir.exists():
+    @property
+    def _metadata_path(self) -> Path:
+        return self.index_path.with_suffix(self.index_path.suffix + ".meta.json")
+
+    def _iter_files(self, knowledge_dir: Path | None = None) -> list[Path]:
+        knowledge_dir = knowledge_dir or self.knowledge_dir
+        if not knowledge_dir.exists():
             return []
         files: list[Path] = []
         for pattern in ("*.pdf", "*.md", "*.txt"):
-            files.extend(self.knowledge_dir.rglob(pattern))
+            files.extend(knowledge_dir.rglob(pattern))
         return sorted(set(files))
+
+    def _source_fingerprint(self, knowledge_dir: Path | None = None) -> list[dict[str, object]]:
+        knowledge_dir = knowledge_dir or self.knowledge_dir
+        fingerprint: list[dict[str, object]] = []
+        for path in self._iter_files(knowledge_dir):
+            stat = path.stat()
+            fingerprint.append({
+                "path": str(path.relative_to(knowledge_dir)),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            })
+        return fingerprint
+
+    def _index_metadata(self) -> dict[str, object]:
+        return {
+            "version": INDEX_VERSION,
+            "knowledge_dir": str(self.knowledge_dir.resolve()),
+            "source_fingerprint": self._source_fingerprint(),
+        }
 
     def _read_file(self, path: Path) -> str:
         if path.suffix.lower() == ".pdf":
@@ -219,28 +261,78 @@ class PaperRAG:
         self.chunks = all_chunks
         self.vectorizer = TfidfVectorizer(
             tokenizer=_jieba_tokenizer,
+            token_pattern=None,
             max_features=7000,
             ngram_range=(1, 2),
         )
         self.matrix = self.vectorizer.fit_transform([c.content for c in self.chunks])
 
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.index_path.open("wb") as fp:
-            pickle.dump(
-                {"vectorizer": self.vectorizer, "matrix": self.matrix, "chunks": self.chunks},
-                fp,
-            )
+        metadata = self._index_metadata()
+        payload = {
+            "version": INDEX_VERSION,
+            "metadata": metadata,
+            "vectorizer": self.vectorizer,
+            "matrix": self.matrix,
+            "chunks": self.chunks,
+        }
+        tmp_index_path = self.index_path.with_suffix(self.index_path.suffix + ".tmp")
+        tmp_metadata_path = self._metadata_path.with_suffix(self._metadata_path.suffix + ".tmp")
+        with tmp_index_path.open("wb") as fp:
+            pickle.dump(payload, fp)
+        tmp_metadata_path.write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp_index_path.replace(self.index_path)
+        tmp_metadata_path.replace(self._metadata_path)
 
         return {"files": len(files), "chunks": len(all_chunks)}
 
     def load_index(self) -> bool:
         if not self.index_path.exists():
             return False
-        with self.index_path.open("rb") as fp:
-            data = pickle.load(fp)
-        self.vectorizer = data["vectorizer"]
-        self.matrix = data["matrix"]
-        self.chunks = data["chunks"]
+        if not self._metadata_path.exists():
+            return False
+        try:
+            metadata = json.loads(self._metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        indexed_knowledge_dir = metadata.get("knowledge_dir")
+        if isinstance(indexed_knowledge_dir, str):
+            knowledge_dir = Path(indexed_knowledge_dir)
+            expected_metadata = {
+                "version": INDEX_VERSION,
+                "knowledge_dir": str(knowledge_dir.resolve()),
+                "source_fingerprint": self._source_fingerprint(knowledge_dir),
+            }
+        else:
+            expected_metadata = {
+                "version": INDEX_VERSION,
+                "source_fingerprint": self._source_fingerprint(),
+            }
+        if metadata != expected_metadata:
+            return False
+        try:
+            with self.index_path.open("rb") as fp:
+                data = pickle.load(fp)
+        except (pickle.UnpicklingError, EOFError, AttributeError, ValueError):
+            return False
+        if not isinstance(data, dict):
+            return False
+        if data.get("version") != INDEX_VERSION:
+            return False
+        if data.get("metadata") != expected_metadata:
+            return False
+        try:
+            vectorizer = data["vectorizer"]
+            matrix = data["matrix"]
+            chunks = data["chunks"]
+        except KeyError:
+            return False
+        self.vectorizer = vectorizer
+        self.matrix = matrix
+        self.chunks = chunks
         return True
 
     def query(self, question: str, top_k: int = 6, min_threshold: float | None = None) -> list[Chunk]:

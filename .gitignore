@@ -2,6 +2,7 @@
 .env
 .env.*
 !*.env.example
+!*.env.production.example
 cc_switch.txt
 
 # Python
@@ -25,6 +26,12 @@ build/
 
 # git worktrees
 .worktrees/
+.claude/worktrees/
+.claude/settings.local.json
+
+# local agent/index state
+.codegraph/
+.mcp.json
 
 # agent_app runtime artifacts
 agent_app/output/*
@@ -42,6 +49,8 @@ Day2/
 FastAPI/
 DeepSeekV4Agent/
 distilled_skills/
+quant-trading/
+werewolf/
 
 # zhihu_fiction runtime artifacts
 zhihu_fiction/output/
@@ -54,6 +63,11 @@ zhihu_fiction/data/skills/*
 zhihu_fiction/data/workspace/
 zhihu_fiction/data/objects/
 zhihu_fiction/data/debug/
+zhihu_fiction/data/ip_memory/
+zhihu_fiction/data/agent_traces/
+zhihu_fiction/mcp_server/cookies/
+zhihu_fiction/mcp_server/search_results/
+zhihu_fiction/mcp_server/browser/.user_data/
 
 # Local databases and queues
 *.sqlite
@@ -65,3 +79,32 @@ dump.rdb
 
 # local brainstorming mockups
 .superpowers/
+
+# LaTeX/generated document artifacts
+*.aux
+*.log
+*.toc
+*.out
+*.xdv
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.synctex(busy)
+resume/
+claude_and_hermes_agent_guide.pdf
+claude_and_hermes_agent_guide.tex
+
+# copied/temporary implementation snapshots
+newtest/ppt-pdf-study-agent-mvp8/
+newtest/ppt-pdf-study-agent-run-lifecycle/
+
+# IDE/example entrypoint stubs
+main.py
+newtest/main.py
+
+# local scratch exercises and root-level experimental fixtures
+/bubble_sort.py
+/decorator_study.py
+/tests/test_bubble_sort.py
+/tests/test_workspace_imports.py
+/data/

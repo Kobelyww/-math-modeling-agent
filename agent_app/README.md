@@ -98,9 +98,9 @@ agent_app/
 # 1. 安装依赖
 pip install -r agent_app/requirements.txt
 
-# 2. 配置 API Key（在项目根目录创建 .env）
-echo 'DEEPSEEK_API_KEY=your-key-here' > .env
-echo 'DEEPSEEK_API_BASE=https://api.deepseek.com' >> .env
+# 2. 配置 API Key（agent_app 单独 env）
+cp agent_app/.env.example agent_app/.env
+# 编辑 agent_app/.env 填入 DEEPSEEK_API_KEY / MIMO_API_KEY，并用 LLM_PROVIDER 选择当前使用方
 
 # 3. （可选）安装 LaTeX 编译支持
 # macOS:  brew install --cask mactex
@@ -158,19 +158,39 @@ print(result.run_id, result.status.value)
 
 ## 配置说明
 
-`.env` 文件支持的配置项：
+`agent_app/.env` 文件支持的配置项。`load_settings()` 会优先读取 `agent_app/.env`，不存在时再回退到仓库根目录 `.env`：
 
 ```bash
-DEEPSEEK_API_KEY=sk-xxx                    # 必填
-DEEPSEEK_API_BASE=https://api.deepseek.com # API 地址
-DEEPSEEK_MODEL=deepseek-v4-pro             # 模型名称
+LLM_PROVIDER=deepseek                      # deepseek 或 mimo
+
+# DeepSeek
+DEEPSEEK_API_KEY=sk-xxx                    # DeepSeek API Key
+DEEPSEEK_API_BASE=https://api.deepseek.com # DeepSeek API 地址
+DEEPSEEK_MODEL=deepseek-v4-pro             # DeepSeek 模型名称
+
+# Mimo（OpenAI 兼容协议）
+MIMO_API_KEY=sk-xxx                        # Mimo API Key
+MIMO_API_BASE=https://api.xiaomimimo.com/v1
+MIMO_MODEL=mimo-v2.5-pro
+MIMO_VISION_MODEL=mimo-v2.5                # PDF 图片/表格视觉识别模型
+
 DEEPSEEK_TEMPERATURE=0.3                   # 默认温度（0-1）
 DEEPSEEK_MAX_RETRIES=3                     # 失败重试次数
+DEEPSEEK_RETRY_DELAY=1.0                   # 重试间隔秒数
+DEEPSEEK_MAX_TOKENS=0                      # 0 表示使用模型默认值
+TOOL_TIMEOUT=30                            # 工具超时秒数
+SANDBOX_MEMORY_MB=512                      # 代码沙箱内存限制
+EMBEDDING_API_KEY=sk-xxx                   # 可选；默认复用当前 provider API Key
 
 # 按 Agent 自定义温度（可选）
 DEEPSEEK_MODELER_TEMPERATURE=0.2
 DEEPSEEK_REVIEWER_TEMPERATURE=0.1
 DEEPSEEK_WRITER_TEMPERATURE=0.5
+
+# 按 Agent 自定义输出 token（可选）
+DEEPSEEK_MODELER_MAX_TOKENS=0
+DEEPSEEK_REVIEWER_MAX_TOKENS=0
+DEEPSEEK_WRITER_MAX_TOKENS=0
 ```
 
 ## 协作策略

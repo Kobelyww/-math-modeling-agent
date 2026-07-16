@@ -23,3 +23,13 @@ def test_create_competition_paper_agent_uses_current_deepagents_api(monkeypatch,
     assert "instructions" not in captured
     assert captured["tools"]
     assert captured["middleware"]
+
+
+def test_competition_coordinator_prompt_requires_experiment_plan_to_map_paper_conclusions():
+    from agent_app.deepagent.prompts import COMPETITION_COORDINATOR_PROMPT
+
+    assert "实验方案" in COMPETITION_COORDINATOR_PROMPT
+    assert "论文结论" in COMPETITION_COORDINATOR_PROMPT
+    assert "支撑" in COMPETITION_COORDINATOR_PROMPT
+    assert "限制" in COMPETITION_COORDINATOR_PROMPT
+    assert "证伪" in COMPETITION_COORDINATOR_PROMPT

@@ -140,6 +140,25 @@ class EventDrivingCoordinator:
             },
         )
         self.emit({"type": "quality_gate", "stage": "review_and_revise", **review["quality_report"]})
+        if not review["quality_report"].get("passed", False):
+            required_fixes = review["quality_report"].get("required_fixes", [])
+            self.emit(
+                {
+                    "type": "revise_required",
+                    "stage": "review_and_revise",
+                    "required_fixes": required_fixes,
+                    "review_report_path": review.get("review_report_path"),
+                }
+            )
+            summary = review.get("review_report_path") or "质量审查未通过，需要修改后再打包。"
+            self.emit({"type": "message", "role": "assistant", "content": summary})
+            return {
+                "messages": [{"content": summary}],
+                "inputs_manifest": manifest,
+                "status": "partial",
+                "quality_report": review["quality_report"],
+            }
+
         package = self._stage("package_submission", "打包提交", "package_submission", {"run_id": run_id})
 
         summary = package["final_synthesis_path"]
@@ -153,6 +172,7 @@ class EventDrivingCoordinator:
         self.emit({"type": "tool", "stage": stage, "name": tool_name, "status": "completed", "result": self._preview(result)})
         self.emit({"type": "stage", "stage": stage, "label": label, "status": "completed"})
         self._emit_artifact_paths(stage, result)
+        self._emit_section_paths(stage, result)
         return result
 
     def _emit_artifact_paths(self, stage: str, result: dict[str, Any]) -> None:
@@ -170,6 +190,20 @@ class EventDrivingCoordinator:
                             "kind": path.suffix.lstrip(".") or "file",
                         }
                     )
+
+    def _emit_section_paths(self, stage: str, result: dict[str, Any]) -> None:
+        for item in result.get("paper_section_paths", []):
+            if isinstance(item, str):
+                path = Path(item)
+                self.emit(
+                    {
+                        "type": "section",
+                        "stage": stage,
+                        "name": path.name,
+                        "status": "completed",
+                        "path": item,
+                    }
+                )
 
     @staticmethod
     def _looks_like_artifact_path(value: str) -> bool:

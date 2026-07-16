@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+from .contracts import (
+    Claim,
+    ClaimEvidence,
+    ClaimStatus,
+    EvidenceItem,
+    ExperimentContract,
+    ExtractionWarning,
+    ModelContract,
+    ProblemContract,
+    ProjectType,
+    SubproblemContract,
+    SubproblemType,
+)
 from .models import (
     ArtifactRef,
     BibliographyItem,
@@ -23,12 +36,21 @@ from .serialization import from_json_dict, to_json_dict
 __all__ = [
     "ArtifactRef",
     "BibliographyItem",
+    "Claim",
+    "ClaimEvidence",
+    "ClaimStatus",
     "DataAuditReport",
     "EvidenceNote",
+    "EvidenceItem",
     "ExperimentResult",
+    "ExperimentContract",
+    "ExtractionWarning",
+    "ModelContract",
     "ModelingPlan",
     "PaperDraft",
     "ProblemBrief",
+    "ProblemContract",
+    "ProjectType",
     "QualityReport",
     "RunIssue",
     "RunOptions",
@@ -37,6 +59,8 @@ __all__ = [
     "RunStage",
     "RunState",
     "RunStatus",
+    "SubproblemContract",
+    "SubproblemType",
     "from_json_dict",
     "to_json_dict",
 ]
