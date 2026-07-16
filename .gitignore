@@ -90,9 +90,14 @@ dump.rdb
 *.fls
 *.synctex.gz
 *.synctex(busy)
-resume/build/
+resume/
 claude_and_hermes_agent_guide.pdf
+claude_and_hermes_agent_guide.tex
 
 # copied/temporary implementation snapshots
 newtest/ppt-pdf-study-agent-mvp8/
 newtest/ppt-pdf-study-agent-run-lifecycle/
+
+# IDE/example entrypoint stubs
+main.py
+newtest/main.py
