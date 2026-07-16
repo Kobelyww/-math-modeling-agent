@@ -1,309 +1,79 @@
-# PPT/PDF转复习提纲和考试例题智能系统实现计划
+# PPT/PDF Study Agent Product Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 构建一个基于DeepAgent的智能系统，能够将PPT/PDF文件转化为复习提纲和考试例题，支持理工科内容，具备Agentic RAG系统、记忆系统和自进化系统。
+**Goal:** Build a formal-product path for the PPT/PDF study agent while first delivering an MVP-1 PDF-to-outline-and-questions workflow.
 
-**Architecture:** 采用模块化分层架构，包括用户界面层、协调器层、智能体层、服务层和基础设施层。使用MiMo V2.5作为基座大模型，Marker作为PDF解析引擎，DSPy + GEPA作为自进化框架。
+**Architecture:** Keep the Agent core independent from product delivery layers. MVP-1 fixes the current Python core and CLI workflow; MVP-2 adds React + FastAPI product surfaces plus document normalization; MVP-3 adds PostgreSQL/pgvector persistence plus Graph RAG-lite; MVP-4 experiments with Agentic RAG and automatic routing behind evaluation gates; MVP-5/6 add product quality, export, security, audit, and operations hardening.
 
-**Tech Stack:** Python 3.11+, MiMo V2.5, Marker, LangChain, LangGraph, ChromaDB, NetworkX, DSPy, GEPA, FastAPI, Streamlit
-
----
-
-## 文件结构
-
-```
-newtest/
-├── src/
-│   ├── __init__.py
-│   ├── main.py                    # 应用入口
-│   ├── config.py                  # 配置管理
-│   ├── coordinator/               # 协调器层
-│   │   ├── __init__.py
-│   │   ├── main_coordinator.py    # 主协调器
-│   │   └── sub_coordinators.py    # 子协调器
-│   ├── agents/                    # 智能体层
-│   │   ├── __init__.py
-│   │   ├── base_agent.py          # 基础智能体
-│   │   ├── document_parsing.py    # 文档解析Agent
-│   │   ├── content_understanding.py # 内容理解Agent
-│   │   ├── outline_generation.py  # 提纲生成Agent
-│   │   ├── question_generation.py # 例题生成Agent
-│   │   ├── knowledge_extraction.py # 知识提取Agent
-│   │   ├── quality_evaluation.py  # 质量评估Agent
-│   │   ├── self_evolution.py      # 自进化Agent
-│   │   └── human_review.py        # 人工审核Agent
-│   ├── services/                  # 服务层
-│   │   ├── __init__.py
-│   │   ├── rag_service.py         # RAG服务（混合方案）
-│   │   ├── memory_service.py      # 记忆服务
-│   │   ├── evolution_service.py   # 进化服务
-│   │   ├── evaluation_service.py  # 评估服务
-│   │   └── tool_service.py        # 工具服务
-│   ├── parsers/                   # 文档解析器
-│   │   ├── __init__.py
-│   │   ├── marker_pdf.py          # Marker PDF解析
-│   │   ├── enhanced_ppt.py        # 增强PPT解析
-│   │   └── multimodal.py          # 多模态处理
-│   ├── knowledge/                 # 知识处理
-│   │   ├── __init__.py
-│   │   ├── knowledge_graph.py     # 知识图谱
-│   │   └── knowledge_qa.py        # 知识点问答解释
-│   └── utils/                     # 工具函数
-│       ├── __init__.py
-│       └── helpers.py
-├── tests/                         # 测试目录
-│   ├── __init__.py
-│   ├── test_parsers.py
-│   ├── test_agents.py
-│   ├── test_services.py
-│   └── test_integration.py
-├── docs/                          # 文档目录
-│   └── superpowers/
-│       ├── specs/
-│       │   └── 2026-06-13-ppt-pdf-study-agent-design.md
-│       └── plans/
-│           └── 2026-06-13-ppt-pdf-study-agent.md
-├── requirements.txt               # 依赖
-├── pyproject.toml                 # 项目配置
-└── README.md                      # 项目说明
-```
+**Tech Stack:** Python 3.11/3.12, pytest/pytest-asyncio, marker-pdf, NetworkX, FastAPI, Pydantic, SQLAlchemy/Alembic, PostgreSQL + pgvector, Redis workers, React + TypeScript + Vite.
 
 ---
 
-## Task 1: 项目初始化和配置管理
+## Scope
+
+This plan supersedes the previous skeleton-first plan. The current repository already contains core skeletons under `src/` and tests under `tests/`; the next work should not recreate those files from scratch.
+
+MVP-1 remains intentionally narrow:
+- Fix the test environment and CLI EOF behavior.
+- Adapt PDF parsing to the current `marker-pdf` API.
+- Implement a deterministic PDF/structured-document to knowledge-points to outline to questions pipeline.
+- Keep React/FastAPI/PostgreSQL as planned follow-up phases, not blockers for MVP-1.
+
+## File Structure
+
+MVP-1 core files:
+- `pyproject.toml` — test/dev dependency configuration.
+- `src/main.py` — CLI entrypoint and EOF-safe command loop.
+- `src/parsers/marker_pdf.py` — PDF parser adapter and marker output mapping.
+- `src/agents/content_understanding.py` — convert parsed document sections into knowledge points.
+- `src/agents/outline_generation.py` — generate deterministic Markdown/LaTeX-ready outline.
+- `src/agents/question_generation.py` — generate deterministic question objects.
+- `src/coordinator/main_coordinator.py` — orchestrate MVP-1 pipeline.
+- `src/services/rag_service.py` — minimal chunk storage/retrieval before full vector DB.
+- `tests/fixtures/` — small sample PDF or structured-document fixtures.
+
+Formal product files for later phases:
+- `src/api/` — FastAPI app, dependencies, route modules.
+- `src/db/` — SQLAlchemy models, sessions, Alembic migrations.
+- `src/storage/` — local and object-store adapters.
+- `src/workers/` — background job queue and worker tasks.
+- `src/services/graph_rag.py` — Graph RAG-lite retriever using the existing knowledge graph.
+- `src/services/agentic_rag.py` — deterministic Agentic RAG planning before LLM execution is introduced.
+- `src/services/rag_router.py` — rule-first RAG mode router with cost and confidence metadata.
+- `src/services/rag_evaluation.py` — shared evaluation set scoring and mode comparison reports.
+- `src/normalization/` — parser-independent normalized document, chunk, asset, and source-span models.
+- `src/services/version_service.py` — content version creation and lookup for generated and edited assets.
+- `src/services/export_service.py` — asynchronous Markdown/LaTeX/PDF/JSON export job orchestration.
+- `src/services/quality_service.py` — outline, question, QA, and export quality scoring.
+- `src/services/feedback_service.py` — user feedback and review task collection.
+- `src/security/` — permission checks and audit logging helpers.
+- `src/observability/` — request IDs, structured logging, metrics, and health checks.
+- `frontend/` — React + TypeScript + Vite app.
+
+## Phase MVP-1: Core Workflow
+
+### Task 1: Fix Test Environment
 
 **Files:**
-- Create: `newtest/src/__init__.py`
-- Create: `newtest/src/config.py`
-- Create: `newtest/requirements.txt`
-- Create: `newtest/pyproject.toml`
+- Modify: `pyproject.toml`
+- Modify: `requirements.txt`
 
-- [ ] **Step 1: 创建项目基础结构**
+- [ ] **Step 1: Verify current failure**
+
+Run:
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-mkdir -p src tests docs/superpowers/specs docs/superpowers/plans
-touch src/__init__.py tests/__init__.py
+pytest -q
 ```
 
-- [ ] **Step 2: 创建配置管理模块**
+Expected now: `14 failed, 30 passed` with `async def functions are not natively supported`.
 
-```python
-# src/config.py
-from dataclasses import dataclass
-from typing import Optional
-import os
+- [ ] **Step 2: Ensure dev dependencies are installable**
 
-@dataclass
-class LLMConfig:
-    """LLM配置"""
-    primary_model: str = "mimo-v2.5"
-    deepseek_model: str = "deepseek-v4"
-    multimodal_model: str = "mimo-v2.5"
-    embedding_model: str = "mimo-v2.5-embedding"
-    api_base: str = "https://api.mimo.example.com"
-    deepseek_api_base: str = "https://api.deepseek.com"
-    api_key: str = ""
-    deepseek_api_key: str = ""
-    temperature: float = 0.3
-    max_retries: int = 3
-    
-    def get_model_for_task(self, task_type: str) -> str:
-        """根据任务类型获取合适的模型"""
-        if task_type in ["multimodal", "image_understanding", "ocr"]:
-            return self.multimodal_model
-        elif task_type == "embedding":
-            return self.embedding_model
-        elif task_type == "deepseek":
-            return self.deepseek_model
-        else:
-            return self.primary_model
-    
-    def get_api_base_for_model(self, model: str) -> str:
-        """根据模型获取API地址"""
-        if model == self.deepseek_model:
-            return self.deepseek_api_base
-        return self.api_base
-    
-    def get_api_key_for_model(self, model: str) -> str:
-        """根据模型获取API密钥"""
-        if model == self.deepseek_model:
-            return self.deepseek_api_key
-        return self.api_key
-
-@dataclass
-class ParserConfig:
-    """解析器配置"""
-    marker_model_path: str = "marker-model"
-    use_local_marker: bool = True
-    enable_ocr: bool = True
-    max_file_size_mb: int = 100
-
-@dataclass
-class RAGConfig:
-    """RAG配置"""
-    vector_db_type: str = "chromadb"
-    vector_db_path: str = "./data/vector_db"
-    embedding_model: str = "mimo-v2.5-embedding"
-    embedding_api_base: str = "https://api.mimo.example.com"
-    embedding_api_key: str = ""
-    embedding_dim: int = 768
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
-    top_k: int = 5
-    use_hybrid_retrieval: bool = True
-    bm25_weight: float = 0.3
-    embedding_weight: float = 0.7
-
-@dataclass
-class MemoryConfig:
-    """记忆配置"""
-    stm_max_tokens: int = 50000
-    recent_window_size: int = 5
-    compress_trigger: int = 30000
-    ltm_db_path: str = "./data/long_term_memory.db"
-
-@dataclass
-class AppConfig:
-    """应用配置"""
-    llm: Optional[LLMConfig] = None
-    parser: Optional[ParserConfig] = None
-    rag: Optional[RAGConfig] = None
-    memory: Optional[MemoryConfig] = None
-    
-    def __post_init__(self):
-        if self.llm is None:
-            self.llm = LLMConfig()
-        if self.parser is None:
-            self.parser = ParserConfig()
-        if self.rag is None:
-            self.rag = RAGConfig()
-        if self.memory is None:
-            self.memory = MemoryConfig()
-
-def load_config() -> AppConfig:
-    """从环境变量加载配置"""
-    return AppConfig(
-        llm=LLMConfig(
-            primary_model=os.getenv("LLM_PRIMARY_MODEL", "mimo-v2.5"),
-            deepseek_model=os.getenv("LLM_DEEPSEEK_MODEL", "deepseek-v4"),
-            multimodal_model=os.getenv("LLM_MULTIMODAL_MODEL", "mimo-v2.5"),
-            embedding_model=os.getenv("LLM_EMBEDDING_MODEL", "mimo-v2.5-embedding"),
-            api_base=os.getenv("MIMO_API_BASE", "https://api.mimo.example.com"),
-            deepseek_api_base=os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
-            api_key=os.getenv("MIMO_API_KEY", ""),
-            deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
-            max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
-        ),
-        parser=ParserConfig(
-            marker_model_path=os.getenv("MARKER_MODEL_PATH", "marker-model"),
-            use_local_marker=os.getenv("PARSER_USE_LOCAL_MARKER", "true").lower() == "true",
-            enable_ocr=os.getenv("PARSER_ENABLE_OCR", "true").lower() == "true",
-            max_file_size_mb=int(os.getenv("PARSER_MAX_FILE_SIZE_MB", "100")),
-        ),
-        rag=RAGConfig(
-            vector_db_type=os.getenv("RAG_VECTOR_DB_TYPE", "chromadb"),
-            vector_db_path=os.getenv("VECTOR_DB_PATH", "./data/vector_db"),
-            embedding_model=os.getenv("RAG_EMBEDDING_MODEL", "mimo-v2.5-embedding"),
-            embedding_api_base=os.getenv("RAG_EMBEDDING_API_BASE", "https://api.mimo.example.com"),
-            embedding_api_key=os.getenv("RAG_EMBEDDING_API_KEY", ""),
-            embedding_dim=int(os.getenv("RAG_EMBEDDING_DIM", "768")),
-            chunk_size=int(os.getenv("RAG_CHUNK_SIZE", "1000")),
-            chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "200")),
-            top_k=int(os.getenv("RAG_TOP_K", "5")),
-            use_hybrid_retrieval=os.getenv("RAG_USE_HYBRID_RETRIEVAL", "true").lower() == "true",
-            bm25_weight=float(os.getenv("RAG_BM25_WEIGHT", "0.3")),
-            embedding_weight=float(os.getenv("RAG_EMBEDDING_WEIGHT", "0.7")),
-        ),
-        memory=MemoryConfig(
-            stm_max_tokens=int(os.getenv("MEMORY_STM_MAX_TOKENS", "50000")),
-            recent_window_size=int(os.getenv("MEMORY_RECENT_WINDOW_SIZE", "5")),
-            compress_trigger=int(os.getenv("MEMORY_COMPRESS_TRIGGER", "30000")),
-            ltm_db_path=os.getenv("LTM_DB_PATH", "./data/long_term_memory.db"),
-        ),
-    )
-```
-
-- [ ] **Step 3: 创建依赖文件**
-
-```txt
-# requirements.txt
-# 核心依赖
-mi-mo-v2.5>=1.0.0
-deepseek-api>=1.0.0
-marker-pdf>=1.0.0
-langchain>=0.3.0
-langchain-core>=0.3.0
-langchain-deepseek>=0.1.0
-langgraph>=0.2.0
-chromadb>=0.5.0
-networkx>=3.0
-dspy>=2.0.0
-gepa>=0.1.0
-fastapi>=0.100.0
-uvicorn>=0.30.0
-streamlit>=1.30.0
-pydantic>=2.0.0
-
-# 文档处理
-python-pptx>=0.6.23
-pymupdf>=1.24.0
-pdfplumber>=0.11.0
-pillow>=10.0.0
-
-# NLP
-jieba>=0.42.1
-spacy>=3.7.0
-
-# 工具
-python-dotenv>=1.0.0
-aiohttp>=3.9.0
-docker>=7.0.0
-tiktoken>=0.7.0
-
-# Embedding
-sentence-transformers>=2.2.0
-torch>=2.0.0
-
-# 测试
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
-pytest-cov>=5.0.0
-```
-
-- [ ] **Step 4: 创建pyproject.toml**
+Check `pyproject.toml` contains:
 
 ```toml
-# pyproject.toml
-[build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
-
-[project]
-name = "ppt-pdf-study-agent"
-version = "0.1.0"
-description = "PPT/PDF转复习提纲和考试例题智能系统"
-readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.11"
-dependencies = [
-    "mi-mo-v2.5>=1.0.0",
-    "marker-pdf>=1.0.0",
-    "langchain>=0.3.0",
-    "langchain-core>=0.3.0",
-    "langgraph>=0.2.0",
-    "chromadb>=0.5.0",
-    "networkx>=3.0",
-    "dspy>=2.0.0",
-    "gepa>=0.1.0",
-    "fastapi>=0.100.0",
-    "uvicorn>=0.30.0",
-    "streamlit>=1.30.0",
-    "pydantic>=2.0.0",
-]
-
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
@@ -314,1412 +84,2241 @@ dev = [
     "mypy>=1.10.0",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
-
-[tool.black]
-line-length = 100
-target-version = ["py311"]
-
-[tool.isort]
-profile = "black"
-line_length = 100
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 ```
 
-- [ ] **Step 5: 运行测试验证配置**
+Also add missing test tools to `requirements.txt` if the project continues supporting `pip install -r requirements.txt`:
+
+```txt
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0
+```
+
+- [ ] **Step 3: Install in a clean environment**
+
+Run:
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-python -c "from src.config import load_config; config = load_config(); print('Config loaded successfully')"
+python -m pip install -e ".[dev]"
+pytest -q
 ```
 
-Expected: 配置加载成功
+Expected after dependency fix: async tests execute. Remaining failures, if any, must be real code/test failures rather than unknown `pytest.mark.asyncio`.
 
-- [ ] **Step 6: 提交代码**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/__init__.py src/config.py requirements.txt pyproject.toml
-git commit -m "feat: 初始化项目结构和配置管理"
+git add pyproject.toml requirements.txt
+git commit -m "test: fix async pytest environment"
 ```
 
----
-
-## Task 2: 基础智能体框架
+### Task 2: Fix CLI EOF Handling
 
 **Files:**
-- Create: `newtest/src/agents/__init__.py`
-- Create: `newtest/src/agents/base_agent.py`
-- Test: `newtest/tests/test_agents.py`
+- Modify: `src/main.py`
+- Test: `tests/test_cli.py`
 
-- [ ] **Step 1: 编写失败测试**
+- [ ] **Step 1: Add failing CLI EOF test**
+
+Create `tests/test_cli.py`:
 
 ```python
-# tests/test_agents.py
-import pytest
-from src.agents.base_agent import BaseAgent, AgentResult
+import subprocess
+import sys
 
-class MockAgent(BaseAgent):
-    """测试用模拟智能体"""
-    role = "测试专家"
-    system_prompt = "你是一个测试专家"
-    
-    async def process(self, input_data: str) -> AgentResult:
-        return AgentResult(
-            success=True,
-            data={"processed": input_data},
-            message="处理完成"
-        )
 
-def test_base_agent_initialization():
-    """测试基础智能体初始化"""
-    agent = MockAgent()
-    assert agent.role == "测试专家"
-    assert agent.system_prompt == "你是一个测试专家"
-
-def test_agent_result_creation():
-    """测试智能体结果创建"""
-    result = AgentResult(
-        success=True,
-        data={"key": "value"},
-        message="成功"
+def test_cli_exits_on_eof():
+    result = subprocess.run(
+        [sys.executable, "-m", "src.main"],
+        input="",
+        text=True,
+        capture_output=True,
+        timeout=3,
     )
-    assert result.success is True
-    assert result.data == {"key": "value"}
-    assert result.message == "成功"
+
+    assert result.returncode == 0
+    assert "EOF when reading a line" not in result.stdout
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run failure**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_agents.py::test_base_agent_initialization -v
+pytest tests/test_cli.py::test_cli_exits_on_eof -q
 ```
 
-Expected: FAIL with "ModuleNotFoundError: No module named 'src.agents'"
+Expected before fix: timeout or repeated EOF output.
 
-- [ ] **Step 3: 编写最小实现**
+- [ ] **Step 3: Update command loop**
+
+In `src/main.py`, catch `EOFError` separately and break:
 
 ```python
-# src/agents/__init__.py
-from .base_agent import BaseAgent, AgentResult
-
-__all__ = ["BaseAgent", "AgentResult"]
+        except EOFError:
+            print("\n输入结束，退出。")
+            break
 ```
 
-```python
-# src/agents/base_agent.py
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
-from enum import Enum
+Place it before the broad `except Exception as e`.
 
-class AgentStatus(Enum):
-    """智能体状态"""
-    IDLE = "idle"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-@dataclass
-class AgentResult:
-    """智能体结果"""
-    success: bool
-    data: Dict[str, Any] = field(default_factory=dict)
-    message: str = ""
-    status: AgentStatus = AgentStatus.COMPLETED
-    
-    @property
-    def is_success(self) -> bool:
-        return self.success
-
-class BaseAgent(ABC):
-    """基础智能体类"""
-    
-    role: str = ""
-    system_prompt: str = ""
-    max_retries: int = 3
-    
-    def __init__(self):
-        self.status = AgentStatus.IDLE
-        self.retry_count = 0
-    
-    @abstractmethod
-    async def process(self, input_data: Any) -> AgentResult:
-        """处理输入数据"""
-        pass
-    
-    async def invoke(self, input_data: Any) -> AgentResult:
-        """调用智能体处理"""
-        self.status = AgentStatus.PROCESSING
-        
-        try:
-            result = await self.process(input_data)
-            self.status = AgentStatus.COMPLETED
-            return result
-        except Exception as e:
-            self.status = AgentStatus.FAILED
-            return AgentResult(
-                success=False,
-                data={},
-                message=f"处理失败: {str(e)}",
-                status=AgentStatus.FAILED
-            )
-    
-    def reset(self):
-        """重置智能体状态"""
-        self.status = AgentStatus.IDLE
-        self.retry_count = 0
-```
-
-- [ ] **Step 4: 运行测试验证通过**
+- [ ] **Step 4: Verify**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_agents.py -v
+pytest tests/test_cli.py::test_cli_exits_on_eof -q
+printf "/quit\n" | python -m src.main
 ```
 
-Expected: PASS
+Expected: both commands exit successfully.
 
-- [ ] **Step 5: 提交代码**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/agents/__init__.py src/agents/base_agent.py tests/test_agents.py
-git commit -m "feat: 实现基础智能体框架"
+git add src/main.py tests/test_cli.py
+git commit -m "fix: exit CLI cleanly on EOF"
 ```
 
----
-
-## Task 3: 文档解析Agent（Marker集成）
+### Task 3: Adapt Marker PDF Parser
 
 **Files:**
-- Create: `newtest/src/parsers/__init__.py`
-- Create: `newtest/src/parsers/marker_pdf.py`
-- Create: `newtest/src/agents/document_parsing.py`
-- Test: `newtest/tests/test_parsers.py`
+- Modify: `src/parsers/marker_pdf.py`
+- Modify: `src/config.py`
+- Test: `tests/test_parsers.py`
 
-- [ ] **Step 1: 编写失败测试**
+- [ ] **Step 1: Add parser mapping tests without requiring real Marker models**
+
+Extend `tests/test_parsers.py` with a fake Marker output mapping test:
 
 ```python
-# tests/test_parsers.py
-import pytest
-from src.parsers.marker_pdf import MarkerPDFParser, StructuredDocument
+from types import SimpleNamespace
+from src.parsers.marker_pdf import MarkerPDFParser
 
-@pytest.mark.asyncio
-async def test_marker_parser_initialization():
-    """测试Marker解析器初始化"""
+
+def test_marker_output_mapping_to_structured_document():
     parser = MarkerPDFParser()
-    assert parser.model is None
+    fake_rendered = SimpleNamespace(
+        metadata={"title": "Linear Algebra"},
+        markdown="# Chapter 1\nVectors and matrices",
+        children=[],
+    )
+
+    doc = parser._map_marker_output(fake_rendered)
+
+    assert doc.title == "Linear Algebra"
+    assert doc.sections
+    assert "Vectors" in doc.sections[0].content
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_parsers.py::test_marker_output_mapping_to_structured_document -q
+```
+
+Expected: fail because `_map_marker_output` does not exist.
+
+- [ ] **Step 3: Implement current API adapter**
+
+Update `MarkerPDFParser` to:
+- Lazily import `ConfigParser`, `PdfConverter`, and `create_model_dict`.
+- Use `PdfConverter(...)` rather than `marker.load_model` and `convert_single_pdf`.
+- Add `_map_marker_output(rendered)` that maps metadata and markdown into `StructuredDocument`.
+- Preserve import-time behavior so tests can run without marker installed unless `parse()` is called.
+
+- [ ] **Step 4: Add file-not-found test**
+
+Ensure existing parse behavior still raises a readable error when the PDF path is missing:
+
+```bash
+pytest tests/test_parsers.py -q
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/parsers/marker_pdf.py tests/test_parsers.py src/config.py
+git commit -m "fix: adapt PDF parser to current marker API"
+```
+
+### Task 4: Implement Content Understanding Agent
+
+**Files:**
+- Create: `src/agents/content_understanding.py`
+- Modify: `src/agents/__init__.py`
+- Test: `tests/test_content_understanding.py`
+
+- [ ] **Step 1: Write tests**
+
+Create `tests/test_content_understanding.py`:
+
+```python
+import pytest
+from src.agents.content_understanding import ContentUnderstandingAgent
+from src.parsers.marker_pdf import StructuredDocument, Section, Formula
+
 
 @pytest.mark.asyncio
-async def test_structured_document_creation():
-    """测试结构化文档创建"""
+async def test_extracts_knowledge_points_from_sections():
     doc = StructuredDocument(
-        title="测试文档",
-        sections=[],
-        tables=[],
-        figures=[],
-        formulas=[]
+        title="Calculus",
+        sections=[
+            Section(
+                level=1,
+                title="Derivatives",
+                content="Derivative measures rate of change. Chain rule is important.",
+                formulas=[Formula(latex="(f(g(x)))'=f'(g(x))g'(x)")],
+            )
+        ],
     )
-    assert doc.title == "测试文档"
-    assert len(doc.sections) == 0
 
-@pytest.mark.asyncio
-async def test_marker_parser_parse():
-    """测试Marker解析器解析PDF"""
-    parser = MarkerPDFParser()
-    # 这里需要实际的PDF文件进行测试
-    # result = await parser.parse("test.pdf")
-    # assert isinstance(result, StructuredDocument)
-    assert True  # 暂时跳过实际解析测试
+    result = await ContentUnderstandingAgent().invoke({"document": doc})
+
+    assert result.success is True
+    points = result.data["knowledge_points"]
+    assert len(points) >= 2
+    assert any("Derivatives" in point.name or "Derivative" in point.name for point in points)
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run failure**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_parsers.py::test_marker_parser_initialization -v
+pytest tests/test_content_understanding.py -q
 ```
 
-Expected: FAIL with "ModuleNotFoundError: No module named 'src.parsers'"
+Expected: module missing.
 
-- [ ] **Step 3: 编写最小实现**
+- [ ] **Step 3: Implement deterministic extractor**
+
+Implement `ContentUnderstandingAgent` using local heuristics:
+- Section title becomes a high-importance concept.
+- Formula entries become formula knowledge points.
+- Long section content is split into sentence-like concepts.
+- Return `KnowledgePoint` objects from `src.knowledge.knowledge_graph`.
+
+- [ ] **Step 4: Verify**
+
+```bash
+pytest tests/test_content_understanding.py tests/test_knowledge.py -q
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/agents/content_understanding.py src/agents/__init__.py tests/test_content_understanding.py
+git commit -m "feat: extract knowledge points from parsed documents"
+```
+
+### Task 5: Implement Outline Generation Agent
+
+**Files:**
+- Create: `src/agents/outline_generation.py`
+- Modify: `src/agents/__init__.py`
+- Test: `tests/test_outline_generation.py`
+
+- [ ] **Step 1: Write tests**
+
+Create `tests/test_outline_generation.py`:
 
 ```python
-# src/parsers/__init__.py
-from .marker_pdf import MarkerPDFParser, StructuredDocument, Section, Table, Figure, Formula
+import pytest
+from src.agents.outline_generation import OutlineGenerationAgent
+from src.knowledge.knowledge_graph import KnowledgePoint, PointType
 
-__all__ = [
-    "MarkerPDFParser",
-    "StructuredDocument",
-    "Section",
-    "Table",
-    "Figure",
-    "Formula",
+
+@pytest.mark.asyncio
+async def test_generates_markdown_outline():
+    points = [
+        KnowledgePoint(id="kp1", name="Derivative", description="Rate of change", category="concept"),
+        KnowledgePoint(id="kp2", name="Chain Rule", description="Composite derivative", category="formula", point_type=PointType.FORMULA),
+    ]
+
+    result = await OutlineGenerationAgent().invoke({"knowledge_points": points, "title": "Calculus"})
+
+    assert result.success is True
+    markdown = result.data["markdown"]
+    assert "# Calculus" in markdown
+    assert "Derivative" in markdown
+    assert "复习建议" in markdown
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_outline_generation.py -q
+```
+
+Expected: module missing.
+
+- [ ] **Step 3: Implement deterministic outline generator**
+
+Generate Markdown with:
+- Title.
+- Core concepts grouped by category.
+- Formula section when formula knowledge points exist.
+- Review suggestions.
+
+- [ ] **Step 4: Verify**
+
+```bash
+pytest tests/test_outline_generation.py -q
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/agents/outline_generation.py src/agents/__init__.py tests/test_outline_generation.py
+git commit -m "feat: generate review outlines from knowledge points"
+```
+
+### Task 6: Implement Question Generation Agent
+
+**Files:**
+- Create: `src/agents/question_generation.py`
+- Modify: `src/agents/__init__.py`
+- Test: `tests/test_question_generation.py`
+
+- [ ] **Step 1: Write tests**
+
+Create `tests/test_question_generation.py`:
+
+```python
+import pytest
+from src.agents.question_generation import QuestionGenerationAgent
+from src.knowledge.knowledge_graph import KnowledgePoint
+
+
+@pytest.mark.asyncio
+async def test_generates_questions_with_answers():
+    points = [
+        KnowledgePoint(id="kp1", name="Derivative", description="Rate of change", category="concept"),
+        KnowledgePoint(id="kp2", name="Matrix", description="Rectangular array", category="concept"),
+    ]
+
+    result = await QuestionGenerationAgent().invoke({"knowledge_points": points, "count": 5})
+
+    assert result.success is True
+    questions = result.data["questions"]
+    assert len(questions) == 5
+    assert all(q.stem and q.answer and q.explanation for q in questions)
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_question_generation.py -q
+```
+
+Expected: module missing.
+
+- [ ] **Step 3: Implement deterministic question generator**
+
+Define a `Question` dataclass with:
+
+```python
+stem: str
+answer: str
+explanation: str
+difficulty: str
+question_type: str
+knowledge_point_id: str
+```
+
+Generate a mix of definition, fill-in, and short-answer questions by cycling through knowledge points.
+
+- [ ] **Step 4: Verify**
+
+```bash
+pytest tests/test_question_generation.py -q
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/agents/question_generation.py src/agents/__init__.py tests/test_question_generation.py
+git commit -m "feat: generate practice questions from knowledge points"
+```
+
+### Task 7: Orchestrate MVP-1 Pipeline
+
+**Files:**
+- Modify: `src/coordinator/main_coordinator.py`
+- Test: `tests/test_coordinator.py`
+- Test: `tests/test_integration.py`
+
+- [ ] **Step 1: Add coordinator pipeline test**
+
+Extend `tests/test_coordinator.py`:
+
+```python
+import pytest
+from unittest.mock import AsyncMock
+from src.coordinator.main_coordinator import MainCoordinator
+
+
+@pytest.mark.asyncio
+async def test_coordinator_runs_registered_pipeline():
+    coordinator = MainCoordinator()
+    coordinator.register_sub_coordinator("document_parsing", AsyncMock())
+    coordinator.register_sub_coordinator("content_understanding", AsyncMock())
+    coordinator.register_sub_coordinator("outline_generation", AsyncMock())
+    coordinator.register_sub_coordinator("question_generation", AsyncMock())
+
+    coordinator.sub_coordinators["document_parsing"].invoke.return_value.success = True
+    coordinator.sub_coordinators["document_parsing"].invoke.return_value.data = {"document": "doc"}
+    coordinator.sub_coordinators["content_understanding"].invoke.return_value.success = True
+    coordinator.sub_coordinators["content_understanding"].invoke.return_value.data = {"knowledge_points": ["kp"]}
+    coordinator.sub_coordinators["outline_generation"].invoke.return_value.success = True
+    coordinator.sub_coordinators["outline_generation"].invoke.return_value.data = {"markdown": "# Outline"}
+    coordinator.sub_coordinators["question_generation"].invoke.return_value.success = True
+    coordinator.sub_coordinators["question_generation"].invoke.return_value.data = {"questions": ["q"]}
+
+    result = await coordinator.invoke({"pdf_path": "sample.pdf"})
+
+    assert result["status"] == "success"
+    assert result["data"]["outline"] == "# Outline"
+    assert result["data"]["questions"] == ["q"]
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_coordinator.py::test_coordinator_runs_registered_pipeline -q
+```
+
+Expected: fails because `invoke()` returns fixed placeholder data.
+
+- [ ] **Step 3: Implement pipeline orchestration**
+
+Update `MainCoordinator.invoke()` to call stages in order:
+1. document parsing
+2. content understanding
+3. outline generation
+4. question generation
+
+If any stage returns `success=False`, set status failed and return a structured error with `failed_stage`.
+
+- [ ] **Step 4: Verify**
+
+```bash
+pytest tests/test_coordinator.py tests/test_integration.py -q
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/coordinator/main_coordinator.py tests/test_coordinator.py tests/test_integration.py
+git commit -m "feat: orchestrate MVP study pipeline"
+```
+
+### Task 8: Simple RAG Baseline
+
+**Files:**
+- Modify: `src/services/rag_service.py`
+- Test: `tests/test_services.py`
+
+- [ ] **Step 1: Add retrieval behavior test**
+
+Extend `tests/test_services.py`:
+
+```python
+def test_rag_service_indexes_and_retrieves_chunks():
+    rag = RAGService()
+    rag.index_chunks([
+        {"content": "Derivative is rate of change", "source": "doc:1"},
+        {"content": "Matrix multiplication combines rows and columns", "source": "doc:2"},
+    ])
+
+    response = rag.retrieve("rate of change", top_k=1)
+
+    assert response[0].source == "doc:1"
+    assert "Derivative" in response[0].content
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_services.py::test_rag_service_indexes_and_retrieves_chunks -q
+```
+
+Expected: `index_chunks` missing.
+
+- [ ] **Step 3: Implement in-memory lexical retrieval baseline**
+
+Add:
+- `index_chunks(chunks: list[dict]) -> None`
+- `retrieve(query: str, top_k: int = 5) -> list[Chunk]`
+
+Use token overlap scoring for MVP-1. Every returned chunk must include source metadata. Keep vector DB and advanced RAG for later phases.
+
+- [ ] **Step 4: Verify**
+
+```bash
+pytest tests/test_services.py -q
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/services/rag_service.py tests/test_services.py
+git commit -m "feat: add simple RAG baseline retrieval"
+```
+
+### Task 9: RAG Evaluation Dataset Foundation
+
+**Files:**
+- Create: `tests/fixtures/rag_eval_set.json`
+- Create: `tests/test_rag_evaluation.py`
+- Create: `src/services/rag_evaluation.py`
+
+- [ ] **Step 1: Add evaluation fixture**
+
+Create `tests/fixtures/rag_eval_set.json`:
+
+```json
+[
+  {
+    "id": "def-001",
+    "query": "什么是导数？",
+    "category": "definition",
+    "expected_sources": ["calculus:derivative"],
+    "expected_terms": ["变化率", "函数"]
+  },
+  {
+    "id": "formula-001",
+    "query": "链式法则公式是什么？",
+    "category": "formula_lookup",
+    "expected_sources": ["calculus:chain_rule"],
+    "expected_terms": ["f(g(x))", "g'(x)"]
+  },
+  {
+    "id": "relation-001",
+    "query": "导数和梯度有什么关系？",
+    "category": "concept_relation",
+    "expected_sources": ["calculus:gradient"],
+    "expected_terms": ["多变量", "方向"]
+  },
+  {
+    "id": "synthesis-001",
+    "query": "基于导数和矩阵出一道综合题",
+    "category": "question_generation",
+    "expected_sources": ["calculus:derivative", "linear_algebra:matrix"],
+    "expected_terms": ["题目", "答案"]
+  }
 ]
 ```
 
+- [ ] **Step 2: Add evaluator tests**
+
+Create `tests/test_rag_evaluation.py`:
+
 ```python
-# src/parsers/marker_pdf.py
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
-from pathlib import Path
+from src.services.rag_evaluation import RAGEvaluator, RAGEvalCase
 
-@dataclass
-class Section:
-    """文档章节"""
-    level: int = 1
-    title: str = ""
-    content: str = ""
-    subsections: List['Section'] = field(default_factory=list)
-    tables: List['Table'] = field(default_factory=list)
-    figures: List['Figure'] = field(default_factory=list)
-    formulas: List['Formula'] = field(default_factory=list)
 
-@dataclass
-class Table:
-    """表格数据"""
-    headers: List[str] = field(default_factory=list)
-    rows: List[List[str]] = field(default_factory=list)
-    caption: str = ""
-    page_number: int = 0
+def test_rag_evaluator_scores_terms_and_sources():
+    case = RAGEvalCase(
+        id="def-001",
+        query="什么是导数？",
+        category="definition",
+        expected_sources=["calculus:derivative"],
+        expected_terms=["变化率"],
+    )
 
-@dataclass
-class Figure:
-    """图表数据"""
-    image_path: str = ""
-    caption: str = ""
-    description: str = ""
-    page_number: int = 0
+    score = RAGEvaluator().score(
+        case,
+        answer="导数描述函数的变化率。",
+        sources=["calculus:derivative"],
+        latency_ms=10,
+        token_cost=0,
+    )
 
-@dataclass
-class Formula:
-    """公式数据"""
-    latex: str = ""
-    description: str = ""
-    page_number: int = 0
-
-@dataclass
-class StructuredDocument:
-    """结构化文档"""
-    title: str = ""
-    sections: List[Section] = field(default_factory=list)
-    tables: List[Table] = field(default_factory=list)
-    figures: List[Figure] = field(default_factory=list)
-    formulas: List[Formula] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-class MarkerPDFParser:
-    """Marker PDF解析器"""
-    
-    def __init__(self, model_path: Optional[str] = None):
-        self.model_path = model_path
-        self.model = None
-    
-    def load_model(self):
-        """加载Marker模型"""
-        try:
-            from marker import load_model
-            self.model = load_model(self.model_path)
-        except ImportError:
-            raise ImportError(
-                "请安装marker-pdf: pip install marker-pdf"
-            )
-    
-    async def parse(self, pdf_path: str) -> StructuredDocument:
-        """解析PDF文件"""
-        if self.model is None:
-            self.load_model()
-        
-        try:
-            from marker.convert import convert_single_pdf
-            
-            pdf_path = Path(pdf_path)
-            if not pdf_path.exists():
-                raise FileNotFoundError(f"PDF文件不存在: {pdf_path}")
-            
-            rendered = convert_single_pdf(str(pdf_path), self.model)
-            
-            return StructuredDocument(
-                title=rendered.metadata.get("title", ""),
-                sections=self._extract_sections(rendered),
-                tables=self._extract_tables(rendered),
-                figures=self._extract_figures(rendered),
-                formulas=self._extract_formulas(rendered),
-                metadata=rendered.metadata
-            )
-        except Exception as e:
-            raise RuntimeError(f"PDF解析失败: {str(e)}")
-    
-    def _extract_sections(self, rendered) -> List[Section]:
-        """提取章节结构"""
-        sections = []
-        # 根据Marker的输出格式提取章节
-        # 这里需要根据实际Marker API进行调整
-        return sections
-    
-    def _extract_tables(self, rendered) -> List[Table]:
-        """提取表格数据"""
-        tables = []
-        # 根据Marker的输出格式提取表格
-        return tables
-    
-    def _extract_figures(self, rendered) -> List[Figure]:
-        """提取图表数据"""
-        figures = []
-        # 根据Marker的输出格式提取图表
-        return figures
-    
-    def _extract_formulas(self, rendered) -> List[Formula]:
-        """提取公式数据"""
-        formulas = []
-        # 根据Marker的输出格式提取公式
-        return formulas
+    assert score.answer_term_recall == 1.0
+    assert score.source_recall == 1.0
+    assert score.latency_ms == 10
 ```
 
-- [ ] **Step 4: 运行测试验证通过**
+- [ ] **Step 3: Run failure**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_parsers.py -v
+pytest tests/test_rag_evaluation.py -q
 ```
 
-Expected: PASS
+Expected: module missing.
 
-- [ ] **Step 5: 提交代码**
+- [ ] **Step 4: Implement evaluator**
+
+Create `src/services/rag_evaluation.py` with:
+- `RAGEvalCase`
+- `RAGEvalScore`
+- `RAGEvaluator.score(...)`
+
+Scoring must include:
+- expected term recall
+- source recall
+- latency
+- token cost
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
-git add src/parsers/__init__.py src/parsers/marker_pdf.py tests/test_parsers.py
-git commit -m "feat: 实现Marker PDF解析器"
+pytest tests/test_rag_evaluation.py -q
+git add src/services/rag_evaluation.py tests/test_rag_evaluation.py tests/fixtures/rag_eval_set.json
+git commit -m "test: add RAG evaluation foundation"
 ```
 
----
-
-## Task 4: 知识图谱服务
+### Task 10: MVP-1 End-to-End Verification
 
 **Files:**
-- Create: `newtest/src/knowledge/__init__.py`
-- Create: `newtest/src/knowledge/knowledge_graph.py`
-- Test: `newtest/tests/test_knowledge.py`
+- Modify: `tests/test_integration.py`
+- Create: `tests/fixtures/sample_structured_document.json`
 
-- [ ] **Step 1: 编写失败测试**
+- [ ] **Step 1: Add fixture-driven integration test**
+
+Use a structured-document fixture rather than a real PDF model dependency:
 
 ```python
-# tests/test_knowledge.py
+@pytest.mark.asyncio
+async def test_mvp_pipeline_from_structured_document():
+    # Build StructuredDocument in test, run content understanding,
+    # outline generation, and question generation.
+    # Assert outline markdown and at least 5 questions.
+```
+
+- [ ] **Step 2: Verify full suite**
+
+```bash
+pytest -q
+```
+
+Expected for MVP-1 completion: all tests pass or external-model tests are explicitly skipped/xfail with reason.
+
+- [ ] **Step 3: Run mandatory reviews**
+
+Spec review:
+- Check every MVP-1 success criterion in `SPEC.md` has a passing test or explicit skip.
+
+Quality review:
+- Check names, boundaries, deterministic tests, no placeholder return strings in completed MVP-1 path.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/test_integration.py tests/fixtures/sample_structured_document.json
+git commit -m "test: verify MVP study pipeline"
+```
+
+## Phase MVP-2: Formal Web Product Shell
+
+### Task 11: FastAPI Product API Skeleton
+
+**Files:**
+- Create: `src/api/app.py`
+- Create: `src/api/routes/documents.py`
+- Create: `src/api/routes/jobs.py`
+- Create: `tests/test_api_documents.py`
+
+Implementation requirements:
+- `POST /api/documents` accepts metadata first, then file upload once storage is ready.
+- `GET /api/jobs/{id}` returns `queued`, `running`, `completed`, `failed`, or `cancelled`.
+- API layer must call services/coordinator; it must not implement Agent logic.
+
+Verification:
+
+```bash
+pytest tests/test_api_documents.py -q
+```
+
+Commit:
+
+```bash
+git add src/api tests/test_api_documents.py
+git commit -m "feat: add FastAPI product API skeleton"
+```
+
+### Task 12: React Product Shell
+
+**Files:**
+- Create: `frontend/package.json`
+- Create: `frontend/src/App.tsx`
+- Create: `frontend/src/pages/DocumentsPage.tsx`
+- Create: `frontend/src/pages/JobDetailPage.tsx`
+- Create: `frontend/src/pages/OutlinePage.tsx`
+- Create: `frontend/src/pages/QuestionsPage.tsx`
+
+Implementation requirements:
+- Use React + TypeScript + Vite.
+- First screen is the document workspace, not a marketing landing page.
+- Include document list, upload action, job status, outline view, questions view.
+- Use restrained operational UI suitable for repeated study workflows.
+
+Verification:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+Commit:
+
+```bash
+git add frontend
+git commit -m "feat: add React product shell"
+```
+
+### Task 13: Local Storage and Job Persistence
+
+**Files:**
+- Create: `src/db/session.py`
+- Create: `src/db/models.py`
+- Create: `src/storage/file_store.py`
+- Create: `tests/test_storage.py`
+- Create: `tests/test_db_models.py`
+
+Implementation requirements:
+- Define `Document`, `ProcessingJob`, `ParsedSection`, `KnowledgePointRecord`, `OutlineRecord`, `QuestionRecord`.
+- Use SQLite locally but keep schema compatible with PostgreSQL.
+- Store files by UUID/hash, never by raw user filename.
+
+Verification:
+
+```bash
+pytest tests/test_storage.py tests/test_db_models.py -q
+```
+
+Commit:
+
+```bash
+git add src/db src/storage tests/test_storage.py tests/test_db_models.py
+git commit -m "feat: add local persistence foundation"
+```
+
+### Task 14: Document Normalization and Source Spans
+
+**Files:**
+- Create: `src/normalization/document.py`
+- Create: `src/normalization/normalizer.py`
+- Create: `src/normalization/__init__.py`
+- Test: `tests/test_document_normalization.py`
+
+- [ ] **Step 1: Add normalization tests**
+
+Create `tests/test_document_normalization.py`:
+
+```python
+from src.normalization.normalizer import DocumentNormalizer
+from src.parsers.marker_pdf import Section, StructuredDocument
+
+
+def test_normalizer_preserves_section_source_spans():
+    source = StructuredDocument(
+        title="Calculus Notes",
+        sections=[
+            Section(
+                level=1,
+                title="Derivatives",
+                content="Derivative is rate of change.",
+            )
+        ],
+        metadata={"source_path": "fixtures/calculus.pdf"},
+    )
+
+    normalized = DocumentNormalizer().normalize(source, document_id="doc-1")
+
+    assert normalized.document_id == "doc-1"
+    assert normalized.sections[0].title == "Derivatives"
+    assert normalized.sections[0].source_spans[0].section_id == normalized.sections[0].id
+    assert normalized.chunks[0].source_spans[0].section_id == normalized.sections[0].id
+```
+
+Add a second test for formulas/assets when parser metadata provides them:
+
+```python
+from src.parsers.marker_pdf import Formula
+
+
+def test_normalizer_converts_formulas_to_assets():
+    source = StructuredDocument(
+        title="Formula Notes",
+        sections=[Section(level=1, title="Chain Rule", content="Chain rule formula.")],
+        formulas=[Formula(latex="(f \\circ g)'(x)=f'(g(x))g'(x)", page_number=2)],
+    )
+
+    normalized = DocumentNormalizer().normalize(source, document_id="doc-2")
+
+    assert normalized.assets[0].asset_type == "formula"
+    assert "f'(g(x))" in normalized.assets[0].description
+    assert normalized.assets[0].source_span.page_number == 2
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_document_normalization.py -q
+```
+
+Expected: `src.normalization` module missing.
+
+- [ ] **Step 3: Implement normalized document models**
+
+Create `src/normalization/document.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass(frozen=True)
+class SourceSpan:
+    section_id: str
+    page_number: int | None = None
+    bbox: tuple[float, float, float, float] | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    confidence: float = 1.0
+    missing_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class NormalizedSection:
+    id: str
+    parent_id: str | None
+    title: str
+    content: str
+    level: int
+    order_index: int
+    source_spans: list[SourceSpan]
+
+
+@dataclass(frozen=True)
+class DocumentChunk:
+    id: str
+    section_id: str
+    content: str
+    chunk_index: int
+    source_spans: list[SourceSpan]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DocumentAsset:
+    id: str
+    asset_type: str
+    description: str
+    source_span: SourceSpan
+    storage_uri: str | None = None
+    caption: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class NormalizedDocument:
+    document_id: str
+    title: str
+    sections: list[NormalizedSection]
+    chunks: list[DocumentChunk]
+    assets: list[DocumentAsset]
+    metadata: dict[str, Any] = field(default_factory=dict)
+```
+
+- [ ] **Step 4: Implement parser-independent normalizer**
+
+Create `src/normalization/normalizer.py`:
+
+```python
+from __future__ import annotations
+
+from src.normalization.document import (
+    DocumentAsset,
+    DocumentChunk,
+    NormalizedDocument,
+    NormalizedSection,
+    SourceSpan,
+)
+from src.parsers.marker_pdf import StructuredDocument
+
+
+class DocumentNormalizer:
+    def normalize(self, document: StructuredDocument, document_id: str) -> NormalizedDocument:
+        sections: list[NormalizedSection] = []
+        chunks: list[DocumentChunk] = []
+
+        for index, section in enumerate(document.sections):
+            section_id = f"{document_id}:section:{index}"
+            section_metadata = getattr(section, "metadata", {})
+            page_number = section_metadata.get("page_number")
+            span = SourceSpan(
+                section_id=section_id,
+                page_number=page_number,
+                missing_reason=None if page_number else "parser_did_not_provide_page",
+                confidence=1.0 if page_number else 0.5,
+            )
+            normalized_section = NormalizedSection(
+                id=section_id,
+                parent_id=None,
+                title=section.title,
+                content=section.content,
+                level=section.level,
+                order_index=index,
+                source_spans=[span],
+            )
+            sections.append(normalized_section)
+
+            if section.content.strip():
+                chunks.append(
+                    DocumentChunk(
+                        id=f"{section_id}:chunk:0",
+                        section_id=section_id,
+                        content=section.content.strip(),
+                        chunk_index=0,
+                        source_spans=[span],
+                    )
+                )
+
+        assets = [
+            DocumentAsset(
+                id=f"{document_id}:formula:{index}",
+                asset_type="formula",
+                description=formula.latex,
+                source_span=SourceSpan(section_id=sections[0].id if sections else document_id, page_number=formula.page_number),
+                metadata={"latex": formula.latex},
+            )
+            for index, formula in enumerate(document.formulas)
+        ]
+
+        return NormalizedDocument(
+            document_id=document_id,
+            title=document.title,
+            sections=sections,
+            chunks=chunks,
+            assets=assets,
+            metadata=document.metadata,
+        )
+```
+
+If `Section` does not yet have `metadata`, do not mutate parser dataclasses in this task; use the missing page fallback shown above and add parser metadata in a later parser task.
+
+- [ ] **Step 5: Export package API and verify**
+
+Create `src/normalization/__init__.py`:
+
+```python
+from src.normalization.document import DocumentAsset, DocumentChunk, NormalizedDocument, NormalizedSection, SourceSpan
+from src.normalization.normalizer import DocumentNormalizer
+
+__all__ = [
+    "DocumentAsset",
+    "DocumentChunk",
+    "DocumentNormalizer",
+    "NormalizedDocument",
+    "NormalizedSection",
+    "SourceSpan",
+]
+```
+
+Run:
+
+```bash
+pytest tests/test_document_normalization.py -q
+git add src/normalization tests/test_document_normalization.py
+git commit -m "feat: add document normalization layer"
+```
+
+## Phase MVP-3: Productized RAG and Persistence
+
+### Task 15: Graph RAG-lite Retriever
+
+**Files:**
+- Create: `src/services/graph_rag.py`
+- Modify: `src/knowledge/knowledge_graph.py`
+- Test: `tests/test_graph_rag.py`
+
+- [ ] **Step 1: Add Graph RAG-lite tests**
+
+Create `tests/test_graph_rag.py`:
+
+```python
 import pytest
 from src.knowledge.knowledge_graph import KnowledgeGraph, KnowledgePoint, Relationship
+from src.services.graph_rag import GraphRAGLiteRetriever
+from src.services.rag_service import Chunk
 
-def test_knowledge_graph_initialization():
-    """测试知识图谱初始化"""
-    kg = KnowledgeGraph()
-    assert len(kg.nodes) == 0
-    assert len(kg.edges) == 0
 
-def test_knowledge_point_creation():
-    """测试知识点创建"""
-    kp = KnowledgePoint(
-        id="kp1",
-        name="测试概念",
-        description="这是一个测试概念",
-        category="概念",
-        importance=0.8
-    )
-    assert kp.id == "kp1"
-    assert kp.name == "测试概念"
+@pytest.mark.asyncio
+async def test_graph_rag_expands_related_knowledge_points():
+    graph = KnowledgeGraph()
+    graph.add_point(KnowledgePoint(id="kp1", name="Derivative", description="Rate of change", category="concept"))
+    graph.add_point(KnowledgePoint(id="kp2", name="Gradient", description="Vector of partial derivatives", category="concept"))
+    graph.add_relationship(Relationship(source_id="kp1", target_id="kp2", relation_type="generalizes_to"))
 
-def test_knowledge_graph_add_point():
-    """测试添加知识点"""
-    kg = KnowledgeGraph()
-    kp = KnowledgePoint(
-        id="kp1",
-        name="测试概念",
-        description="这是一个测试概念",
-        category="概念",
-        importance=0.8
-    )
-    kg.add_point(kp)
-    assert len(kg.nodes) == 1
-    assert "kp1" in kg.nodes
+    chunks = [
+        Chunk(content="Derivative is rate of change", source="calculus:derivative"),
+        Chunk(content="Gradient extends derivatives to multivariable functions", source="calculus:gradient"),
+    ]
+
+    result = await GraphRAGLiteRetriever(graph, chunks).retrieve("导数和梯度有什么关系？")
+
+    assert any("Gradient" in item.content for item in result.chunks)
+    assert result.mode == "graph_rag_lite"
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run failure**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_knowledge.py::test_knowledge_graph_initialization -v
+pytest tests/test_graph_rag.py -q
 ```
 
-Expected: FAIL with "ModuleNotFoundError: No module named 'src.knowledge'"
+Expected: module missing.
 
-- [ ] **Step 3: 编写最小实现**
+- [ ] **Step 3: Implement GraphRAGLiteRetriever**
+
+Create `src/services/graph_rag.py`:
 
 ```python
-# src/knowledge/__init__.py
-from .knowledge_graph import KnowledgeGraph, KnowledgePoint, Relationship
+from __future__ import annotations
 
-__all__ = ["KnowledgeGraph", "KnowledgePoint", "Relationship"]
-```
+from dataclasses import dataclass
 
-```python
-# src/knowledge/knowledge_graph.py
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
-from enum import Enum
-import networkx as nx
+from src.knowledge.knowledge_graph import KnowledgeGraph, KnowledgePoint
+from src.services.rag_service import Chunk
 
-class PointType(Enum):
-    """知识点类型"""
-    CONCEPT = "concept"
-    FORMULA = "formula"
-    THEOREM = "theorem"
-    EXAMPLE = "example"
-    METHOD = "method"
 
-@dataclass
-class KnowledgePoint:
-    """知识点"""
-    id: str
-    name: str
-    description: str
-    category: str
-    importance: float = 0.5
-    point_type: PointType = PointType.CONCEPT
-    metadata: Dict[str, Any] = field(default_factory=dict)
+@dataclass(frozen=True)
+class GraphRAGResult:
+    mode: str
+    reason: str
+    chunks: list[Chunk]
+    confidence: float
+    expanded_point_ids: list[str]
 
-@dataclass
-class Relationship:
-    """关系"""
-    source_id: str
-    target_id: str
-    relation_type: str
-    weight: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
-class KnowledgeGraph:
-    """知识图谱"""
-    
-    def __init__(self):
-        self.graph = nx.DiGraph()
-        self.nodes: Dict[str, KnowledgePoint] = {}
-        self.edges: List[Relationship] = []
-    
-    def add_point(self, point: KnowledgePoint) -> None:
-        """添加知识点"""
-        self.nodes[point.id] = point
-        self.graph.add_node(point.id, **point.__dict__)
-    
-    def add_relationship(self, relationship: Relationship) -> None:
-        """添加关系"""
-        self.edges.append(relationship)
-        self.graph.add_edge(
-            relationship.source_id,
-            relationship.target_id,
-            **relationship.__dict__
+class GraphRAGLiteRetriever:
+    def __init__(self, graph: KnowledgeGraph, chunks: list[Chunk]) -> None:
+        self.graph = graph
+        self.chunks = chunks
+
+    async def retrieve(self, query: str, max_hops: int = 2, top_k: int = 5) -> GraphRAGResult:
+        seeds = self._match_seed_points(query)
+        expanded = self._expand_neighbors(seeds, max_hops=max_hops)
+        matched_chunks = self._recover_chunks(expanded, top_k=top_k)
+        confidence = 0.0 if not matched_chunks else min(1.0, 0.4 + 0.2 * len(matched_chunks))
+
+        return GraphRAGResult(
+            mode="graph_rag_lite",
+            reason="matched concepts and expanded graph neighbors" if seeds else "no graph seed matched",
+            chunks=matched_chunks,
+            confidence=confidence,
+            expanded_point_ids=[point.id for point in expanded],
         )
-    
-    def get_point(self, point_id: str) -> Optional[KnowledgePoint]:
-        """获取知识点"""
-        return self.nodes.get(point_id)
-    
-    def get_related_points(self, point_id: str) -> List[KnowledgePoint]:
-        """获取相关知识点"""
-        related_ids = list(self.graph.neighbors(point_id))
-        return [self.nodes[pid] for pid in related_ids if pid in self.nodes]
-    
-    def find_path(self, source_id: str, target_id: str) -> List[str]:
-        """查找路径"""
-        try:
-            path = nx.shortest_path(self.graph, source_id, target_id)
-            return path
-        except nx.NetworkXNoPath:
-            return []
-    
-    def get_important_points(self, top_k: int = 10) -> List[KnowledgePoint]:
-        """获取重要知识点"""
-        sorted_points = sorted(
-            self.nodes.values(),
-            key=lambda x: x.importance,
-            reverse=True
-        )
-        return sorted_points[:top_k]
-```
 
-- [ ] **Step 4: 运行测试验证通过**
-
-```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_knowledge.py -v
-```
-
-Expected: PASS
-
-- [ ] **Step 5: 提交代码**
-
-```bash
-git add src/knowledge/__init__.py src/knowledge/knowledge_graph.py tests/test_knowledge.py
-git commit -m "feat: 实现知识图谱服务"
-```
-
----
-
-## Task 5: RAG服务（混合方案）
-
-**Files:**
-- Create: `newtest/src/services/__init__.py`
-- Create: `newtest/src/services/rag_service.py`
-- Test: `newtest/tests/test_services.py`
-
-- [ ] **Step 1: 编写失败测试**
-
-```python
-# tests/test_services.py
-import pytest
-from src.services.rag_service import RAGService, QueryType, RetrievalStrategy
-
-def test_rag_service_initialization():
-    """测试RAG服务初始化"""
-    rag = RAGService()
-    assert rag.vector_store is None
-    assert rag.knowledge_graph is None
-
-def test_query_type_detection():
-    """测试查询类型检测"""
-    rag = RAGService()
-    assert rag.detect_query_type("什么是机器学习？") == QueryType.DEFINITION
-    assert rag.detect_query_type("举个例子") == QueryType.EXAMPLE
-
-def test_retrieval_strategy_selection():
-    """测试检索策略选择"""
-    rag = RAGService()
-    strategy = rag.select_strategy("简单事实查询", QueryType.DEFINITION)
-    assert strategy == RetrievalStrategy.SIMPLE_RAG
-```
-
-- [ ] **Step 2: 运行测试验证失败**
-
-```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_services.py::test_rag_service_initialization -v
-```
-
-Expected: FAIL with "ModuleNotFoundError: No module named 'src.services'"
-
-- [ ] **Step 3: 编写最小实现**
-
-```python
-# src/services/__init__.py
-from .rag_service import RAGService, QueryType, RetrievalStrategy
-
-__all__ = ["RAGService", "QueryType", "RetrievalStrategy"]
-```
-
-```python
-# src/services/rag_service.py
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
-from enum import Enum
-
-class QueryType(Enum):
-    """查询类型"""
-    DEFINITION = "definition"
-    EXAMPLE = "example"
-    CONNECTION = "connection"
-    PREREQUISITE = "prerequisite"
-    SIMPLE_FACT = "simple_fact"
-    COMPLEX_REASONING = "complex_reasoning"
-
-class RetrievalStrategy(Enum):
-    """检索策略"""
-    SIMPLE_RAG = "simple_rag"
-    AGENTIC_RAG = "agentic_rag"
-    HYBRID = "hybrid"
-
-@dataclass
-class Chunk:
-    """文档块"""
-    content: str
-    source: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    score: float = 0.0
-
-@dataclass
-class RAGResponse:
-    """RAG响应"""
-    answer: str
-    sources: List[str] = field(default_factory=list)
-    chunks: List[Chunk] = field(default_factory=list)
-    confidence: float = 0.0
-
-class RAGService:
-    """RAG服务（混合方案）"""
-    
-    def __init__(self):
-        self.vector_store = None
-        self.knowledge_graph = None
-    
-    def detect_query_type(self, query: str) -> QueryType:
-        """检测查询类型"""
-        # 简单的关键词匹配检测
-        if "什么是" in query or "定义" in query:
-            return QueryType.DEFINITION
-        elif "例子" in query or "举例" in query:
-            return QueryType.EXAMPLE
-        elif "关系" in query or "联系" in query:
-            return QueryType.CONNECTION
-        elif "前置" in query or "基础" in query:
-            return QueryType.PREREQUISITE
-        else:
-            return QueryType.SIMPLE_FACT
-    
-    def select_strategy(self, query: str, query_type: QueryType) -> RetrievalStrategy:
-        """选择检索策略"""
-        if query_type in [QueryType.SIMPLE_FACT]:
-            return RetrievalStrategy.SIMPLE_RAG
-        elif query_type in [QueryType.COMPLEX_REASONING]:
-            return RetrievalStrategy.AGENTIC_RAG
-        else:
-            return RetrievalStrategy.HYBRID
-    
-    async def query(self, query: str) -> RAGResponse:
-        """执行查询"""
-        query_type = self.detect_query_type(query)
-        strategy = self.select_strategy(query, query_type)
-        
-        # 根据策略执行检索
-        if strategy == RetrievalStrategy.SIMPLE_RAG:
-            return await self._simple_rag_query(query)
-        elif strategy == RetrievalStrategy.AGENTIC_RAG:
-            return await self._agentic_rag_query(query)
-        else:
-            return await self._hybrid_query(query)
-    
-    async def _simple_rag_query(self, query: str) -> RAGResponse:
-        """简单RAG查询"""
-        # 实现简单RAG检索
-        return RAGResponse(
-            answer="简单RAG查询结果",
-            sources=[],
-            chunks=[],
-            confidence=0.8
-        )
-    
-    async def _agentic_rag_query(self, query: str) -> RAGResponse:
-        """Agentic RAG查询"""
-        # 实现Agentic RAG检索
-        return RAGResponse(
-            answer="Agentic RAG查询结果",
-            sources=[],
-            chunks=[],
-            confidence=0.9
-        )
-    
-    async def _hybrid_query(self, query: str) -> RAGResponse:
-        """混合查询"""
-        # 实现混合检索
-        return RAGResponse(
-            answer="混合查询结果",
-            sources=[],
-            chunks=[],
-            confidence=0.85
-        )
-```
-
-- [ ] **Step 4: 运行测试验证通过**
-
-```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_services.py -v
-```
-
-Expected: PASS
-
-- [ ] **Step 5: 提交代码**
-
-```bash
-git add src/services/__init__.py src/services/rag_service.py tests/test_services.py
-git commit -m "feat: 实现RAG服务（混合方案）"
-```
-
----
-
-## Task 6: 记忆服务
-
-**Files:**
-- Create: `newtest/src/services/memory_service.py`
-- Test: `newtest/tests/test_memory.py`
-
-- [ ] **Step 1: 编写失败测试**
-
-```python
-# tests/test_memory.py
-import pytest
-from src.services.memory_service import MemoryService, ShortTermMemory, LongTermMemory
-
-def test_short_term_memory_initialization():
-    """测试短期记忆初始化"""
-    stm = ShortTermMemory(max_tokens=50000)
-    assert stm.max_tokens == 50000
-    assert len(stm.messages) == 0
-
-def test_long_term_memory_initialization():
-    """测试长期记忆初始化"""
-    ltm = LongTermMemory(db_path=":memory:")
-    assert ltm.db is not None
-
-def test_memory_service_initialization():
-    """测试记忆服务初始化"""
-    service = MemoryService()
-    assert service.stm is not None
-    assert service.ltm is not None
-```
-
-- [ ] **Step 2: 运行测试验证失败**
-
-```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_memory.py::test_short_term_memory_initialization -v
-```
-
-Expected: FAIL with "ModuleNotFoundError: No module named 'src.services.memory_service'"
-
-- [ ] **Step 3: 编写最小实现**
-
-```python
-# src/services/memory_service.py
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
-from datetime import datetime
-import sqlite3
-import json
-
-@dataclass
-class Message:
-    """消息"""
-    role: str
-    content: str
-    timestamp: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-class ShortTermMemory:
-    """短期记忆"""
-    
-    def __init__(self, max_tokens: int = 50000):
-        self.max_tokens = max_tokens
-        self.messages: List[Message] = []
-        self.compressed_prefix: str = ""
-    
-    def add_message(self, message: Message) -> None:
-        """添加消息"""
-        self.messages.append(message)
-        # 检查是否需要压缩
-        if self._estimate_tokens() > self.max_tokens:
-            self._compress()
-    
-    def get_context(self, max_tokens: int = 3000) -> str:
-        """获取上下文"""
-        context_parts = []
-        if self.compressed_prefix:
-            context_parts.append(self.compressed_prefix)
-        
-        for msg in self.messages[-10:]:  # 最近10条消息
-            context_parts.append(f"{msg.role}: {msg.content}")
-        
-        return "\n".join(context_parts)
-    
-    def _estimate_tokens(self) -> int:
-        """估算token数量"""
-        # 简单估算：每个字符约0.5个token
-        total_chars = sum(len(msg.content) for msg in self.messages)
-        return int(total_chars * 0.5)
-    
-    def _compress(self) -> None:
-        """压缩旧消息"""
-        # 保留最近5条消息，压缩其他消息
-        if len(self.messages) > 5:
-            old_messages = self.messages[:-5]
-            self.messages = self.messages[-5:]
-            
-            # 生成压缩摘要
-            compressed = "\n".join([
-                f"{msg.role}: {msg.content[:100]}..."
-                for msg in old_messages[:3]
-            ])
-            self.compressed_prefix = compressed
-
-class LongTermMemory:
-    """长期记忆"""
-    
-    def __init__(self, db_path: str = ":memory:"):
-        self.db = sqlite3.connect(db_path)
-        self._init_db()
-    
-    def _init_db(self) -> None:
-        """初始化数据库"""
-        cursor = self.db.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                category TEXT,
-                importance REAL DEFAULT 0.5,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                metadata TEXT
-            )
-        """)
-        self.db.commit()
-    
-    def store(self, content: str, category: str = None, importance: float = 0.5) -> int:
-        """存储记忆"""
-        cursor = self.db.cursor()
-        cursor.execute(
-            "INSERT INTO memories (content, category, importance) VALUES (?, ?, ?)",
-            (content, category, importance)
-        )
-        self.db.commit()
-        return cursor.lastrowid
-    
-    def recall(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """召回记忆"""
-        cursor = self.db.cursor()
-        cursor.execute(
-            "SELECT * FROM memories WHERE content LIKE ? ORDER BY importance DESC LIMIT ?",
-            (f"%{query}%", top_k)
-        )
-        rows = cursor.fetchall()
+    def _match_seed_points(self, query: str) -> list[KnowledgePoint]:
+        query_lower = query.lower()
         return [
-            {
-                "id": row[0],
-                "content": row[1],
-                "category": row[2],
-                "importance": row[3],
-                "created_at": row[4],
-            }
-            for row in rows
+            point
+            for point in self.graph.points.values()
+            if point.name.lower() in query_lower or any(token in query_lower for token in point.name.lower().split())
         ]
 
-class MemoryService:
-    """记忆服务"""
-    
-    def __init__(self, stm_max_tokens: int = 50000, ltm_db_path: str = ":memory:"):
-        self.stm = ShortTermMemory(max_tokens=stm_max_tokens)
-        self.ltm = LongTermMemory(db_path=ltm_db_path)
-    
-    def add_message(self, role: str, content: str) -> None:
-        """添加消息"""
-        message = Message(role=role, content=content)
-        self.stm.add_message(message)
-    
-    def get_context(self) -> str:
-        """获取上下文"""
-        return self.stm.get_context()
-    
-    def store_important(self, content: str, category: str = None) -> int:
-        """存储重要信息到长期记忆"""
-        return self.ltm.store(content, category, importance=0.8)
-    
-    def recall(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """召回记忆"""
-        return self.ltm.recall(query, top_k)
+    def _expand_neighbors(self, seeds: list[KnowledgePoint], max_hops: int) -> list[KnowledgePoint]:
+        seen = {point.id for point in seeds}
+        frontier = list(seeds)
+
+        for _ in range(max_hops):
+            next_frontier: list[KnowledgePoint] = []
+            for point in frontier:
+                for neighbor in self.graph.get_related_points(point.id):
+                    if neighbor.id not in seen:
+                        seen.add(neighbor.id)
+                        next_frontier.append(neighbor)
+            frontier = next_frontier
+
+        return [self.graph.points[point_id] for point_id in seen]
+
+    def _recover_chunks(self, points: list[KnowledgePoint], top_k: int) -> list[Chunk]:
+        names = [point.name.lower() for point in points]
+        ranked: list[tuple[int, Chunk]] = []
+        for chunk in self.chunks:
+            score = sum(1 for name in names if name in chunk.content.lower() or name in chunk.source.lower())
+            if score > 0:
+                ranked.append((score, chunk))
+
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        return [chunk for _, chunk in ranked[:top_k]]
 ```
 
-- [ ] **Step 4: 运行测试验证通过**
+If `KnowledgeGraph` does not yet expose `points` or `get_related_points(point_id)`, add those small accessors in `src/knowledge/knowledge_graph.py` rather than reaching into NetworkX internals from the service.
+
+- [ ] **Step 4: Verify and commit**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_memory.py -v
+pytest tests/test_graph_rag.py tests/test_knowledge.py -q
+git add src/services/graph_rag.py src/knowledge/knowledge_graph.py tests/test_graph_rag.py
+git commit -m "feat: add Graph RAG lite retrieval"
 ```
 
-Expected: PASS
-
-- [ ] **Step 5: 提交代码**
-
-```bash
-git add src/services/memory_service.py tests/test_memory.py
-git commit -m "feat: 实现记忆服务（短期+长期记忆）"
-```
-
----
-
-## Task 7: 主协调器
+### Task 16: PostgreSQL and pgvector Migration Path
 
 **Files:**
-- Create: `newtest/src/coordinator/__init__.py`
-- Create: `newtest/src/coordinator/main_coordinator.py`
-- Test: `newtest/tests/test_coordinator.py`
+- Create: `alembic.ini`
+- Create: `src/db/migrations/`
+- Modify: `pyproject.toml`
+- Modify: `docker-compose.yml`
 
-- [ ] **Step 1: 编写失败测试**
+Implementation requirements:
+- Add PostgreSQL service.
+- Add migration for core tables from `SPEC.md`.
+- Add pgvector-compatible `document_chunks.embedding` field.
+- Keep SQLite fallback for tests.
+- Keep this phase behind the existing local SQLite path; product APIs should still run in local dev without Docker.
 
-```python
-# tests/test_coordinator.py
-import pytest
-from src.coordinator.main_coordinator import MainCoordinator, CoordinatorState
-
-def test_coordinator_initialization():
-    """测试协调器初始化"""
-    coordinator = MainCoordinator()
-    assert coordinator.state.current_stage == "idle"
-    assert len(coordinator.state.completed_stages) == 0
-
-def test_coordinator_state():
-    """测试协调器状态"""
-    state = CoordinatorState()
-    assert state.current_stage == "idle"
-    assert state.completed_stages == []
-    assert state.results == {}
-```
-
-- [ ] **Step 2: 运行测试验证失败**
+Verification:
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_coordinator.py::test_coordinator_initialization -v
+docker compose up -d postgres
+alembic upgrade head
+pytest tests/test_db_models.py -q
 ```
 
-Expected: FAIL with "ModuleNotFoundError: No module named 'src.coordinator'"
+Commit:
 
-- [ ] **Step 3: 编写最小实现**
-
-```python
-# src/coordinator/__init__.py
-from .main_coordinator import MainCoordinator, CoordinatorState, CoordinatorStatus
-
-__all__ = ["MainCoordinator", "CoordinatorState", "CoordinatorStatus"]
+```bash
+git add alembic.ini src/db/migrations pyproject.toml docker-compose.yml
+git commit -m "feat: add PostgreSQL migration path"
 ```
 
+### Task 17: Background Worker and Queue
+
+**Files:**
+- Create: `src/workers/queue.py`
+- Create: `src/workers/tasks.py`
+- Modify: `src/api/routes/documents.py`
+- Test: `tests/test_workers.py`
+
+Implementation requirements:
+- MVP local mode can use an in-process queue.
+- Formal mode should support Redis-backed queue.
+- Job state must persist before and after each stage.
+
+Verification:
+
+```bash
+pytest tests/test_workers.py -q
+```
+
+Commit:
+
+```bash
+git add src/workers src/api/routes/documents.py tests/test_workers.py
+git commit -m "feat: add background processing workers"
+```
+
+## Phase MVP-4: Agentic RAG and Automatic Routing
+
+### Task 18: Agentic RAG Planner
+
+**Files:**
+- Create: `src/services/agentic_rag.py`
+- Test: `tests/test_agentic_rag.py`
+
+- [ ] **Step 1: Add planner tests**
+
+Create `tests/test_agentic_rag.py`:
+
 ```python
-# src/coordinator/main_coordinator.py
+from src.services.agentic_rag import AgenticRAGPlanner
+
+
+def test_agentic_planner_creates_steps_for_question_generation():
+    plan = AgenticRAGPlanner().plan("基于第2章和第4章出一道综合题")
+
+    assert plan.mode == "agentic_rag"
+    assert len(plan.steps) >= 3
+    assert "retrieve" in plan.steps[0].action
+    assert any(step.action == "generate_question" for step in plan.steps)
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_agentic_rag.py -q
+```
+
+Expected: module missing.
+
+- [ ] **Step 3: Implement deterministic planner**
+
+Create `src/services/agentic_rag.py`:
+
+```python
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
-from enum import Enum
-from datetime import datetime
 
-class CoordinatorStatus(Enum):
-    """协调器状态"""
-    IDLE = "idle"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    PAUSED = "paused"
 
-@dataclass
-class Checkpoint:
-    """检查点"""
-    stage: str
-    timestamp: datetime
-    data: Dict[str, Any] = field(default_factory=dict)
+@dataclass(frozen=True)
+class AgenticRAGStep:
+    action: str
+    objective: str
+    inputs: dict[str, str] = field(default_factory=dict)
 
-@dataclass
-class CoordinatorState:
-    """协调器状态"""
-    current_stage: str = "idle"
-    completed_stages: List[str] = field(default_factory=list)
-    results: Dict[str, Any] = field(default_factory=dict)
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-    checkpoints: List[Checkpoint] = field(default_factory=list)
-    status: CoordinatorStatus = CoordinatorStatus.IDLE
-    
-    def advance_stage(self) -> None:
-        """推进到下一阶段"""
-        self.completed_stages.append(self.current_stage)
-        # 根据流程推进到下一阶段
-        stage_order = [
-            "document_parsing",
-            "content_understanding",
-            "knowledge_extraction",
-            "outline_generation",
-            "question_generation",
-            "quality_evaluation",
-            "completed"
+
+@dataclass(frozen=True)
+class AgenticRAGPlan:
+    mode: str
+    reason: str
+    steps: list[AgenticRAGStep]
+    estimated_cost: str
+
+
+class AgenticRAGPlanner:
+    def plan(self, query: str) -> AgenticRAGPlan:
+        query = query.strip()
+        is_question_generation = any(keyword in query for keyword in ["出一道", "生成题", "综合题", "练习题"])
+        is_cross_chapter = any(keyword in query for keyword in ["第2章", "第4章", "跨章节", "综合"])
+
+        steps = [
+            AgenticRAGStep("retrieve", "retrieve directly relevant chunks", {"query": query}),
+            AgenticRAGStep("expand", "expand concepts through graph or prerequisites", {"query": query}),
+            AgenticRAGStep("synthesize", "merge evidence into a grounded response", {"query": query}),
+            AgenticRAGStep("verify", "check citations, missing concepts, and unsupported claims", {"query": query}),
         ]
-        current_index = stage_order.index(self.current_stage) if self.current_stage in stage_order else -1
-        if current_index < len(stage_order) - 1:
-            self.current_stage = stage_order[current_index + 1]
-    
-    def save_checkpoint(self) -> Checkpoint:
-        """保存检查点"""
-        checkpoint = Checkpoint(
-            stage=self.current_stage,
-            timestamp=datetime.now(),
-            data={
-                "completed_stages": self.completed_stages.copy(),
-                "results": self.results.copy(),
-            }
-        )
-        self.checkpoints.append(checkpoint)
-        return checkpoint
 
-class MainCoordinator:
-    """主协调器"""
-    
-    def __init__(self):
-        self.state = CoordinatorState()
-        self.sub_coordinators: Dict[str, Any] = {}
-    
-    def register_sub_coordinator(self, name: str, coordinator: Any) -> None:
-        """注册子协调器"""
-        self.sub_coordinators[name] = coordinator
-    
-    async def invoke(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """执行协调流程"""
-        self.state.status = CoordinatorStatus.RUNNING
-        self.state.current_stage = "document_parsing"
-        
-        try:
-            # 这里将实现具体的流程控制
-            # 目前只是返回一个示例结果
-            result = {
-                "status": "success",
-                "message": "协调流程执行完成",
-                "data": {}
-            }
-            
-            self.state.status = CoordinatorStatus.COMPLETED
-            self.state.advance_stage()
-            
-            return result
-        except Exception as e:
-            self.state.status = CoordinatorStatus.FAILED
-            self.state.errors.append({
-                "stage": self.state.current_stage,
-                "error": str(e),
-                "timestamp": datetime.now()
-            })
-            raise
-    
-    def get_status(self) -> Dict[str, Any]:
-        """获取状态"""
+        if is_question_generation:
+            steps.append(AgenticRAGStep("generate_question", "produce question, answer, and scoring rubric", {"query": query}))
+
+        reason = "complex multi-step query" if is_cross_chapter or is_question_generation else "single query agentic plan"
+        return AgenticRAGPlan(mode="agentic_rag", reason=reason, steps=steps, estimated_cost="high")
+```
+
+This task only creates deterministic planning. It must not call an external LLM, mutate the document store, or become the default RAG mode.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+pytest tests/test_agentic_rag.py -q
+git add src/services/agentic_rag.py tests/test_agentic_rag.py
+git commit -m "feat: add deterministic agentic RAG planner"
+```
+
+### Task 19: RAG Strategy Router
+
+**Files:**
+- Create: `src/services/rag_router.py`
+- Test: `tests/test_rag_router.py`
+
+- [ ] **Step 1: Add routing tests**
+
+Create `tests/test_rag_router.py`:
+
+```python
+from src.services.rag_router import RAGStrategyRouter, RetrievalMode
+
+
+def test_routes_definition_to_simple_rag():
+    decision = RAGStrategyRouter().route("什么是特征值？")
+    assert decision.mode == RetrievalMode.SIMPLE
+    assert decision.estimated_cost == "low"
+
+
+def test_routes_prerequisite_to_graph_rag():
+    decision = RAGStrategyRouter().route("学习特征值前需要掌握什么？")
+    assert decision.mode == RetrievalMode.GRAPH
+
+
+def test_routes_synthesis_to_agentic_rag():
+    decision = RAGStrategyRouter().route("基于第2章和第4章出一道综合题")
+    assert decision.mode == RetrievalMode.AGENTIC
+    assert decision.estimated_cost == "high"
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_rag_router.py -q
+```
+
+Expected: module missing.
+
+- [ ] **Step 3: Implement rule-first router**
+
+Create `src/services/rag_router.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class RetrievalMode(str, Enum):
+    SIMPLE = "simple_rag"
+    GRAPH = "graph_rag_lite"
+    AGENTIC = "agentic_rag"
+
+
+@dataclass(frozen=True)
+class RetrievalDecision:
+    mode: RetrievalMode
+    reason: str
+    confidence: float
+    estimated_cost: str
+
+
+class RAGStrategyRouter:
+    def route(self, query: str) -> RetrievalDecision:
+        normalized = query.strip().lower()
+
+        if any(keyword in normalized for keyword in ["出一道", "生成题", "综合题", "跨章节", "第2章", "第4章"]):
+            return RetrievalDecision(
+                mode=RetrievalMode.AGENTIC,
+                reason="query requires multi-step synthesis or question generation",
+                confidence=0.8,
+                estimated_cost="high",
+            )
+
+        if any(keyword in normalized for keyword in ["关系", "前置", "先学", "依赖", "路径", "关联"]):
+            return RetrievalDecision(
+                mode=RetrievalMode.GRAPH,
+                reason="query asks for concept relation or learning path",
+                confidence=0.75,
+                estimated_cost="medium",
+            )
+
+        return RetrievalDecision(
+            mode=RetrievalMode.SIMPLE,
+            reason="definition or direct lookup query",
+            confidence=0.7,
+            estimated_cost="low",
+        )
+```
+
+Default behavior remains simple RAG unless deterministic rules clearly justify Graph or Agentic modes. Later LLM-based routing must preserve `mode`, `reason`, `confidence`, and `estimated_cost` in logs and evaluation reports.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+pytest tests/test_rag_router.py -q
+git add src/services/rag_router.py tests/test_rag_router.py
+git commit -m "feat: add RAG strategy router"
+```
+
+### Task 20: Compare RAG Modes on Evaluation Set
+
+**Files:**
+- Create: `tests/test_rag_mode_comparison.py`
+- Modify: `src/services/rag_evaluation.py`
+
+- [ ] **Step 1: Add comparison test**
+
+Create `tests/test_rag_mode_comparison.py`:
+
+```python
+from src.services.rag_evaluation import RAGEvaluationReport
+
+
+def test_rag_evaluation_report_tracks_modes():
+    report = RAGEvaluationReport()
+    report.add_score(mode="simple_rag", category="definition", source_recall=1.0, answer_term_recall=1.0)
+    report.add_score(mode="graph_rag_lite", category="concept_relation", source_recall=1.0, answer_term_recall=0.8)
+
+    summary = report.summary()
+
+    assert "simple_rag" in summary
+    assert "graph_rag_lite" in summary
+```
+
+- [ ] **Step 2: Run failure**
+
+```bash
+pytest tests/test_rag_mode_comparison.py -q
+```
+
+Expected: `RAGEvaluationReport` missing.
+
+- [ ] **Step 3: Implement report aggregation**
+
+Extend `src/services/rag_evaluation.py`:
+
+```python
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class RAGModeScore:
+    mode: str
+    category: str
+    source_recall: float
+    answer_term_recall: float
+    latency_ms: int = 0
+    token_cost: int = 0
+
+
+class RAGEvaluationReport:
+    def __init__(self) -> None:
+        self._scores: list[RAGModeScore] = []
+
+    def add_score(
+        self,
+        mode: str,
+        category: str,
+        source_recall: float,
+        answer_term_recall: float,
+        latency_ms: int = 0,
+        token_cost: int = 0,
+    ) -> None:
+        self._scores.append(
+            RAGModeScore(
+                mode=mode,
+                category=category,
+                source_recall=source_recall,
+                answer_term_recall=answer_term_recall,
+                latency_ms=latency_ms,
+                token_cost=token_cost,
+            )
+        )
+
+    def summary(self) -> dict[str, dict[str, float | list[str]]]:
+        by_mode: dict[str, list[RAGModeScore]] = defaultdict(list)
+        for score in self._scores:
+            by_mode[score.mode].append(score)
+
         return {
-            "current_stage": self.state.current_stage,
-            "completed_stages": self.state.completed_stages,
-            "status": self.state.status.value,
-            "errors": len(self.state.errors)
+            mode: {
+                "average_source_recall": sum(item.source_recall for item in scores) / len(scores),
+                "average_answer_term_recall": sum(item.answer_term_recall for item in scores) / len(scores),
+                "average_latency_ms": sum(item.latency_ms for item in scores) / len(scores),
+                "average_token_cost": sum(item.token_cost for item in scores) / len(scores),
+                "categories": sorted({item.category for item in scores}),
+            }
+            for mode, scores in by_mode.items()
         }
 ```
 
-- [ ] **Step 4: 运行测试验证通过**
+Promotion gate:
+- Simple RAG remains the product default until Graph RAG-lite or Agentic RAG improves source recall or answer-term recall on the shared evaluation set without unacceptable latency/cost growth.
+- Automatic routing is enabled only after comparison reports include at least `definition`, `formula_lookup`, `concept_relation`, and `question_generation` categories.
+
+- [ ] **Step 4: Verify and commit**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_coordinator.py -v
+pytest tests/test_rag_evaluation.py tests/test_rag_mode_comparison.py -q
+git add src/services/rag_evaluation.py tests/test_rag_mode_comparison.py
+git commit -m "test: compare RAG retrieval modes"
 ```
 
-Expected: PASS
+## Phase MVP-5: Product Quality, Versioning, and Review
 
-- [ ] **Step 5: 提交代码**
-
-```bash
-git add src/coordinator/__init__.py src/coordinator/main_coordinator.py tests/test_coordinator.py
-git commit -m "feat: 实现主协调器"
-```
-
----
-
-## Task 8: 集成测试
+### Task 21: Content Version Service
 
 **Files:**
-- Create: `newtest/tests/test_integration.py`
+- Create: `src/services/version_service.py`
+- Modify: `src/db/models.py`
+- Test: `tests/test_version_service.py`
 
-- [ ] **Step 1: 编写集成测试**
+- [ ] **Step 1: Add version service tests**
+
+Create `tests/test_version_service.py`:
 
 ```python
-# tests/test_integration.py
-import pytest
-from src.config import load_config
-from src.agents.base_agent import BaseAgent, AgentResult
-from src.parsers.marker_pdf import MarkerPDFParser, StructuredDocument
-from src.knowledge.knowledge_graph import KnowledgeGraph, KnowledgePoint
-from src.services.rag_service import RAGService
-from src.services.memory_service import MemoryService
-from src.coordinator.main_coordinator import MainCoordinator
+from src.services.version_service import ContentVersionService
 
-@pytest.mark.asyncio
-async def test_full_pipeline():
-    """测试完整流程"""
-    # 1. 加载配置
-    config = load_config()
-    assert config.llm.primary_model == "mimo-v2.5"
-    
-    # 2. 初始化组件
-    parser = MarkerPDFParser()
-    knowledge_graph = KnowledgeGraph()
-    rag_service = RAGService()
-    memory_service = MemoryService()
-    coordinator = MainCoordinator()
-    
-    # 3. 测试组件集成
-    assert parser is not None
-    assert knowledge_graph is not None
-    assert rag_service is not None
-    assert memory_service is not None
-    assert coordinator is not None
-    
-    # 4. 测试知识图谱添加
-    kp = KnowledgePoint(
-        id="kp1",
-        name="测试概念",
-        description="这是一个测试概念",
-        category="概念",
-        importance=0.8
+
+def test_version_service_creates_incrementing_versions():
+    service = ContentVersionService()
+
+    first = service.create_version(
+        target_type="outline",
+        target_id="outline-1",
+        content="# First outline",
+        created_by="system",
+        change_summary="initial generation",
     )
-    knowledge_graph.add_point(kp)
-    assert len(knowledge_graph.nodes) == 1
-    
-    # 5. 测试记忆服务
-    memory_service.add_message("user", "测试消息")
-    context = memory_service.get_context()
-    assert "测试消息" in context
-    
-    # 6. 测试协调器状态
-    status = coordinator.get_status()
-    assert status["current_stage"] == "idle"
+    second = service.create_version(
+        target_type="outline",
+        target_id="outline-1",
+        content="# Edited outline",
+        created_by="user-1",
+        change_summary="user edited section title",
+    )
+
+    assert first.version == 1
+    assert second.version == 2
+    assert service.list_versions("outline", "outline-1")[-1].content == "# Edited outline"
 ```
 
-- [ ] **Step 2: 运行集成测试**
+- [ ] **Step 2: Run failure**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-pytest tests/test_integration.py -v
+pytest tests/test_version_service.py -q
 ```
 
-Expected: PASS
+Expected: `src.services.version_service` missing.
 
-- [ ] **Step 3: 提交代码**
+- [ ] **Step 3: Implement in-memory service before DB persistence**
 
-```bash
-git add tests/test_integration.py
-git commit -m "test: 添加集成测试"
-```
-
----
-
-## Task 9: 应用入口和CLI
-
-**Files:**
-- Create: `newtest/src/main.py`
-- Modify: `newtest/src/__init__.py`
-
-- [ ] **Step 1: 创建应用入口**
+Create `src/services/version_service.py`:
 
 ```python
-# src/main.py
-import asyncio
-from src.config import load_config
-from src.coordinator.main_coordinator import MainCoordinator
-from src.parsers.marker_pdf import MarkerPDFParser
-from src.knowledge.knowledge_graph import KnowledgeGraph
-from src.services.rag_service import RAGService
-from src.services.memory_service import MemoryService
+from __future__ import annotations
 
-async def main():
-    """主函数"""
-    print("PPT/PDF转复习提纲和考试例题智能系统")
-    print("=" * 50)
-    
-    # 加载配置
-    config = load_config()
-    print(f"LLM模型: {config.llm.primary_model}")
-    
-    # 初始化组件
-    coordinator = MainCoordinator()
-    parser = MarkerPDFParser()
-    knowledge_graph = KnowledgeGraph()
-    rag_service = RAGService()
-    memory_service = MemoryService()
-    
-    print("系统初始化完成")
-    print("可用命令:")
-    print("  /parse <file_path> - 解析文档")
-    print("  /ask <question> - 提问")
-    print("  /outline - 生成复习提纲")
-    print("  /questions - 生成考试例题")
-    print("  /quit - 退出")
-    
-    # 简单的命令行循环
-    while True:
-        try:
-            user_input = input("\n> ").strip()
-            
-            if not user_input:
-                continue
-            
-            if user_input == "/quit":
-                print("再见！")
-                break
-            
-            elif user_input.startswith("/parse "):
-                file_path = user_input[7:].strip()
-                print(f"正在解析文件: {file_path}")
-                # 这里将调用解析器
-                print("解析功能正在开发中...")
-            
-            elif user_input.startswith("/ask "):
-                question = user_input[5:].strip()
-                print(f"正在回答: {question}")
-                # 这里将调用RAG服务
-                print("问答功能正在开发中...")
-            
-            elif user_input == "/outline":
-                print("正在生成复习提纲...")
-                print("提纲生成功能正在开发中...")
-            
-            elif user_input == "/questions":
-                print("正在生成考试例题...")
-                print("例题生成功能正在开发中...")
-            
-            else:
-                print(f"未知命令: {user_input}")
-                print("输入 /help 查看可用命令")
-        
-        except KeyboardInterrupt:
-            print("\n再见！")
-            break
-        except Exception as e:
-            print(f"错误: {str(e)}")
+from dataclasses import dataclass
+from datetime import datetime
 
-if __name__ == "__main__":
-    asyncio.run(main())
+
+@dataclass(frozen=True)
+class ContentVersion:
+    id: str
+    target_type: str
+    target_id: str
+    version: int
+    content: str
+    created_by: str
+    created_at: datetime
+    change_summary: str
+
+
+class ContentVersionService:
+    def __init__(self) -> None:
+        self._versions: dict[tuple[str, str], list[ContentVersion]] = {}
+
+    def create_version(
+        self,
+        target_type: str,
+        target_id: str,
+        content: str,
+        created_by: str,
+        change_summary: str,
+    ) -> ContentVersion:
+        key = (target_type, target_id)
+        versions = self._versions.setdefault(key, [])
+        next_version = len(versions) + 1
+        record = ContentVersion(
+            id=f"{target_type}:{target_id}:v{next_version}",
+            target_type=target_type,
+            target_id=target_id,
+            version=next_version,
+            content=content,
+            created_by=created_by,
+            created_at=datetime.utcnow(),
+            change_summary=change_summary,
+        )
+        versions.append(record)
+        return record
+
+    def list_versions(self, target_type: str, target_id: str) -> list[ContentVersion]:
+        return list(self._versions.get((target_type, target_id), []))
 ```
 
-- [ ] **Step 2: 更新__init__.py**
+- [ ] **Step 4: Add DB model fields**
+
+If Task 13 uses dataclass-backed local models, add this to `src/db/models.py`:
 
 ```python
-# src/__init__.py
-"""PPT/PDF转复习提纲和考试例题智能系统"""
+from dataclasses import dataclass
+from datetime import datetime
 
-__version__ = "0.1.0"
-__author__ = "Study Agent Team"
+
+@dataclass
+class ContentVersionRecord:
+    id: str
+    target_type: str
+    target_id: str
+    version: int
+    content: str
+    created_by: str
+    created_at: datetime
+    change_summary: str
 ```
 
-- [ ] **Step 3: 测试应用入口**
+If Task 13 uses SQLAlchemy declarative models, add the same fields with SQLAlchemy columns under the existing `Base`:
+
+```python
+from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+
+class ContentVersionRecord(Base):
+    __tablename__ = "content_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    target_type: Mapped[str] = mapped_column(String, index=True)
+    target_id: Mapped[str] = mapped_column(String, index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    change_summary: Mapped[str] = mapped_column(Text)
+```
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
-cd "/Users/haobowang/Desktop/Code file/Python/LLM-Study/newtest"
-echo "/quit" | python -m src.main
+pytest tests/test_version_service.py tests/test_db_models.py -q
+git add src/services/version_service.py src/db/models.py tests/test_version_service.py
+git commit -m "feat: add content version service"
 ```
 
-Expected: 程序正常退出
-
-- [ ] **Step 4: 提交代码**
-
-```bash
-git add src/main.py src/__init__.py
-git commit -m "feat: 实现应用入口和CLI"
-```
-
----
-
-## Task 10: 文档和README
+### Task 22: Export Job Service
 
 **Files:**
-- Create: `newtest/README.md`
+- Create: `src/services/export_service.py`
+- Create: `tests/test_export_service.py`
+- Modify: `src/api/routes/exports.py`
 
-- [ ] **Step 1: 创建README**
+- [ ] **Step 1: Add export service tests**
 
-```markdown
-# PPT/PDF转复习提纲和考试例题智能系统
+Create `tests/test_export_service.py`:
 
-基于DeepAgent的智能系统，能够将PPT/PDF文件转化为复习提纲和考试例题。
+```python
+from src.services.export_service import ExportFormat, ExportService
+from src.services.version_service import ContentVersion
+from datetime import datetime
 
-## 功能特性
 
-- **多智能体协作**：8个专业智能体分工协作
-- **Agentic RAG**：混合检索方案，支持知识点问答解释
-- **记忆系统**：短期、长期、工作记忆三层架构
-- **自进化系统**：基于DSPy + GEPA的反射式进化优化
-- **多模态支持**：图表理解、公式识别、表格提取
+def test_export_service_creates_markdown_export_job():
+    version = ContentVersion(
+        id="outline:outline-1:v1",
+        target_type="outline",
+        target_id="outline-1",
+        version=1,
+        content="# Outline\n\nSource: p.1",
+        created_by="system",
+        created_at=datetime.utcnow(),
+        change_summary="initial",
+    )
 
-## 快速开始
+    job = ExportService().create_export(document_id="doc-1", version=version, export_format=ExportFormat.MARKDOWN)
 
-### 安装依赖
+    assert job.status == "queued"
+    assert job.format == ExportFormat.MARKDOWN
+    assert job.version_id == version.id
+```
+
+- [ ] **Step 2: Run failure**
 
 ```bash
-pip install -r requirements.txt
+pytest tests/test_export_service.py -q
 ```
 
-### 配置环境变量
+Expected: `src.services.export_service` missing.
+
+- [ ] **Step 3: Implement export job creation**
+
+Create `src/services/export_service.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+from src.services.version_service import ContentVersion
+
+
+class ExportFormat(str, Enum):
+    MARKDOWN = "markdown"
+    LATEX = "latex"
+    PDF = "pdf"
+    JSON = "json"
+
+
+@dataclass(frozen=True)
+class ExportJob:
+    id: str
+    document_id: str
+    version_id: str
+    format: ExportFormat
+    status: str
+    storage_uri: str | None = None
+    error_message: str | None = None
+
+
+class ExportService:
+    def create_export(self, document_id: str, version: ContentVersion, export_format: ExportFormat) -> ExportJob:
+        return ExportJob(
+            id=f"export:{document_id}:{version.id}:{export_format.value}",
+            document_id=document_id,
+            version_id=version.id,
+            format=export_format,
+            status="queued",
+        )
+```
+
+- [ ] **Step 4: Wire API route**
+
+Create `src/api/routes/exports.py`:
+
+```python
+from pydantic import BaseModel
+from fastapi import APIRouter
+
+from src.services.export_service import ExportFormat, ExportService
+from src.services.version_service import ContentVersion
+from datetime import datetime
+
+
+router = APIRouter(prefix="/api/exports", tags=["exports"])
+
+
+class ExportRequest(BaseModel):
+    version_id: str
+    format: ExportFormat
+    content: str = ""
+
+
+@router.post("/{document_id}")
+def create_export(document_id: str, request: ExportRequest) -> dict[str, str]:
+    version = ContentVersion(
+        id=request.version_id,
+        target_type="outline",
+        target_id=document_id,
+        version=1,
+        content=request.content,
+        created_by="api",
+        created_at=datetime.utcnow(),
+        change_summary="export request",
+    )
+    job = ExportService().create_export(document_id=document_id, version=version, export_format=request.format)
+    return {"id": job.id, "status": job.status, "format": job.format.value}
+```
+
+File rendering stays in the later worker task; this API task only creates and returns the export job.
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
-cp .env.example .env
-# 编辑 .env 文件，配置API密钥等
+pytest tests/test_export_service.py tests/test_api_documents.py -q
+git add src/services/export_service.py src/api/routes/exports.py tests/test_export_service.py
+git commit -m "feat: add export job service"
 ```
 
-### 运行系统
+### Task 23: Quality Scores, Feedback, and Review Tasks
+
+**Files:**
+- Create: `src/services/quality_service.py`
+- Create: `src/services/feedback_service.py`
+- Create: `tests/test_quality_feedback.py`
+- Create: `src/api/routes/feedback.py`
+- Create: `src/api/routes/review.py`
+
+- [ ] **Step 1: Add quality and feedback tests**
+
+Create `tests/test_quality_feedback.py`:
+
+```python
+from src.services.feedback_service import FeedbackService
+from src.services.quality_service import QualityService
+
+
+def test_quality_service_scores_outline_reference_coverage():
+    score = QualityService().score_outline(
+        outline_markdown="# Derivatives\n\nSee source [p.1]",
+        required_terms=["Derivatives"],
+        source_count=1,
+    )
+
+    assert score.metric == "outline_reference_coverage"
+    assert score.score == 1.0
+
+
+def test_feedback_service_creates_review_task_for_low_rating():
+    service = FeedbackService()
+
+    feedback = service.submit_feedback(
+        target_type="question",
+        target_id="q-1",
+        rating=1,
+        reason="incorrect_answer",
+        comment="The derivative answer is wrong.",
+        created_by="user-1",
+    )
+
+    review_tasks = service.list_review_tasks()
+    assert feedback.rating == 1
+    assert review_tasks[0].target_id == "q-1"
+    assert review_tasks[0].status == "open"
+```
+
+- [ ] **Step 2: Run failure**
 
 ```bash
-python -m src.main
+pytest tests/test_quality_feedback.py -q
 ```
 
-## 项目结构
+Expected: quality and feedback modules missing.
 
+- [ ] **Step 3: Implement quality scoring**
+
+Create `src/services/quality_service.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class QualityScore:
+    target_type: str
+    target_id: str
+    metric: str
+    score: float
+    evidence: str
+
+
+class QualityService:
+    def score_outline(self, outline_markdown: str, required_terms: list[str], source_count: int) -> QualityScore:
+        matched_terms = [term for term in required_terms if term.lower() in outline_markdown.lower()]
+        term_score = len(matched_terms) / max(1, len(required_terms))
+        reference_score = 1.0 if source_count > 0 and "[p." in outline_markdown else 0.0
+        score = min(1.0, (term_score + reference_score) / 2)
+
+        return QualityScore(
+            target_type="outline",
+            target_id="inline",
+            metric="outline_reference_coverage",
+            score=score,
+            evidence=f"matched_terms={matched_terms}; source_count={source_count}",
+        )
 ```
-newtest/
-├── src/                    # 源代码
-│   ├── agents/            # 智能体层
-│   ├── coordinator/       # 协调器层
-│   ├── knowledge/         # 知识处理
-│   ├── parsers/           # 文档解析
-│   ├── services/          # 服务层
-│   └── utils/             # 工具函数
-├── tests/                 # 测试
-├── docs/                  # 文档
-├── requirements.txt       # 依赖
-└── README.md              # 项目说明
+
+- [ ] **Step 4: Implement feedback and review tasks**
+
+Create `src/services/feedback_service.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+
+@dataclass(frozen=True)
+class UserFeedback:
+    id: str
+    target_type: str
+    target_id: str
+    rating: int
+    reason: str
+    comment: str
+    created_by: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class ReviewTask:
+    id: str
+    target_type: str
+    target_id: str
+    status: str
+    reason: str
+    assignee: str | None = None
+    decision: str | None = None
+    comment: str | None = None
+
+
+class FeedbackService:
+    def __init__(self) -> None:
+        self._feedback: list[UserFeedback] = []
+        self._review_tasks: list[ReviewTask] = []
+
+    def submit_feedback(
+        self,
+        target_type: str,
+        target_id: str,
+        rating: int,
+        reason: str,
+        comment: str,
+        created_by: str,
+    ) -> UserFeedback:
+        feedback = UserFeedback(
+            id=f"feedback:{len(self._feedback) + 1}",
+            target_type=target_type,
+            target_id=target_id,
+            rating=rating,
+            reason=reason,
+            comment=comment,
+            created_by=created_by,
+            created_at=datetime.utcnow(),
+        )
+        self._feedback.append(feedback)
+        if rating <= 2:
+            self._review_tasks.append(
+                ReviewTask(
+                    id=f"review:{len(self._review_tasks) + 1}",
+                    target_type=target_type,
+                    target_id=target_id,
+                    status="open",
+                    reason=reason,
+                )
+            )
+        return feedback
+
+    def list_review_tasks(self) -> list[ReviewTask]:
+        return list(self._review_tasks)
 ```
 
-## 技术栈
+- [ ] **Step 5: Add API routes and verify**
 
-- **LLM**：MiMo V2.5
-- **PDF解析**：Marker
-- **RAG**：LangChain + ChromaDB
-- **知识图谱**：NetworkX
-- **自进化**：DSPy + GEPA
-- **Web框架**：FastAPI
-- **前端**：Streamlit
+Create `src/api/routes/feedback.py`:
 
-## 开发指南
+```python
+from fastapi import APIRouter
+from pydantic import BaseModel
 
-### 运行测试
+from src.services.feedback_service import FeedbackService
+
+
+router = APIRouter(prefix="/api/feedback", tags=["feedback"])
+service = FeedbackService()
+
+
+class FeedbackRequest(BaseModel):
+    target_type: str
+    target_id: str
+    rating: int
+    reason: str
+    comment: str
+    created_by: str
+
+
+@router.post("")
+def submit_feedback(request: FeedbackRequest) -> dict[str, object]:
+    feedback = service.submit_feedback(**request.model_dump())
+    return {"id": feedback.id, "rating": feedback.rating, "target_id": feedback.target_id}
+```
+
+Create `src/api/routes/review.py`:
+
+```python
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from src.services.feedback_service import FeedbackService, ReviewTask
+
+
+router = APIRouter(prefix="/api/review-tasks", tags=["review"])
+service = FeedbackService()
+
+
+class ReviewDecisionRequest(BaseModel):
+    decision: str
+    comment: str = ""
+
+
+@router.get("")
+def list_review_tasks() -> list[ReviewTask]:
+    return service.list_review_tasks()
+
+
+@router.post("/{task_id}/decision")
+def submit_review_decision(task_id: str, request: ReviewDecisionRequest) -> dict[str, str]:
+    return {"id": task_id, "status": "decided", "decision": request.decision}
+```
+
+Run:
 
 ```bash
-pytest tests/ -v
+pytest tests/test_quality_feedback.py -q
+git add src/services/quality_service.py src/services/feedback_service.py src/api/routes/feedback.py src/api/routes/review.py tests/test_quality_feedback.py
+git commit -m "feat: add quality feedback and review services"
 ```
 
-### 代码格式化
+## Phase MVP-6: Security, Audit, and Operations
+
+### Task 24: Permission Checks and Audit Logging
+
+**Files:**
+- Create: `src/security/permissions.py`
+- Create: `src/security/audit.py`
+- Create: `src/security/__init__.py`
+- Test: `tests/test_security_audit.py`
+
+- [ ] **Step 1: Add permission and audit tests**
+
+Create `tests/test_security_audit.py`:
+
+```python
+from src.security.audit import AuditLogger
+from src.security.permissions import PermissionService, Resource
+
+
+def test_permission_service_allows_owner_export():
+    resource = Resource(resource_type="document", resource_id="doc-1", owner_id="user-1")
+
+    assert PermissionService().can(actor_id="user-1", action="export", resource=resource)
+    assert not PermissionService().can(actor_id="user-2", action="export", resource=resource)
+
+
+def test_audit_logger_records_key_event_without_sensitive_content():
+    logger = AuditLogger()
+
+    event = logger.record(
+        actor_id="user-1",
+        action="export",
+        resource_type="document",
+        resource_id="doc-1",
+        request_id="req-1",
+        metadata={"filename": "notes.pdf", "api_key": "secret"},
+    )
+
+    assert event.action == "export"
+    assert "api_key" not in event.metadata
+```
+
+- [ ] **Step 2: Run failure**
 
 ```bash
-black src/ tests/
-isort src/ tests/
+pytest tests/test_security_audit.py -q
 ```
 
-### 类型检查
+Expected: `src.security` module missing.
+
+- [ ] **Step 3: Implement permission service**
+
+Create `src/security/permissions.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Resource:
+    resource_type: str
+    resource_id: str
+    owner_id: str
+    organization_id: str | None = None
+
+
+class PermissionService:
+    OWNER_ACTIONS = {"read", "update", "delete", "export", "retry", "cancel"}
+
+    def can(self, actor_id: str, action: str, resource: Resource) -> bool:
+        if action not in self.OWNER_ACTIONS:
+            return False
+        return actor_id == resource.owner_id
+```
+
+- [ ] **Step 4: Implement audit logger**
+
+Create `src/security/audit.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+
+
+SENSITIVE_KEYS = {"api_key", "authorization", "token", "secret", "content"}
+
+
+@dataclass(frozen=True)
+class AuditEvent:
+    actor_id: str
+    action: str
+    resource_type: str
+    resource_id: str
+    request_id: str
+    created_at: datetime
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class AuditLogger:
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def record(
+        self,
+        actor_id: str,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        request_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> AuditEvent:
+        clean_metadata = {
+            key: value
+            for key, value in (metadata or {}).items()
+            if key.lower() not in SENSITIVE_KEYS
+        }
+        event = AuditEvent(
+            actor_id=actor_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            request_id=request_id,
+            created_at=datetime.utcnow(),
+            metadata=clean_metadata,
+        )
+        self.events.append(event)
+        return event
+```
+
+- [ ] **Step 5: Export package API and verify**
+
+Create `src/security/__init__.py`:
+
+```python
+from src.security.audit import AuditEvent, AuditLogger
+from src.security.permissions import PermissionService, Resource
+
+__all__ = ["AuditEvent", "AuditLogger", "PermissionService", "Resource"]
+```
+
+Run:
 
 ```bash
-mypy src/
+pytest tests/test_security_audit.py -q
+git add src/security tests/test_security_audit.py
+git commit -m "feat: add permission checks and audit logging"
 ```
 
-## 许可证
+### Task 25: Observability and Health Checks
 
-MIT License
+**Files:**
+- Create: `src/observability/request_context.py`
+- Create: `src/observability/health.py`
+- Create: `src/observability/__init__.py`
+- Modify: `src/api/app.py`
+- Test: `tests/test_observability.py`
+
+- [ ] **Step 1: Add observability tests**
+
+Create `tests/test_observability.py`:
+
+```python
+from src.observability.health import HealthCheckService
+from src.observability.request_context import RequestContext
+
+
+def test_request_context_generates_request_id():
+    context = RequestContext.from_headers({})
+
+    assert context.request_id.startswith("req_")
+
+
+def test_health_check_reports_component_statuses():
+    service = HealthCheckService()
+    report = service.check({"database": True, "queue": False, "object_storage": True})
+
+    assert report["status"] == "degraded"
+    assert report["components"]["queue"] == "unavailable"
 ```
 
-- [ ] **Step 2: 提交代码**
+- [ ] **Step 2: Run failure**
 
 ```bash
-git add README.md
-git commit -m "docs: 添加README文档"
+pytest tests/test_observability.py -q
 ```
 
----
+Expected: `src.observability` module missing.
 
-## 自审查检查表
+- [ ] **Step 3: Implement request context**
 
-**1. 规格覆盖**：✅ 所有规格要求都有对应任务
-**2. 占位符扫描**：✅ 无TBD/TODO
-**3. 类型一致性**：✅ 所有类型、方法签名一致
+Create `src/observability/request_context.py`:
 
-**实现计划完成！**
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from uuid import uuid4
+
+
+@dataclass(frozen=True)
+class RequestContext:
+    request_id: str
+    user_id: str | None = None
+
+    @classmethod
+    def from_headers(cls, headers: dict[str, str]) -> "RequestContext":
+        request_id = headers.get("x-request-id") or f"req_{uuid4().hex}"
+        return cls(request_id=request_id, user_id=headers.get("x-user-id"))
+```
+
+- [ ] **Step 4: Implement health report**
+
+Create `src/observability/health.py`:
+
+```python
+from __future__ import annotations
+
+
+class HealthCheckService:
+    def check(self, components: dict[str, bool]) -> dict[str, object]:
+        component_status = {
+            name: "available" if available else "unavailable"
+            for name, available in components.items()
+        }
+        overall = "ok" if all(components.values()) else "degraded"
+        return {"status": overall, "components": component_status}
+```
+
+- [ ] **Step 5: Wire API health route and verify**
+
+Create `src/observability/__init__.py`:
+
+```python
+from src.observability.health import HealthCheckService
+from src.observability.request_context import RequestContext
+
+__all__ = ["HealthCheckService", "RequestContext"]
+```
+
+Modify `src/api/app.py` to expose `GET /health` using `HealthCheckService`:
+
+```python
+from fastapi import FastAPI
+
+from src.observability.health import HealthCheckService
+
+
+app = FastAPI(title="PPT/PDF Study Agent")
+
+
+@app.get("/health")
+def health() -> dict[str, object]:
+    return HealthCheckService().check(
+        {
+            "api": True,
+            "database": True,
+            "queue": True,
+        }
+    )
+```
+
+If `src/api/app.py` already exists from Task 11, keep its existing routers and append only the `/health` route and import.
+
+Run:
+
+```bash
+pytest tests/test_observability.py tests/test_api_documents.py -q
+git add src/observability src/api/app.py tests/test_observability.py
+git commit -m "feat: add observability and health checks"
+```
+
+## Self-Review Checklist
+
+Before executing a task, confirm:
+- The task still matches `SPEC.md`.
+- Tests are written before implementation.
+- The task does not expand MVP-1 into full web product work.
+- Completed tasks go through both required reviews:
+  1. Spec review against `SPEC.md`.
+  2. Quality review for code quality, names, boundaries, edge cases, tests.
+
+## Current Known Blockers
+
+- `pytest -q` currently fails because async tests are not being handled by `pytest-asyncio`.
+- `python -m src.main` currently loops on EOF in non-interactive mode.
+- `MarkerPDFParser` still uses old Marker API assumptions.
+- RAG and coordinator currently return placeholder behavior in important paths.
+- Advanced RAG modes must not become default until the shared RAG evaluation set shows improvement over simple RAG baseline.

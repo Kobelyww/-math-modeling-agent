@@ -10,19 +10,30 @@
 - **自进化系统**：基于DSPy + GEPA的反射式进化优化
 - **多模态支持**：图表理解、公式识别、表格提取
 
+## 当前状态
+
+项目当前处于 **MVP-0.4 核心骨架阶段**。配置、基础Agent、模型路由、解析器数据结构、知识图谱、RAG服务、记忆服务、主协调器和CLI入口已有骨架代码，但真实PDF/PPT到复习提纲和考试例题的端到端闭环尚未完成。
+
+优先级最高的后续工作：
+
+1. 修复测试环境，确保异步测试通过。
+2. 按当前 `marker-pdf` API 适配PDF解析器。
+3. 实现PDF解析、知识点抽取、提纲生成、例题生成的MVP闭环。
+
 ## 快速开始
 
 ### 安装依赖
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -e ".[dev]"
 ```
 
 ### 配置环境变量
 
 ```bash
-cp .env.example .env
-# 编辑 .env 文件，配置API密钥等
+# 如需调用真实模型，创建 .env 并配置API密钥。
+# 当前仓库尚未提供 .env.example，变量名以 src/config.py 为准。
+touch .env
 ```
 
 ### 运行系统
@@ -56,15 +67,18 @@ newtest/
 - **知识图谱**：NetworkX
 - **自进化**：DSPy + GEPA
 - **Web框架**：FastAPI
-- **前端**：Streamlit
+- **正式前端**：React + TypeScript + Vite
+- **内部调试台**：Streamlit
 
 ## 开发指南
 
 ### 运行测试
 
 ```bash
-pytest tests/ -v
+pytest -q
 ```
+
+如果看到 `async def functions are not natively supported` 或 `Unknown pytest.mark.asyncio`，说明当前环境没有安装/加载 `pytest-asyncio`，请先确认已使用 `python -m pip install -e ".[dev]"` 安装开发依赖。
 
 ### 代码格式化
 
