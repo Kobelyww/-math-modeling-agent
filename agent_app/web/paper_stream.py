@@ -173,6 +173,7 @@ class EventDrivingCoordinator:
         self.emit({"type": "stage", "stage": stage, "label": label, "status": "completed"})
         self._emit_artifact_paths(stage, result)
         self._emit_section_paths(stage, result)
+        self._emit_staged_artifact_paths(stage, result)
         return result
 
     def _emit_artifact_paths(self, stage: str, result: dict[str, Any]) -> None:
@@ -204,6 +205,30 @@ class EventDrivingCoordinator:
                         "path": item,
                     }
                 )
+
+    def _emit_staged_artifact_paths(self, stage: str, result: dict[str, Any]) -> None:
+        for item in result.get("early_section_paths", []):
+            if isinstance(item, str):
+                self._emit_artifact_event("section", stage, item)
+        for item in result.get("subproblem_solution_paths", []):
+            if isinstance(item, str):
+                self._emit_artifact_event("artifact", stage, item)
+        for key in ("symbol_table_path", "staged_manifest_path"):
+            item = result.get(key)
+            if isinstance(item, str):
+                self._emit_artifact_event("artifact", stage, item)
+
+    def _emit_artifact_event(self, event_type: str, stage: str, path: str) -> None:
+        artifact_path = Path(path)
+        event = {
+            "type": event_type,
+            "stage": stage,
+            "name": artifact_path.name,
+            "path": str(artifact_path),
+        }
+        if event_type == "section":
+            event["status"] = "completed"
+        self.emit(event)
 
     @staticmethod
     def _looks_like_artifact_path(value: str) -> bool:

@@ -89,7 +89,7 @@ class ToolDrivingCoordinator:
         return {"messages": [{"content": package["final_synthesis_path"]}]}
 
 
-def test_minimal_competition_workflow_smoke(tmp_path):
+def test_minimal_competition_workflow_smoke_blocks_incomplete_quality(tmp_path):
     data_file = tmp_path / "traffic.csv"
     data_file.write_text("flow,speed\n10,40\n20,35\n", encoding="utf-8")
     ref_file = tmp_path / "reference.md"
@@ -113,14 +113,13 @@ def test_minimal_competition_workflow_smoke(tmp_path):
     assert (run_dir / "trace" / "stage_events.jsonl").exists()
     assert (run_dir / "contracts" / "problem_contract.json").exists()
     assert (run_dir / "contracts" / "solver_strategies.json").exists()
-    assert result.status == RunStatus.COMPLETED
-    assert "final_synthesis.md" in result.summary
+    assert result.status == RunStatus.PARTIAL
+    assert "质量审查未通过" in result.summary
     assert result.artifacts
 
     artifact_paths = {artifact.path.as_posix() for artifact in result.artifacts}
     assert all(not artifact.path.is_absolute() for artifact in result.artifacts)
     assert {
-        "final_synthesis.md",
         "run.json",
         "paper.md",
         "paper.tex",
@@ -133,18 +132,19 @@ def test_minimal_competition_workflow_smoke(tmp_path):
     assert artifact_by_path["paper.tex"].kind == "latex"
     assert artifact_by_path["solve.py"].kind == "python"
     assert artifact_by_path["run.json"].kind == "json"
-    for markdown_path in ["final_synthesis.md", "paper.md", "question.md"]:
+    for markdown_path in ["paper.md", "question.md"]:
         assert artifact_by_path[markdown_path].kind == "markdown"
 
     persisted = runner.run_store.load_state(result.run_id)
     persisted_artifact_paths = {artifact.path.as_posix() for artifact in persisted.artifacts}
-    assert persisted.status == RunStatus.COMPLETED
-    assert {"final_synthesis.md", "run.json"}.issubset(persisted_artifact_paths)
+    assert persisted.status == RunStatus.PARTIAL
+    assert "run.json" in persisted_artifact_paths
+    assert "final_synthesis.md" not in persisted_artifact_paths
     assert persisted.quality_reports
-    assert any(report.gate_name == "submission" for report in persisted.quality_reports)
-
-    final_synthesis = (run_dir / "final_synthesis.md").read_text(encoding="utf-8")
-    assert "Structured DeepAgent competition artifacts are ready for review." in final_synthesis
+    failed_gate_names = {
+        report.gate_name for report in persisted.quality_reports if not report.passed
+    }
+    assert "review" in failed_gate_names
 
     for filename in [
         "inputs_manifest.json",
@@ -155,7 +155,6 @@ def test_minimal_competition_workflow_smoke(tmp_path):
         "solve.py",
         "paper.tex",
         "review_report.md",
-        "final_synthesis.md",
         "run.json",
     ]:
         assert (run_dir / filename).exists(), filename

@@ -46,8 +46,10 @@ def test_paper_chat_stream_emits_stage_tool_artifact_and_done_events(tmp_path):
     assert "stage" in event_types
     assert "tool" in event_types
     assert "artifact" in event_types
+    assert "quality_gate" in event_types
+    assert "revise_required" in event_types
     assert event_types[-1] == "done"
-    assert result.status == RunStatus.COMPLETED
+    assert result.status == RunStatus.PARTIAL
     assert any(event.get("stage") == "draft_paper" for event in collector.events)
     assert any(event.get("name") == "paper.tex" for event in collector.events)
 
@@ -194,6 +196,61 @@ def test_event_driving_coordinator_emits_section_events_from_draft_result(tmp_pa
     coordinator._stage("draft_paper", "起草论文", "draft_competition_paper", {})
 
     assert any(event.get("type") == "section" and event.get("path") == str(section) for event in events)
+
+
+def test_event_driving_coordinator_emits_staged_paper_artifacts(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    events = []
+    coordinator = EventDrivingCoordinator(store, events.append)
+    early_section = tmp_path / "run" / "paper" / "pre_sections" / "02_problem_restatement.md"
+    solution = tmp_path / "run" / "subproblems" / "q1" / "model_derivation.md"
+    symbol_table = tmp_path / "run" / "symbol_table.json"
+    manifest = tmp_path / "run" / "staged_paper_manifest.json"
+    for path in (early_section, solution, symbol_table, manifest):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("content", encoding="utf-8")
+    coordinator.tools = {
+        "draft_competition_paper": type(
+            "Tool",
+            (),
+            {
+                "invoke": lambda self, payload: {
+                    "early_section_paths": [str(early_section)],
+                    "subproblem_solution_paths": [str(solution)],
+                    "symbol_table_path": str(symbol_table),
+                    "staged_manifest_path": str(manifest),
+                }
+            },
+        )()
+    }
+
+    coordinator._stage("draft_paper", "起草论文", "draft_competition_paper", {})
+
+    assert {
+        "type": "section",
+        "stage": "draft_paper",
+        "name": early_section.name,
+        "status": "completed",
+        "path": str(early_section),
+    } in events
+    assert {
+        "type": "artifact",
+        "stage": "draft_paper",
+        "name": solution.name,
+        "path": str(solution),
+    } in events
+    assert {
+        "type": "artifact",
+        "stage": "draft_paper",
+        "name": symbol_table.name,
+        "path": str(symbol_table),
+    } in events
+    assert {
+        "type": "artifact",
+        "stage": "draft_paper",
+        "name": manifest.name,
+        "path": str(manifest),
+    } in events
 
 
 def test_build_followup_question_includes_recent_assistant_context():
