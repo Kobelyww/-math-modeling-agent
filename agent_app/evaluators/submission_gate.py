@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_app.domain.contracts import SubproblemSolutionContract
+from agent_app.domain.contracts import SubproblemSolutionContract, SymbolDefinition
 from agent_app.domain.models import ArtifactRef, QualityReport
 from agent_app.domain.serialization import from_json_dict
-from agent_app.evaluators.staged_quality import evaluate_staged_solution_package
+from agent_app.evaluators.staged_quality import (
+    evaluate_staged_solution_package,
+    symbol_definition_missing_fields,
+)
 
 REQUIRED_FILES = {
     "modeling_report.md",
@@ -63,6 +66,90 @@ def _manifest_contract_display(raw_path: object, artifact_root: Path) -> str:
     return str(path)
 
 
+def _manifest_path(raw_path: object, artifact_root: Path) -> Path | None:
+    try:
+        relative_path = Path(raw_path)
+    except TypeError:
+        return None
+    return (
+        relative_path.resolve(strict=False)
+        if relative_path.is_absolute()
+        else (artifact_root / relative_path).resolve(strict=False)
+    )
+
+
+def _manifest_contract_paths(artifact_root: Path) -> list[Path]:
+    manifest_path = artifact_root / "staged_paper_manifest.json"
+    if not manifest_path.exists():
+        return []
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    raw_contract_paths = payload.get("subproblem_contract_paths")
+    if not isinstance(raw_contract_paths, list):
+        return []
+    contract_paths: list[Path] = []
+    seen: set[Path] = set()
+    for raw_path in raw_contract_paths:
+        contract_path = _manifest_path(raw_path, artifact_root)
+        if (
+            contract_path is None
+            or not _is_under_root(contract_path, artifact_root)
+            or not contract_path.is_file()
+            or contract_path in seen
+        ):
+            continue
+        contract_paths.append(contract_path)
+        seen.add(contract_path)
+    return contract_paths
+
+
+def _validate_symbol_table_path(
+    payload: dict,
+    artifact_root: Path,
+    fixes: list[str],
+) -> None:
+    if "symbol_table_path" not in payload:
+        fixes.append("staged_paper_manifest.json 缺少 symbol_table_path")
+        return
+    raw_path = payload["symbol_table_path"]
+    display_path = _manifest_contract_display(raw_path, artifact_root)
+    symbol_table_path = _manifest_path(raw_path, artifact_root)
+    if (
+        symbol_table_path is None
+        or not _is_under_root(symbol_table_path, artifact_root)
+        or not symbol_table_path.is_file()
+    ):
+        fixes.append(f"缺少 staged 符号表: {display_path}")
+        return
+    try:
+        payload = json.loads(symbol_table_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fixes.append(f"无法读取 staged 符号表: {display_path} ({exc})")
+        return
+    if not isinstance(payload, list):
+        fixes.append(f"staged 符号表必须是 SymbolDefinition 列表: {display_path}")
+        return
+    try:
+        symbols = from_json_dict(list[SymbolDefinition], payload)
+    except (TypeError, ValueError, AttributeError) as exc:
+        fixes.append(f"staged 符号表格式错误: {display_path} ({exc})")
+        return
+    if not symbols:
+        fixes.append(f"staged 符号表不能为空: {display_path}")
+        return
+    for index, symbol in enumerate(symbols):
+        missing_fields = symbol_definition_missing_fields(symbol)
+        if missing_fields:
+            fixes.append(
+                f"staged 符号表第 {index + 1} 条符号定义缺少字段: "
+                + "、".join(missing_fields)
+            )
+
+
 def staged_manifest_fixes(artifact_root: Path) -> list[str]:
     fixes: list[str] = []
     manifest_path = artifact_root / "staged_paper_manifest.json"
@@ -91,22 +178,15 @@ def staged_manifest_fixes(artifact_root: Path) -> list[str]:
         else:
             for raw_path in contract_paths:
                 display_path = _manifest_contract_display(raw_path, artifact_root)
-                try:
-                    relative_path = Path(raw_path)
-                except TypeError:
-                    fixes.append(f"缺少 staged 子问题合同: {display_path}")
-                    continue
-                contract_path = (
-                    relative_path.resolve(strict=False)
-                    if relative_path.is_absolute()
-                    else (artifact_root / relative_path).resolve(strict=False)
-                )
+                contract_path = _manifest_path(raw_path, artifact_root)
                 if (
-                    not _is_under_root(contract_path, artifact_root)
+                    contract_path is None
+                    or not _is_under_root(contract_path, artifact_root)
                     or not contract_path.is_file()
                 ):
                     fixes.append(f"缺少 staged 子问题合同: {display_path}")
 
+    _validate_symbol_table_path(payload, artifact_root, fixes)
     if payload.get("abstract_generated_after_results") is not True:
         fixes.append("摘要必须在结果章节之后生成")
     return fixes
@@ -171,12 +251,27 @@ def evaluate_submission(
 
 def _staged_solution_contract_fixes(artifact_root: Path) -> list[str]:
     fixes: list[str] = []
+    contract_paths: list[Path] = []
+    seen: set[Path] = set()
+    for contract_path in _manifest_contract_paths(artifact_root.resolve(strict=False)):
+        contract_paths.append(contract_path)
+        seen.add(contract_path)
     subproblem_root = artifact_root / "subproblems"
-    if not subproblem_root.exists():
-        return fixes
+    if subproblem_root.exists():
+        for contract_path in sorted(subproblem_root.glob("*/solution_contract.json")):
+            resolved_contract_path = contract_path.resolve(strict=False)
+            if resolved_contract_path in seen:
+                continue
+            contract_paths.append(resolved_contract_path)
+            seen.add(resolved_contract_path)
 
-    for contract_path in sorted(subproblem_root.glob("*/solution_contract.json")):
-        relative_contract_path = contract_path.relative_to(artifact_root)
+    for contract_path in contract_paths:
+        try:
+            relative_contract_path = contract_path.relative_to(
+                artifact_root.resolve(strict=False)
+            )
+        except ValueError:
+            relative_contract_path = contract_path
         try:
             payload = json.loads(contract_path.read_text(encoding="utf-8"))
             contract = from_json_dict(SubproblemSolutionContract, payload)

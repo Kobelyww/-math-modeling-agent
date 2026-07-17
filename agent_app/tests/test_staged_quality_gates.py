@@ -77,7 +77,12 @@ def _write_complete_artifacts(root: Path, contract: SubproblemSolutionContract) 
             "局限与灵敏度：成本扰动后需要复查。\n"
             "claim ID：q1-result-supported。\n"
         ),
-        contract.symbol_delta_path: '{"symbols": ["x", "y", "Z"]}\n',
+        contract.symbol_delta_path: (
+            '[{"symbol":"x_q1","meaning":"q1 的检测决策变量","unit":"0/1",'
+            '"source_subproblem_id":"q1",'
+            '"first_used_in":"subproblems/q1/model_derivation.md",'
+            '"definition_artifact":"subproblems/q1/symbol_delta.json"}]\n'
+        ),
         contract.claim_delta_path: (
             '[{"claim_id":"q1-result-supported","section":"结果分析",'
             '"text":"inspect 决策由 result.csv 支撑",'
@@ -591,6 +596,72 @@ def test_staged_solution_package_rejects_malformed_claim_delta(tmp_path):
         "claim" in item.lower() or "声明" in item
         for item in report.required_fixes
     )
+
+
+def test_staged_solution_package_rejects_malformed_symbol_delta(tmp_path):
+    _, _, _, evaluate_staged_solution_package = _load_gates()
+    contract = _complete_contract()
+    _write_complete_artifacts(tmp_path, contract)
+    (tmp_path / contract.symbol_delta_path).write_text(
+        '{"symbols": ["x", "y", "Z"]}\n',
+        encoding="utf-8",
+    )
+
+    report = evaluate_staged_solution_package(contract, tmp_path)
+
+    assert report.passed is False
+    assert any(
+        "symbol_delta" in item or "符号" in item
+        for item in report.required_fixes
+    )
+
+
+def test_staged_solution_package_rejects_null_symbol_delta_required_text_field(tmp_path):
+    _, _, _, evaluate_staged_solution_package = _load_gates()
+    contract = _complete_contract()
+    _write_complete_artifacts(tmp_path, contract)
+    (tmp_path / contract.symbol_delta_path).write_text(
+        '[{"symbol":null,"meaning":"q1 的检测决策变量","unit":"0/1",'
+        '"source_subproblem_id":"q1",'
+        '"first_used_in":"subproblems/q1/model_derivation.md",'
+        '"definition_artifact":"subproblems/q1/symbol_delta.json"}]\n',
+        encoding="utf-8",
+    )
+
+    report = evaluate_staged_solution_package(contract, tmp_path)
+
+    assert report.passed is False
+    assert any("symbol" in item for item in report.required_fixes)
+
+
+def test_staged_solution_package_rejects_null_symbol_delta_required_path_field(tmp_path):
+    _, _, _, evaluate_staged_solution_package = _load_gates()
+    contract = _complete_contract()
+    _write_complete_artifacts(tmp_path, contract)
+    (tmp_path / contract.symbol_delta_path).write_text(
+        '[{"symbol":"x_q1","meaning":"q1 的检测决策变量","unit":"0/1",'
+        '"source_subproblem_id":"q1",'
+        '"first_used_in":null,'
+        '"definition_artifact":"subproblems/q1/symbol_delta.json"}]\n',
+        encoding="utf-8",
+    )
+
+    report = evaluate_staged_solution_package(contract, tmp_path)
+
+    assert report.passed is False
+    assert any("first_used_in" in item for item in report.required_fixes)
+
+
+def test_staged_solution_package_rejects_null_symbol_delta_entry(tmp_path):
+    _, _, _, evaluate_staged_solution_package = _load_gates()
+    contract = _complete_contract()
+    _write_complete_artifacts(tmp_path, contract)
+    (tmp_path / contract.symbol_delta_path).write_text("[null]\n", encoding="utf-8")
+
+    report = evaluate_staged_solution_package(contract, tmp_path)
+
+    assert report.passed is False
+    assert any("符号定义" in item for item in report.required_fixes)
 
 
 def test_staged_solution_package_rejects_malformed_claim_evidence(tmp_path):

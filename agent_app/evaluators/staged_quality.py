@@ -11,6 +11,7 @@ from typing import Any
 
 from agent_app.domain.contracts import SubproblemSolutionContract, SymbolDefinition
 from agent_app.domain.models import QualityReport
+from agent_app.domain.serialization import from_json_dict
 
 OPTIMIZATION_LIKE_TYPES = {
     "optimization",
@@ -246,23 +247,11 @@ def evaluate_symbol_table(
     defined_symbols: set[str] = set()
 
     for symbol in symbols:
-        raw_symbol = str(symbol.symbol).strip()
+        raw_symbol = symbol.symbol.strip() if isinstance(symbol.symbol, str) else ""
         if raw_symbol:
             defined_symbols.add(_normalize_symbol(raw_symbol))
 
-        missing_fields: list[str] = []
-        if not raw_symbol:
-            missing_fields.append("symbol")
-        if not str(symbol.meaning).strip():
-            missing_fields.append("meaning")
-        if not str(symbol.unit).strip():
-            missing_fields.append("unit")
-        if not str(symbol.source_subproblem_id).strip():
-            missing_fields.append("source")
-        if _is_unset_symbol_path(symbol.first_used_in):
-            missing_fields.append("first_used_in")
-        if _is_unset_symbol_path(symbol.definition_artifact):
-            missing_fields.append("definition_artifact")
+        missing_fields = symbol_definition_missing_fields(symbol)
         if missing_fields:
             display_symbol = raw_symbol or "<empty>"
             fixes.append(
@@ -279,6 +268,25 @@ def evaluate_symbol_table(
         fixes.append("符号表包含正文未使用的符号: " + ", ".join(unused_symbols))
 
     return _quality_report("symbol_table", fixes, total_checks=max(2, len(symbols) + 1))
+
+
+def symbol_definition_missing_fields(symbol: object) -> list[str]:
+    if not isinstance(symbol, SymbolDefinition):
+        return ["symbol_definition"]
+    missing_fields = []
+    if _is_blank_symbol_text(symbol.symbol):
+        missing_fields.append("symbol")
+    if _is_blank_symbol_text(symbol.meaning):
+        missing_fields.append("meaning")
+    if _is_blank_symbol_text(symbol.unit):
+        missing_fields.append("unit")
+    if _is_blank_symbol_text(symbol.source_subproblem_id):
+        missing_fields.append("source_subproblem_id")
+    if _is_unset_symbol_path(symbol.first_used_in):
+        missing_fields.append("first_used_in")
+    if _is_unset_symbol_path(symbol.definition_artifact):
+        missing_fields.append("definition_artifact")
+    return missing_fields
 
 
 def contains_baseline_result_marker(value: Any) -> bool:
@@ -327,11 +335,15 @@ def evaluate_staged_solution_package(
         claim_report = _evaluate_claim_delta_artifact(
             resolved_paths["claim_delta_path"], root
         )
+        symbol_delta_report = _evaluate_symbol_delta_artifact(
+            resolved_paths["symbol_delta_path"]
+        )
         for report in (
             derivation_report,
             algorithm_report,
             interpretation_report,
             claim_report,
+            symbol_delta_report,
         ):
             fixes.extend(report.required_fixes)
 
@@ -485,6 +497,37 @@ def _evaluate_result_interpretation_artifact(path: Path) -> QualityReport:
     return _quality_report("result_interpretation", fixes, total_checks=5)
 
 
+def _evaluate_symbol_delta_artifact(path: Path) -> QualityReport:
+    fixes: list[str] = []
+    text = _read_required_text(Path(path), "symbol_delta", fixes)
+    if not text:
+        return _quality_report("symbol_delta", fixes, total_checks=2)
+    try:
+        payload: Any = json.loads(text)
+    except json.JSONDecodeError as exc:
+        fixes.append(f"symbol_delta.json 不是有效 JSON: {exc}")
+        return _quality_report("symbol_delta", fixes, total_checks=2)
+    if not isinstance(payload, list):
+        fixes.append("symbol_delta.json 必须是 SymbolDefinition 列表")
+        return _quality_report("symbol_delta", fixes, total_checks=2)
+    try:
+        symbols = from_json_dict(list[SymbolDefinition], payload)
+    except (TypeError, ValueError, AttributeError) as exc:
+        fixes.append(f"symbol_delta.json 不是有效符号定义: {exc}")
+        return _quality_report("symbol_delta", fixes, total_checks=2)
+    if not symbols:
+        fixes.append("symbol_delta.json 缺少符号定义")
+        return _quality_report("symbol_delta", fixes, total_checks=2)
+    for index, symbol in enumerate(symbols):
+        missing_fields = symbol_definition_missing_fields(symbol)
+        if missing_fields:
+            fixes.append(
+                f"symbol_delta.json 第 {index + 1} 条符号定义缺少字段: "
+                + "、".join(missing_fields)
+            )
+    return _quality_report("symbol_delta", fixes, total_checks=max(2, len(symbols)))
+
+
 def _evaluate_claim_delta_artifact(path: Path, artifact_root: Path) -> QualityReport:
     fixes: list[str] = []
     text = _read_required_text(Path(path), "claim_delta", fixes)
@@ -587,8 +630,16 @@ def _normalize_column(column: str) -> str:
     return re.sub(r"[\s\-]+", "_", column.strip().lower())
 
 
-def _is_unset_symbol_path(path: Path) -> bool:
-    return Path(path) in {Path(""), Path(".")}
+def _is_blank_symbol_text(value: object) -> bool:
+    return not isinstance(value, str) or not value.strip()
+
+
+def _is_unset_symbol_path(path: object) -> bool:
+    try:
+        normalized = Path(path)
+    except TypeError:
+        return True
+    return normalized in {Path(""), Path(".")}
 
 
 def _symbols_used_in_text(paper_text: str, defined_symbols: set[str]) -> set[str]:

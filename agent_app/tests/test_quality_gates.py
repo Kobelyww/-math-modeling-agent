@@ -43,6 +43,123 @@ def _complete_paper_sections() -> dict[str, str]:
     }
 
 
+def _write_submission_core_files(root: Path) -> list[ArtifactRef]:
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (root / name).write_text(content, encoding="utf-8")
+    return [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+
+def _complete_submission_contract(**overrides: Path | str) -> SubproblemSolutionContract:
+    paths = {
+        "model_derivation_path": Path("subproblems/q1/model_derivation.md"),
+        "algorithm_path": Path("subproblems/q1/algorithm.md"),
+        "solver_path": Path("subproblems/q1/solver.py"),
+        "result_path": Path("subproblems/q1/result.csv"),
+        "result_interpretation_path": Path("subproblems/q1/result_interpretation.md"),
+        "symbol_delta_path": Path("subproblems/q1/symbol_delta.json"),
+        "claim_delta_path": Path("subproblems/q1/claim_delta.json"),
+    }
+    paths.update(overrides)
+    return SubproblemSolutionContract(
+        subproblem_id="q1",
+        question_text="建立生产检测优化模型。",
+        problem_type="optimization",
+        status="complete",
+        **paths,
+    )
+
+
+def _write_complete_staged_submission_artifacts(
+    root: Path,
+    contract: SubproblemSolutionContract,
+) -> None:
+    files = {
+        contract.model_derivation_path: (
+            "变量：x 表示是否执行检测，y 表示是否拆解。\n"
+            "参数：c 表示检测成本，r 表示调换损失。\n"
+            "参数来源：c 与 r 来自题面表格和 problem contract。\n"
+            "假设：零配件状态相互独立，成本参数来自题面表格。\n"
+            "目标函数：min Z = 3x + 2y\n"
+            "约束：x + y <= 10, x >= 0, y >= 0\n"
+            "推导说明：由成本项与检测收益项合并得到线性规划，并支撑论文结论。"
+        ),
+        contract.algorithm_path: (
+            "算法：枚举可行检测决策并记录最优目标值。\n"
+            "算法策略：枚举可行检测决策。\n"
+            "输入 schema：成本参数表和约束上界。\n"
+            "输出 schema：decision、objective、estimate、diagnostic。\n"
+            "步骤：1. 读取参数；2. 枚举可行解；3. 输出最优目标值。\n"
+            "复杂度：O(n)，搜索空间随候选决策数量线性增长。\n"
+            "失败与回退：若参数缺失，则回退为待补全状态并阻断提交。\n"
+        ),
+        contract.solver_path: "print('solve q1')\n",
+        contract.result_path: (
+            "case,decision,objective,estimate,diagnostic\n"
+            "base,inspect,12.5,0.91,ok\n"
+        ),
+        contract.result_interpretation_path: (
+            "直接回答：选择 inspect 决策。\n"
+            "结果表引用：subproblems/q1/result.csv。\n"
+            "为什么成立：该决策在目标函数中取得最低成本。\n"
+            "局限与灵敏度：成本扰动后需要复查。\n"
+            "claim ID：q1-result-supported。\n"
+        ),
+        contract.symbol_delta_path: (
+            '[{"symbol":"x_q1","meaning":"q1 的检测决策变量","unit":"0/1",'
+            '"source_subproblem_id":"q1",'
+            '"first_used_in":"subproblems/q1/model_derivation.md",'
+            '"definition_artifact":"subproblems/q1/symbol_delta.json"}]\n'
+        ),
+        contract.claim_delta_path: (
+            '[{"claim_id":"q1-result-supported","section":"结果分析",'
+            '"text":"inspect 决策由 result.csv 支撑",'
+            '"evidence":[{"kind":"csv",'
+            '"path":"subproblems/q1/result.csv",'
+            '"locator":"row=1"}],'
+            '"status":"supported","confidence":"high"}]\n'
+        ),
+    }
+    for relative_path, content in files.items():
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def _write_valid_symbol_table(root: Path) -> None:
+    (root / "symbol_table.json").write_text(
+        (
+            '[{"symbol":"x_q1","meaning":"q1 的检测决策变量","unit":"0/1",'
+            '"source_subproblem_id":"q1",'
+            '"first_used_in":"subproblems/q1/model_derivation.md",'
+            '"definition_artifact":"subproblems/q1/symbol_delta.json"}]\n'
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_input_gate_requires_question_and_manifest(tmp_path):
     report = evaluate_input(question="题目", manifest_path=tmp_path / "inputs_manifest.json")
 
@@ -769,6 +886,129 @@ def test_submission_gate_requires_abstract_generated_after_results_boolean_true(
 
     assert report.passed is False
     assert "摘要必须在结果章节之后生成" in report.required_fixes
+
+
+def test_submission_gate_evaluates_manifest_listed_contract_outside_subproblem_glob(tmp_path):
+    artifacts = _write_submission_core_files(tmp_path)
+    contract = _complete_submission_contract()
+    contract.status = "draft"
+    contract_path = tmp_path / "contracts" / "q1_solution_contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(
+        json.dumps(to_json_dict(contract), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    _write_valid_symbol_table(tmp_path)
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": ["contracts/q1_solution_contract.json"],
+                "symbol_table_path": "symbol_table.json",
+                "abstract_generated_after_results": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert any(
+        "q1 子问题求解包未通过门禁" in fix
+        for fix in report.required_fixes
+    )
+
+
+def test_submission_gate_rejects_manifest_with_missing_symbol_table(tmp_path):
+    artifacts = _write_submission_core_files(tmp_path)
+    contract = _complete_submission_contract()
+    _write_complete_staged_submission_artifacts(tmp_path, contract)
+    contract_path = tmp_path / contract.symbol_delta_path.parent / "solution_contract.json"
+    contract_path.write_text(
+        json.dumps(to_json_dict(contract), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": ["subproblems/q1/solution_contract.json"],
+                "symbol_table_path": "symbol_table.json",
+                "abstract_generated_after_results": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert "缺少 staged 符号表: symbol_table.json" in report.required_fixes
+
+
+def test_submission_gate_rejects_manifest_with_malformed_symbol_table_entry(tmp_path):
+    artifacts = _write_submission_core_files(tmp_path)
+    contract = _complete_submission_contract()
+    _write_complete_staged_submission_artifacts(tmp_path, contract)
+    contract_path = tmp_path / contract.symbol_delta_path.parent / "solution_contract.json"
+    contract_path.write_text(
+        json.dumps(to_json_dict(contract), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "symbol_table.json").write_text(
+        (
+            '[{"symbol":null,"meaning":"q1 的检测决策变量","unit":"0/1",'
+            '"source_subproblem_id":"q1",'
+            '"first_used_in":"subproblems/q1/model_derivation.md",'
+            '"definition_artifact":"subproblems/q1/symbol_delta.json"}]\n'
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": ["subproblems/q1/solution_contract.json"],
+                "symbol_table_path": "symbol_table.json",
+                "abstract_generated_after_results": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert any("staged 符号表" in item and "symbol" in item for item in report.required_fixes)
+
+
+def test_submission_gate_rejects_manifest_with_null_symbol_table_entry(tmp_path):
+    artifacts = _write_submission_core_files(tmp_path)
+    contract = _complete_submission_contract()
+    _write_complete_staged_submission_artifacts(tmp_path, contract)
+    contract_path = tmp_path / contract.symbol_delta_path.parent / "solution_contract.json"
+    contract_path.write_text(
+        json.dumps(to_json_dict(contract), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "symbol_table.json").write_text("[null]\n", encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": ["subproblems/q1/solution_contract.json"],
+                "symbol_table_path": "symbol_table.json",
+                "abstract_generated_after_results": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert any("staged 符号表" in item and "符号定义" in item for item in report.required_fixes)
 
 
 def test_submission_gate_rejects_invalid_staged_paper_manifest_json(tmp_path):
