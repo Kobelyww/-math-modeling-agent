@@ -162,8 +162,15 @@ def test_competition_tools_return_required_structured_shapes(tmp_path):
         }
     )
     assert review["quality_report"]["gate_name"] == "review"
-    assert review["quality_report"]["passed"] is True
-    assert review["quality_report"]["required_fixes"] == []
+    assert review["quality_report"]["passed"] is False
+    assert any(
+        "solution contract status" in fix
+        for fix in review["quality_report"]["required_fixes"]
+    )
+    assert any(
+        "staged_solution_package_q1_review.md" in path
+        for path in review["subagent_review_paths"]
+    )
     assert review["review_report_path"].endswith("review_report.md")
     assert "path" not in review
 
@@ -240,7 +247,9 @@ def test_review_submission_uses_run_directory_artifacts_when_model_argument_is_e
         "## 参考文献\n"
         "[1] 全国大学生数学建模竞赛论文写作规范与综合评价方法参考资料。\n\n"
         "## 附录\n"
-        "附录包含求解代码入口、参数说明和主要中间结果，便于复核完整流程。\n",
+        "附录包含求解代码入口、参数说明和主要中间结果，便于复核完整流程。\n"
+        + "本文进一步说明模型推导、算法流程、结果解释和讨论之间的对应关系，"
+        "保证每个章节都能追溯到真实产物并满足审查长度要求。\n" * 80,
         encoding="utf-8",
     )
     (run_dir / "paper.tex").write_text(
@@ -587,8 +596,8 @@ def test_generic_problem_dynamically_identifies_all_subproblems_and_runs_baselin
     assert (run_dir / "results" / "subproblem_summary.csv").exists()
     assert "subproblem_id" in (run_dir / "results" / "q1_result.csv").read_text(encoding="utf-8")
     paper_markdown = Path(paper["paper_markdown_path"]).read_text(encoding="utf-8")
-    assert "共识别 3 个子问题" in paper_markdown
-    assert "results/q3_result.csv" in paper_markdown
+    assert "动态识别并求解q1、q2、q3子问题" in paper_markdown
+    assert "subproblems/q3/result.csv" in paper_markdown
 
 
 def test_retrieve_evidence_warns_when_online_search_requested(tmp_path):

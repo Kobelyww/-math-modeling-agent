@@ -95,9 +95,9 @@ def test_draft_competition_paper_generic_sections_are_user_facing(tmp_path):
     assert "Claim-Aware Section Context" not in text
     assert "暂无已支持结论" not in text
     assert "## Claims" not in text
-    assert "## 摘要" in text
-    assert "## 结果分析" in text
-    assert "claim_q1_result" in text
+    assert "# 摘要" in text
+    assert "# q1 结果解释" in text
+    assert "q1-result-supported" in text
     assert paper["paper_section_paths"]
 
 
@@ -142,8 +142,8 @@ def test_draft_competition_paper_with_writer_service_still_writes_generic_claim_
 
     assert "Merged section text" not in text
     assert "Claim-Aware Section Context" not in text
-    assert "## 结果分析" in text
-    assert "claim_q1_result" in text
+    assert "# q1 结果解释" in text
+    assert "q1-result-supported" in text
     assert (run_dir / "paper" / "sections" / "00_abstract.md").exists()
     assert (run_dir / "paper_consistency_report.md").exists()
     assert (run_dir / "paper" / "writer_synthesized.md").exists()
@@ -157,12 +157,16 @@ def test_draft_competition_paper_with_writer_service_still_writes_generic_claim_
     assert paper["paper_consistency_report_path"].endswith("paper_consistency_report.md")
     for section_name in (
         "摘要",
+        "关键词",
+        "问题背景",
         "问题重述",
-        "模型假设",
+        "问题分析",
+        "初步假设",
         "符号说明",
-        "模型建立与求解",
-        "结果分析",
-        "灵敏度分析",
+        "q1 模型推导",
+        "q1 算法说明",
+        "q1 结果解释",
+        "灵敏度与稳健性分析",
         "模型评价",
         "参考文献",
         "附录",

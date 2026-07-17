@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import shutil
@@ -16,13 +17,21 @@ from agent_app.domain.contracts import (
     ModelContract,
     ProblemContract,
     ProjectType,
+    SubproblemSolutionContract,
     SubproblemContract,
     SubproblemType,
+    SymbolDefinition,
 )
 from agent_app.domain.models import ArtifactRef, PaperDraft, QualityReport, RunSpec, RunState, RunStatus
-from agent_app.domain.serialization import to_json_dict
+from agent_app.domain.serialization import from_json_dict, to_json_dict
 from agent_app.evaluators import evaluate_claims, evaluate_paper, evaluate_submission
-from agent_app.evaluators.staged_quality import contains_baseline_result_marker
+from agent_app.evaluators.staged_quality import (
+    contains_baseline_result_marker,
+    evaluate_algorithm_artifact,
+    evaluate_derivation_artifact,
+    evaluate_staged_solution_package,
+    evaluate_symbol_table,
+)
 from agent_app.services.artifact_service import ArtifactService
 from agent_app.services.claim_map import build_b_problem_claims, build_generic_claims
 from agent_app.services.contract_store import ContractStore
@@ -39,6 +48,10 @@ from agent_app.services.problem_package import build_problem_package
 from agent_app.services.run_trace import RunTraceWriter
 from agent_app.services.run_store import RunStore
 from agent_app.services.section_writer import write_section_files as write_claim_section_files
+from agent_app.services.staged_paper import (
+    write_early_sections,
+    write_final_sections_from_staged_artifacts,
+)
 from agent_app.services.subproblem_solution import (
     aggregate_symbol_deltas,
     write_subproblem_solution_packages,
@@ -149,6 +162,159 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
                     )
                 )
         return reports
+
+    def _staged_subproblem_id(plan: dict[str, Any]) -> str:
+        raw_id = str(plan.get("id") or plan.get("subproblem_id") or "").strip()
+        safe_id = "".join(
+            character if character.isalnum() or character in {"-", "_"} else "_"
+            for character in raw_id
+        ).strip("_")
+        return safe_id
+
+    def _current_staged_subproblem_ids(
+        subproblem_plans: list[dict[str, Any]],
+    ) -> list[str]:
+        ordered_ids: list[str] = []
+        seen: set[str] = set()
+        for plan in subproblem_plans:
+            if not isinstance(plan, dict):
+                continue
+            subproblem_id = _staged_subproblem_id(plan)
+            if subproblem_id and subproblem_id not in seen:
+                ordered_ids.append(subproblem_id)
+                seen.add(subproblem_id)
+        return ordered_ids
+
+    def _solution_contract_path(run_dir: Path, subproblem_id: str) -> Path:
+        return run_dir / "subproblems" / subproblem_id / "solution_contract.json"
+
+    def _load_solution_contract(path: Path) -> SubproblemSolutionContract:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return from_json_dict(SubproblemSolutionContract, payload)
+
+    def _load_staged_solution_contracts(
+        run_dir: Path,
+        subproblem_ids: list[str],
+    ) -> list[SubproblemSolutionContract]:
+        contracts: list[SubproblemSolutionContract] = []
+        for subproblem_id in subproblem_ids:
+            contract_path = _solution_contract_path(run_dir, subproblem_id)
+            if not contract_path.exists():
+                raise FileNotFoundError(
+                    f"missing staged solution contract for {subproblem_id}"
+                )
+            contracts.append(_load_solution_contract(contract_path))
+        return contracts
+
+    def _ensure_staged_solution_contracts(
+        run_dir: Path,
+        subproblem_plans: list[dict[str, Any]],
+        experiment_result: dict[str, Any],
+    ) -> list[SubproblemSolutionContract]:
+        current_ids = _current_staged_subproblem_ids(subproblem_plans)
+        staged_plans = _attach_staged_result_rows(
+            run_dir,
+            subproblem_plans,
+            _current_experiment_result_paths(run_dir, subproblem_plans, experiment_result),
+        )
+        write_subproblem_solution_packages(run_dir, staged_plans)
+        return _load_staged_solution_contracts(run_dir, current_ids)
+
+    def _run_artifact_path(run_dir: Path, raw_path: Path | str) -> Path:
+        root = run_dir.resolve(strict=False)
+        path = Path(raw_path)
+        candidate = (path if path.is_absolute() else root / path).resolve(strict=False)
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"artifact path outside run directory: {raw_path}") from exc
+        return candidate
+
+    def _relative_run_artifact_path(run_dir: Path, raw_path: Path | str) -> Path:
+        return _run_artifact_path(run_dir, raw_path).relative_to(
+            run_dir.resolve(strict=False)
+        )
+
+    def _aggregate_symbols_for_contracts(
+        run_dir: Path,
+        solution_contracts: list[SubproblemSolutionContract],
+    ) -> list[SymbolDefinition]:
+        symbols_by_key: dict[tuple[str, str], SymbolDefinition] = {}
+        for contract in solution_contracts:
+            symbol_delta_path = _run_artifact_path(run_dir, contract.symbol_delta_path)
+            payload = json.loads(symbol_delta_path.read_text(encoding="utf-8"))
+            for symbol in from_json_dict(list[SymbolDefinition], payload):
+                key = (symbol.symbol, symbol.source_subproblem_id)
+                existing = symbols_by_key.get(key)
+                if existing is not None and to_json_dict(existing) != to_json_dict(symbol):
+                    raise ValueError(
+                        "Conflicting symbol definition for "
+                        f"{symbol.symbol} from {symbol.source_subproblem_id}"
+                    )
+                symbols_by_key.setdefault(key, symbol)
+
+        symbols = sorted(
+            symbols_by_key.values(),
+            key=lambda item: (item.source_subproblem_id, item.symbol),
+        )
+        (run_dir / "symbol_table.json").write_text(
+            json.dumps(to_json_dict(symbols), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return symbols
+
+    def _stable_fingerprint(value: Any) -> str:
+        payload = json.dumps(
+            to_json_dict(value),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _file_fingerprint(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _result_fingerprints(run_dir: Path, result_paths: list[str]) -> dict[str, str]:
+        fingerprints: dict[str, str] = {}
+        for raw_path in result_paths:
+            try:
+                path = _run_artifact_path(run_dir, raw_path)
+            except (TypeError, ValueError):
+                continue
+            if not path.exists() or not path.is_file():
+                continue
+            relative_path = str(path.relative_to(run_dir.resolve(strict=False)))
+            fingerprints[relative_path] = _file_fingerprint(path)
+        return fingerprints
+
+    def _current_experiment_result_paths(
+        run_dir: Path,
+        subproblem_plans: list[dict[str, Any]],
+        experiment_result: dict[str, Any],
+    ) -> set[Path]:
+        if not isinstance(experiment_result, dict):
+            return set()
+        if experiment_result.get("staged_plan_fingerprint") != _stable_fingerprint(
+            subproblem_plans
+        ):
+            return set()
+        expected_fingerprints = experiment_result.get("result_fingerprints") or {}
+        if not isinstance(expected_fingerprints, dict):
+            return set()
+
+        current_paths: set[Path] = set()
+        for raw_path in experiment_result.get("result_paths") or []:
+            try:
+                path = _run_artifact_path(run_dir, raw_path)
+            except (TypeError, ValueError):
+                continue
+            if not path.exists() or not path.is_file():
+                continue
+            relative_path = str(path.relative_to(run_dir.resolve(strict=False)))
+            if expected_fingerprints.get(relative_path) != _file_fingerprint(path):
+                continue
+            current_paths.add(path)
+        return current_paths
 
     def _planner_messages(
         state: RunState,
@@ -269,7 +435,9 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
                 continue
 
     def _attach_staged_result_rows(
-        run_dir: Path, subproblem_plans: list[dict[str, Any]]
+        run_dir: Path,
+        subproblem_plans: list[dict[str, Any]],
+        allowed_result_paths: set[Path] | None = None,
     ) -> list[dict[str, Any]]:
         staged_plans: list[dict[str, Any]] = []
         for plan in subproblem_plans:
@@ -277,6 +445,8 @@ def make_competition_tools(run_store: RunStore, **services: Any) -> list:
             result_path = _canonical_staged_result_path(
                 run_dir, plan.get("result_file")
             )
+            if allowed_result_paths is not None and result_path not in allowed_result_paths:
+                result_path = None
             result_row = (
                 _result_row_from_generic_result(result_path, plan)
                 if result_path is not None
@@ -1053,6 +1223,190 @@ if __name__ == "__main__":
             required_fixes,
             ["每条结论后都应能追溯到模型公式、实验表或代码输出，避免纯文字断言。"],
         )
+
+    def _safe_review_name(name: str) -> str:
+        safe = "".join(
+            character if character.isalnum() or character in {"-", "_", "."} else "_"
+            for character in name
+        )
+        return safe or "staged_gate"
+
+    def _staged_gate_review(
+        state: RunState,
+        run_dir: Path,
+        gate_name: str,
+        reviewer: str,
+        report: QualityReport,
+    ) -> dict[str, Any]:
+        gate_report_path = _trace_for_state(state).write_gate_report(
+            gate_name,
+            to_json_dict(report),
+        )
+        review = {
+            "reviewer": reviewer,
+            "path": str(gate_report_path.relative_to(run_dir)),
+            "passed": report.passed,
+            "score": report.score,
+            "findings": list(report.findings),
+            "required_fixes": list(report.required_fixes),
+        }
+        if report.passed:
+            return review
+        return _subagent_review(
+            state,
+            reviewer,
+            f"reviews/{_safe_review_name(gate_name)}_review.md",
+            list(report.findings),
+            list(report.required_fixes),
+            list(report.optional_improvements)
+            or ["修复对应阶段产物后重新运行 review_submission。"],
+        )
+
+    def _failed_staged_report(gate_name: str, message: str) -> QualityReport:
+        return QualityReport(
+            gate_name=gate_name,
+            passed=False,
+            score=0.0,
+            findings=[message],
+            required_fixes=[message],
+        )
+
+    def _staged_contract_paths_for_review(
+        run_dir: Path,
+        paper_draft: dict[str, Any],
+    ) -> list[Path]:
+        raw_paths = paper_draft.get("subproblem_solution_paths") or []
+        if not raw_paths:
+            manifest_path = run_dir / "staged_paper_manifest.json"
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    manifest = {}
+                raw_paths = manifest.get("subproblem_contract_paths") or []
+
+        if not raw_paths:
+            return []
+
+        paths: list[Path] = []
+        seen: set[Path] = set()
+        for raw_path in raw_paths:
+            try:
+                path = _run_artifact_path(run_dir, raw_path)
+            except (TypeError, ValueError):
+                continue
+            if path not in seen:
+                paths.append(path)
+                seen.add(path)
+        return paths
+
+    def _review_staged_artifacts(
+        state: RunState,
+        run_dir: Path,
+        paper_draft: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        staged_reviews: list[dict[str, Any]] = []
+        for contract_path in _staged_contract_paths_for_review(run_dir, paper_draft):
+            try:
+                contract = _load_solution_contract(contract_path)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                gate_name = f"staged_solution_package_{contract_path.parent.name}"
+                report = _failed_staged_report(
+                    gate_name,
+                    f"无法读取阶段求解合同 {_relative_run_artifact_path(run_dir, contract_path)}: {exc}",
+                )
+                staged_reviews.append(
+                    _staged_gate_review(
+                        state,
+                        run_dir,
+                        gate_name,
+                        "阶段求解包审查子智能体",
+                        report,
+                    )
+                )
+                continue
+
+            subproblem_id = contract.subproblem_id
+            package_gate_name = f"staged_solution_package_{subproblem_id}"
+            package_report = evaluate_staged_solution_package(contract, run_dir)
+            staged_reviews.append(
+                _staged_gate_review(
+                    state,
+                    run_dir,
+                    package_gate_name,
+                    f"{subproblem_id} 阶段求解包审查子智能体",
+                    package_report,
+                )
+            )
+
+            derivation_gate_name = f"derivation_gate_{subproblem_id}"
+            try:
+                derivation_report = evaluate_derivation_artifact(
+                    _run_artifact_path(run_dir, contract.model_derivation_path),
+                    contract.problem_type,
+                )
+            except (OSError, ValueError) as exc:
+                derivation_report = _failed_staged_report(
+                    derivation_gate_name,
+                    f"{subproblem_id} 建模推导产物无法审查: {exc}",
+                )
+            staged_reviews.append(
+                _staged_gate_review(
+                    state,
+                    run_dir,
+                    derivation_gate_name,
+                    f"{subproblem_id} 建模推导审查子智能体",
+                    derivation_report,
+                )
+            )
+
+            algorithm_gate_name = f"algorithm_gate_{subproblem_id}"
+            try:
+                algorithm_report = evaluate_algorithm_artifact(
+                    _run_artifact_path(run_dir, contract.algorithm_path),
+                    _run_artifact_path(run_dir, contract.result_path),
+                )
+            except (OSError, ValueError) as exc:
+                algorithm_report = _failed_staged_report(
+                    algorithm_gate_name,
+                    f"{subproblem_id} 算法与结果产物无法审查: {exc}",
+                )
+            staged_reviews.append(
+                _staged_gate_review(
+                    state,
+                    run_dir,
+                    algorithm_gate_name,
+                    f"{subproblem_id} 算法审查子智能体",
+                    algorithm_report,
+                )
+            )
+
+        symbol_table_path = run_dir / "symbol_table.json"
+        if symbol_table_path.exists():
+            try:
+                payload = json.loads(symbol_table_path.read_text(encoding="utf-8"))
+                symbols = from_json_dict(list[SymbolDefinition], payload)
+                paper_text = _read_run_text(run_dir, "paper.md") or _read_run_text(
+                    run_dir,
+                    "paper.tex",
+                )
+                symbol_report = evaluate_symbol_table(symbols, paper_text)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                symbol_report = _failed_staged_report(
+                    "symbol_gate",
+                    f"无法读取或审查 symbol_table.json: {exc}",
+                )
+            staged_reviews.append(
+                _staged_gate_review(
+                    state,
+                    run_dir,
+                    "symbol_gate",
+                    "符号表审查子智能体",
+                    symbol_report,
+                )
+            )
+
+        return staged_reviews
 
     def _aggregate_review_report(core_report: dict[str, Any], subreviews: list[dict[str, Any]]) -> dict[str, Any]:
         all_required_fixes = list(core_report.get("required_fixes", []))
@@ -2139,6 +2493,8 @@ if __name__ == "__main__":
             "figure_paths": [],
             "subproblem_solution_paths": subproblem_solution_paths,
             "symbol_table_path": symbol_table_path,
+            "staged_plan_fingerprint": _stable_fingerprint(subproblem_plans),
+            "result_fingerprints": _result_fingerprints(run_dir, result_paths),
             "stdout": completed.stdout,
             "stderr": completed.stderr,
             "notes": "Executed dynamic subproblem baseline workflow.",
@@ -2247,13 +2603,33 @@ if __name__ == "__main__":
         evidence_notes: list[str],
     ) -> dict[str, Any]:
         run_dir = run_store.run_dir(state.run_id)
-        subproblem_plans = modeling_plan.get("subproblem_plans") or problem_brief.get("subproblems") or []
+        subproblem_plans = [
+            item
+            for item in (
+                modeling_plan.get("subproblem_plans")
+                or problem_brief.get("subproblems")
+                or []
+            )
+            if isinstance(item, dict)
+        ]
         writer_artifacts = _write_writer_service_paper_sidecars(
             state,
             problem_brief,
             modeling_plan,
             experiment_result,
             evidence_notes,
+        )
+        early_section_paths = write_early_sections(run_dir, problem_brief)
+        solution_contracts = _ensure_staged_solution_contracts(
+            run_dir,
+            subproblem_plans,
+            experiment_result,
+        )
+        symbols = _aggregate_symbols_for_contracts(run_dir, solution_contracts)
+        final_section_paths = write_final_sections_from_staged_artifacts(
+            run_dir,
+            solution_contracts,
+            symbols,
         )
         claims = build_generic_claims(subproblem_plans, run_dir)
         claim_map_path = ContractStore(run_dir).write_claim_map(claims)
@@ -2265,72 +2641,47 @@ if __name__ == "__main__":
         )
         _trace_for_state(state).write_gate_report("claim_gate", to_json_dict(claim_report))
         _record_quality_report(state, to_json_dict(claim_report))
-        section_paths = write_claim_section_files(run_dir, claims)
-        abstract_path = run_dir / "sections" / "01_abstract.md"
-        if abstract_path.exists():
-            abstract_path.write_text(
-                "## 摘要\n\n"
-                f"本文根据题面动态识别子问题，共识别 {len(subproblem_plans)} 个子问题，并为每个子问题生成可复现 baseline 求解流程。"
-                "每个结论均绑定到对应结果文件与 claim id，避免没有结果支撑的文字性结论。\n",
-                encoding="utf-8",
-            )
-        section_text = "\n\n".join(path.read_text(encoding="utf-8").strip() for path in section_paths)
-        markdown_path = _write_for_state(
-            state,
-            "paper.md",
-            section_text + "\n",
-        )
-        latex_body = "\n".join(
-            [
-                "\\section{摘要}",
-                "本文构建通用 CUMCM 合同驱动建模流程。",
-                "\\section{问题重述}",
-                f"共识别 {len(subproblem_plans)} 个子问题。",
-                "\\section{模型假设}",
-                "所有假设均记录在模型合同中。",
-                "\\section{符号说明}",
-                "变量、参数和结果文件由模型合同定义。",
-                "\\section{模型建立与求解}",
-                "每个子问题通过 solver strategy 选择求解方式。",
-                "\\section{结果分析}",
-                "结果结论由 claim map 追踪到具体文件与 locator。",
-                "\\section{灵敏度分析}",
-                "稳健性结论只在实验产物支持时写入。",
-                "\\section{模型评价}",
-                "评价包括可解释性、可复现性与局限性。",
-                "\\section{参考文献}",
-                "参考文献由证据检索阶段维护。",
-                "\\section{附录}",
-                "附录列出代码、合同、结果和审查报告。",
-            ]
-        )
-        latex_path = _write_for_state(
-            state,
-            "paper.tex",
-            "\\documentclass[UTF8]{ctexart}\n"
-            "\\begin{document}\n"
-            f"{latex_body}\n"
-            "\\end{document}\n",
-        )
-        section_path_map = {
+        claim_section_paths = write_claim_section_files(run_dir, claims)
+        markdown_path = run_dir / "paper.md"
+        latex_path = run_dir / "paper.tex"
+        staged_manifest_path = run_dir / "staged_paper_manifest.json"
+        subproblem_solution_paths = [
+            str(_solution_contract_path(run_dir, contract.subproblem_id))
+            for contract in solution_contracts
+        ]
+        final_section_path_map = {
             path.stem: str(path)
-            for path in section_paths
+            for path in final_section_paths
+        }
+        claim_section_path_map = {
+            path.stem: str(path)
+            for path in claim_section_paths
+        }
+        staged_paths = {
+            "early_section_paths": [str(path) for path in early_section_paths],
+            "subproblem_solution_paths": subproblem_solution_paths,
+            "symbol_table_path": str(run_dir / "symbol_table.json"),
+            "staged_manifest_path": str(staged_manifest_path),
+            "paper_section_paths": [str(path) for path in final_section_paths],
+            "final_section_paths": [str(path) for path in final_section_paths],
         }
         paper_draft = {
             "markdown_path": str(markdown_path),
             "latex_path": str(latex_path),
-            "section_paths": section_path_map,
+            "section_paths": final_section_path_map,
+            "claim_section_paths": claim_section_path_map,
             "claim_map_path": str(claim_map_path),
             "claim_gate_report_path": str(claim_report_path),
             "claim_gate_passed": claim_report.passed,
-            "sections": section_path_map,
+            "sections": final_section_path_map,
+            **staged_paths,
             **writer_artifacts,
         }
         result = {
             "paper_draft": paper_draft,
             "paper_markdown_path": str(markdown_path),
             "paper_tex_path": str(latex_path),
-            "paper_section_paths": list(section_path_map.values()),
+            **staged_paths,
             "claim_map_path": str(claim_map_path),
             "claim_gate_report_path": str(claim_report_path),
             "claim_gate_passed": claim_report.passed,
@@ -2716,13 +3067,15 @@ if __name__ == "__main__":
             _review_experiment_artifacts(state, run_dir),
             _review_paper_artifacts(state, run_dir),
         ]
-        quality_report = _aggregate_review_report(core_report, subreviews)
-        path = _write_aggregate_review(state, quality_report, subreviews)
+        staged_reports = _review_staged_artifacts(state, run_dir, paper_draft)
+        all_reviews = subreviews + staged_reports
+        quality_report = _aggregate_review_report(core_report, all_reviews)
+        path = _write_aggregate_review(state, quality_report, all_reviews)
         _record_quality_report(state, quality_report)
         return {
             "quality_report": quality_report,
             "review_report_path": str(path),
-            "subagent_review_paths": [review["path"] for review in subreviews],
+            "subagent_review_paths": [review["path"] for review in all_reviews],
         }
 
     @tool("package_submission")

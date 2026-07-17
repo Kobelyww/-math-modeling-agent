@@ -340,6 +340,334 @@ def test_generic_run_experiment_writes_staged_subproblem_packages(tmp_path):
     assert "baseline" not in q1_result_path.read_text(encoding="utf-8").lower()
 
 
+def test_generic_workflow_writes_staged_subproblem_packages_and_blocks_baseline_language(
+    tmp_path,
+):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+        "问题2：预测未来三个月水质等级。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+    paper = tools["draft_competition_paper"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "modeling_plan": plan["modeling_plan"],
+            "experiment_result": experiment["experiment_result"],
+            "evidence_notes": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+    paper_text = (run_dir / "paper.md").read_text(encoding="utf-8")
+
+    assert (run_dir / "paper_outline.json").exists()
+    assert (run_dir / "subproblems" / "q1" / "model_derivation.md").exists()
+    assert (run_dir / "subproblems" / "q1" / "algorithm.md").exists()
+    assert (run_dir / "subproblems" / "q1" / "result_interpretation.md").exists()
+    assert (run_dir / "symbol_table.json").exists()
+    assert (run_dir / "staged_paper_manifest.json").exists()
+    assert paper["staged_manifest_path"].endswith("staged_paper_manifest.json")
+    assert paper["paper_draft"]["staged_manifest_path"].endswith(
+        "staged_paper_manifest.json"
+    )
+    assert "建模推导" in paper_text
+    assert "算法策略" in paper_text
+    assert "baseline 求解流程" not in paper_text
+
+
+def test_generic_review_submission_records_staged_quality_gate_reports(tmp_path):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+        "问题2：预测未来三个月水质等级。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+    paper = tools["draft_competition_paper"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "modeling_plan": plan["modeling_plan"],
+            "experiment_result": experiment["experiment_result"],
+            "evidence_notes": [],
+        }
+    )
+
+    review = tools["review_submission"].invoke(
+        {
+            "run_id": state.run_id,
+            "paper_draft": paper["paper_draft"],
+            "experiment_result": experiment["experiment_result"],
+            "artifacts": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+
+    assert (run_dir / "trace" / "gate_reports" / "staged_solution_package_q1.json").exists()
+    assert (run_dir / "trace" / "gate_reports" / "derivation_gate_q1.json").exists()
+    assert (run_dir / "trace" / "gate_reports" / "algorithm_gate_q1.json").exists()
+    assert (run_dir / "trace" / "gate_reports" / "symbol_gate.json").exists()
+    assert review["quality_report"]["passed"] is False
+    assert any(
+        "staged_solution_package_q1_review.md" in path
+        for path in review["subagent_review_paths"]
+    )
+    assert any(
+        "solution contract status" in fix
+        for fix in review["quality_report"]["required_fixes"]
+    )
+
+
+def test_generic_draft_and_review_ignore_stale_staged_contracts_not_in_current_plan(
+    tmp_path,
+):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+        "问题2：预测未来三个月水质等级。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+    reduced_plan = {
+        **plan["modeling_plan"],
+        "subproblem_plans": plan["modeling_plan"]["subproblem_plans"][:1],
+    }
+    reduced_problem = {
+        **problem["problem_brief"],
+        "subproblems": problem["problem_brief"]["subproblems"][:1],
+    }
+
+    paper = tools["draft_competition_paper"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": reduced_problem,
+            "data_audit": {},
+            "modeling_plan": reduced_plan,
+            "experiment_result": experiment["experiment_result"],
+            "evidence_notes": [],
+        }
+    )
+    review = tools["review_submission"].invoke(
+        {
+            "run_id": state.run_id,
+            "paper_draft": paper["paper_draft"],
+            "experiment_result": experiment["experiment_result"],
+            "artifacts": [],
+        }
+    )
+
+    run_dir = store.run_dir(state.run_id)
+    paper_text = (run_dir / "paper.md").read_text(encoding="utf-8")
+    symbol_sources = {
+        item["source_subproblem_id"]
+        for item in json.loads((run_dir / "symbol_table.json").read_text(encoding="utf-8"))
+    }
+
+    assert paper["subproblem_solution_paths"] == [
+        str(run_dir / "subproblems" / "q1" / "solution_contract.json")
+    ]
+    assert symbol_sources == {"q1"}
+    assert "subproblems/q1/result.csv" in paper_text
+    assert "subproblems/q2/result.csv" not in paper_text
+    assert "q2_decision" not in paper_text
+    assert (run_dir / "subproblems" / "q2" / "solution_contract.json").exists()
+    assert (run_dir / "trace" / "gate_reports" / "staged_solution_package_q1.json").exists()
+    assert not (run_dir / "trace" / "gate_reports" / "staged_solution_package_q2.json").exists()
+    assert not any(
+        "staged_solution_package_q2" in path
+        for path in review["subagent_review_paths"]
+    )
+
+
+def test_generic_draft_regenerates_same_id_staged_contract_when_plan_changes(
+    tmp_path,
+):
+    question = (
+        "C 题 河流水质评价。"
+        "问题1：建立水质综合评价指标体系。"
+    )
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question=question))
+    tools = _tools_for(store)
+
+    problem = tools["analyze_problem"].invoke(
+        {"run_id": state.run_id, "question": question}
+    )
+    plan = tools["plan_model"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": problem["problem_brief"],
+            "data_audit": {},
+            "evidence_notes": [],
+        }
+    )
+    experiment = tools["run_experiment"].invoke(
+        {
+            "run_id": state.run_id,
+            "modeling_plan": plan["modeling_plan"],
+            "data_files": [],
+        }
+    )
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "results" / "q1_result.csv").write_text(
+        "decision,objective_value,estimate,diagnostic\n"
+        "old_decision,0.99,0.88,old_result_from_previous_plan\n",
+        encoding="utf-8",
+    )
+    changed_plan = {
+        **plan["modeling_plan"],
+        "subproblem_plans": [
+            {
+                **plan["modeling_plan"]["subproblem_plans"][0],
+                "question_text": "使用分层评价模型识别关键水质指标。",
+                "model": "分层评价模型 sentinel",
+            }
+        ],
+    }
+    changed_problem = {
+        **problem["problem_brief"],
+        "subproblems": [
+            {
+                **problem["problem_brief"]["subproblems"][0],
+                "question": "使用分层评价模型识别关键水质指标。",
+            }
+        ],
+    }
+
+    paper = tools["draft_competition_paper"].invoke(
+        {
+            "run_id": state.run_id,
+            "problem_brief": changed_problem,
+            "data_audit": {},
+            "modeling_plan": changed_plan,
+            "experiment_result": experiment["experiment_result"],
+            "evidence_notes": [],
+        }
+    )
+
+    contract = json.loads(
+        (run_dir / "subproblems" / "q1" / "solution_contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    paper_text = Path(paper["paper_markdown_path"]).read_text(encoding="utf-8")
+
+    assert contract["question_text"] == "使用分层评价模型识别关键水质指标。"
+    assert contract["status"] == "draft"
+    assert "分层评价模型 sentinel" in paper_text
+    assert "old_result_from_previous_plan" not in paper_text
+
+
+def test_direct_review_submission_does_not_glob_stale_staged_contracts_without_manifest(
+    tmp_path,
+):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="C 题 河流水质评价。问题1：评价水质。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "subproblems" / "q2").mkdir(parents=True)
+    (run_dir / "subproblems" / "q2" / "solution_contract.json").write_text(
+        "{invalid",
+        encoding="utf-8",
+    )
+    (run_dir / "modeling_report.md").write_text(
+        "模型报告说明水质评价问题、指标归一化、综合评分公式和结果解释。"
+        * 12,
+        encoding="utf-8",
+    )
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\\begin{document}\\section{摘要} 水质评价模型。\\end{document}",
+        encoding="utf-8",
+    )
+    tools = _tools_for(store)
+
+    review = tools["review_submission"].invoke(
+        {
+            "run_id": state.run_id,
+            "paper_draft": {},
+            "experiment_result": {},
+            "artifacts": ["modeling_report.md", "solve.py", "paper.tex"],
+        }
+    )
+
+    assert not (run_dir / "trace" / "gate_reports" / "staged_solution_package_q2.json").exists()
+    assert not any(
+        "阶段求解合同" in fix
+        for fix in review["quality_report"]["required_fixes"]
+    )
+
+
 def test_generic_run_experiment_clears_stale_subproblem_packages_on_rerun(tmp_path):
     question = (
         "C 题 河流水质评价。"
