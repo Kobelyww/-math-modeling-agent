@@ -30,6 +30,160 @@ def test_failed_review_prevents_completed_package(tmp_path):
     assert not (run_dir / "final_synthesis.md").exists()
 
 
+def test_package_blocks_incomplete_staged_solution_contract(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="问题1：建立模型。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text("完整建模报告" * 80, encoding="utf-8")
+    (run_dir / "solve.py").write_text("def main(): pass\n", encoding="utf-8")
+    (run_dir / "paper.tex").write_text("\\documentclass{ctexart}\\begin{document}\\section{摘要} 文本\\end{document}", encoding="utf-8")
+    (run_dir / "review_report.md").write_text("# Review\n", encoding="utf-8")
+    (run_dir / "final_synthesis.md").write_text("# Final\n", encoding="utf-8")
+    (run_dir / "run.json").write_text("{}", encoding="utf-8")
+    store.save_state(state)
+    (run_dir / "staged_paper_manifest.json").write_text(
+        '{"subproblem_contract_paths":["subproblems/q1/solution_contract.json"]}',
+        encoding="utf-8",
+    )
+    tools = {tool.name: tool for tool in make_competition_tools(run_store=store)}
+
+    with pytest.raises(RuntimeError) as exc:
+        tools["package_submission"].invoke({"run_id": state.run_id})
+
+    assert "质量审查未通过" in str(exc.value) or "staged" in str(exc.value)
+
+
+def test_review_blocks_staged_result_csv_without_objective_or_real_result(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="问题1：建立模型。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text("完整建模报告" * 80, encoding="utf-8")
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\\begin{document}\\section{摘要} 文本\\end{document}",
+        encoding="utf-8",
+    )
+    result_path = run_dir / "subproblems" / "q1" / "result.csv"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        "case,decision\n"
+        "base,solved_baseline\n",
+        encoding="utf-8",
+    )
+    tools = {tool.name: tool for tool in make_competition_tools(run_store=store)}
+
+    review = tools["review_submission"].invoke(
+        {"run_id": state.run_id, "paper_draft": {}, "experiment_result": {}, "artifacts": []}
+    )
+
+    assert review["quality_report"]["passed"] is False
+    assert any(
+        "subproblems/q1/result.csv 缺少目标值、利润或估计字段" in fix
+        for fix in review["quality_report"]["required_fixes"]
+    )
+    assert any(
+        "subproblems/q1/result.csv 仍是 baseline-only 结果" in fix
+        for fix in review["quality_report"]["required_fixes"]
+    )
+
+
+def test_review_requires_exact_staged_result_value_columns(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="问题1：建立模型。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text("完整建模报告" * 80, encoding="utf-8")
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\\begin{document}\\section{摘要} 文本\\end{document}",
+        encoding="utf-8",
+    )
+    result_path = run_dir / "subproblems" / "q1" / "result.csv"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        "case,decision,objective_value_note\n"
+        "base,accept,only a note\n",
+        encoding="utf-8",
+    )
+    tools = {tool.name: tool for tool in make_competition_tools(run_store=store)}
+
+    review = tools["review_submission"].invoke(
+        {"run_id": state.run_id, "paper_draft": {}, "experiment_result": {}, "artifacts": []}
+    )
+
+    assert any(
+        "subproblems/q1/result.csv 缺少目标值、利润或估计字段" in fix
+        for fix in review["quality_report"]["required_fixes"]
+    )
+
+
+def test_review_submission_reports_invalid_staged_manifest(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="问题1：建立模型。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text("完整建模报告" * 80, encoding="utf-8")
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\\begin{document}\\section{摘要} 文本\\end{document}",
+        encoding="utf-8",
+    )
+    (run_dir / "staged_paper_manifest.json").write_bytes(b"\xff\xfe\xff")
+    tools = {tool.name: tool for tool in make_competition_tools(run_store=store)}
+
+    review = tools["review_submission"].invoke(
+        {"run_id": state.run_id, "paper_draft": {}, "experiment_result": {}, "artifacts": []}
+    )
+
+    assert any(
+        fix.startswith("无法读取 staged_paper_manifest.json:")
+        for fix in review["quality_report"]["required_fixes"]
+    )
+
+
+def test_review_submission_reports_unreadable_staged_result_csv(tmp_path):
+    store = RunStore(output_root=tmp_path)
+    state = store.create_run(RunSpec(question="问题1：建立模型。"))
+    run_dir = store.run_dir(state.run_id)
+    (run_dir / "modeling_report.md").write_text("完整建模报告" * 80, encoding="utf-8")
+    (run_dir / "solve.py").write_text(
+        "def main():\n"
+        "    subproblem_id = 'q1'\n"
+        "    print(subproblem_id)\n",
+        encoding="utf-8",
+    )
+    (run_dir / "paper.tex").write_text(
+        "\\documentclass{ctexart}\\begin{document}\\section{摘要} 文本\\end{document}",
+        encoding="utf-8",
+    )
+    result_path = run_dir / "subproblems" / "q1" / "result.csv"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_bytes(b"\xff\xfe\xff")
+    tools = {tool.name: tool for tool in make_competition_tools(run_store=store)}
+
+    review = tools["review_submission"].invoke(
+        {"run_id": state.run_id, "paper_draft": {}, "experiment_result": {}, "artifacts": []}
+    )
+
+    assert any(
+        "subproblems/q1/result.csv 无法读取" in fix
+        for fix in review["quality_report"]["required_fixes"]
+    )
+
+
 class FakeTool:
     def __init__(self, result=None):
         self.result = result

@@ -489,6 +489,326 @@ def test_submission_gate_rejects_incomplete_subproblem_solution_contract(tmp_pat
     assert any("子问题求解包" in item for item in report.required_fixes)
 
 
+def test_submission_gate_rejects_manifest_with_missing_contract_and_abstract_flag(tmp_path):
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": [
+                    "subproblems/q1/solution_contract.json",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert "缺少 staged 子问题合同: subproblems/q1/solution_contract.json" in report.required_fixes
+    assert "摘要必须在结果章节之后生成" in report.required_fixes
+
+
+def test_submission_gate_rejects_manifest_contract_path_outside_artifact_root(tmp_path):
+    outside_contract = tmp_path.parent / "outside_solution_contract.json"
+    outside_contract.write_text("{}", encoding="utf-8")
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": [
+                    "../outside_solution_contract.json",
+                ],
+                "abstract_generated_after_results": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert any("staged 子问题合同" in fix for fix in report.required_fixes)
+
+
+def test_submission_gate_rejects_manifest_with_non_list_contract_paths(tmp_path):
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": "subproblems/q1/solution_contract.json",
+                "abstract_generated_after_results": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert "staged_paper_manifest.json 的 subproblem_contract_paths 必须是列表" in report.required_fixes
+
+
+def test_submission_gate_rejects_manifest_with_falsey_non_list_contract_paths(tmp_path):
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": "",
+                "abstract_generated_after_results": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert "staged_paper_manifest.json 的 subproblem_contract_paths 必须是列表" in report.required_fixes
+
+
+@pytest.mark.parametrize(
+    "manifest_payload",
+    [
+        {"abstract_generated_after_results": True},
+        {"subproblem_contract_paths": [], "abstract_generated_after_results": True},
+    ],
+)
+def test_submission_gate_rejects_manifest_with_missing_or_empty_contract_paths(
+    tmp_path,
+    manifest_payload,
+):
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(manifest_payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert (
+        "staged_paper_manifest.json 的 subproblem_contract_paths 至少包含一个 staged 子问题合同"
+        in report.required_fixes
+    )
+
+
+def test_submission_gate_requires_abstract_generated_after_results_boolean_true(tmp_path):
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    contract_path = tmp_path / "subproblems" / "q1" / "solution_contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text("{}", encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text(
+        json.dumps(
+            {
+                "subproblem_contract_paths": [
+                    "subproblems/q1/solution_contract.json",
+                ],
+                "abstract_generated_after_results": "false",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert "摘要必须在结果章节之后生成" in report.required_fixes
+
+
+def test_submission_gate_rejects_invalid_staged_paper_manifest_json(tmp_path):
+    files = {
+        "modeling_report.md": (
+            "# Modeling Report\n\n"
+            + "通用问题包含变量、约束、实验和结论映射。\n" * 80
+        ),
+        "solve.py": (
+            "def main():\n"
+            "    subproblem_id = 'q1'\n"
+            "    print(subproblem_id)\n"
+        ),
+        "paper.tex": (
+            "\\documentclass{ctexart}\n"
+            "\\begin{document}\n"
+            "\\section{摘要} 通用问题。\n"
+            "\\end{document}\n"
+        ),
+        "review_report.md": "# Review\n",
+        "final_synthesis.md": "# Final\n",
+        "run.json": "{}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    (tmp_path / "staged_paper_manifest.json").write_text("{invalid", encoding="utf-8")
+    artifacts = [
+        ArtifactRef(name=name, path=Path(name), kind=Path(name).suffix.lstrip("."))
+        for name in files
+    ]
+
+    report = evaluate_submission(artifacts, artifact_root=tmp_path)
+
+    assert report.passed is False
+    assert any(
+        fix.startswith("无法读取 staged_paper_manifest.json:")
+        for fix in report.required_fixes
+    )
+
+
 def test_submission_gate_requires_benchmark_results_when_explicit(tmp_path):
     files = {
         "modeling_report.md": "# Modeling Report\n\n" + "显式 benchmark 需要固定结果文件。\n" * 80,

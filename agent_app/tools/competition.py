@@ -25,6 +25,7 @@ from agent_app.domain.contracts import (
 from agent_app.domain.models import ArtifactRef, PaperDraft, QualityReport, RunSpec, RunState, RunStatus
 from agent_app.domain.serialization import from_json_dict, to_json_dict
 from agent_app.evaluators import evaluate_claims, evaluate_paper, evaluate_submission
+from agent_app.evaluators.submission_gate import staged_manifest_fixes
 from agent_app.evaluators.staged_quality import (
     contains_baseline_result_marker,
     evaluate_algorithm_artifact,
@@ -1157,6 +1158,19 @@ if __name__ == "__main__":
                 findings.append("敏感性分析只有 low/base/high 三档，缺少抽样置信区间或参数来源说明。")
                 required_fixes.append("把敏感性扰动与抽样估计区间或题面次品率不确定性对应起来。")
 
+        for result_file in sorted((run_dir / "subproblems").glob("*/result.csv")):
+            try:
+                text = result_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                required_fixes.append(f"{result_file.relative_to(run_dir)} 无法读取: {exc}")
+                continue
+            header = text.splitlines()[0] if text.splitlines() else ""
+            columns = {column.strip() for column in header.split(",")}
+            if not columns.intersection({"objective_value", "expected_profit", "estimate"}):
+                required_fixes.append(f"{result_file.relative_to(run_dir)} 缺少目标值、利润或估计字段。")
+            if "solved_baseline" in text or "baseline_score" in text:
+                required_fixes.append(f"{result_file.relative_to(run_dir)} 仍是 baseline-only 结果。")
+
         return _subagent_review(
             state,
             "实验审查子智能体",
@@ -1271,6 +1285,27 @@ if __name__ == "__main__":
             required_fixes=[message],
         )
 
+    def _review_staged_manifest(state: RunState, run_dir: Path) -> list[dict[str, Any]]:
+        fixes = staged_manifest_fixes(run_dir)
+        if not fixes:
+            return []
+        report = QualityReport(
+            gate_name="staged_manifest",
+            passed=False,
+            score=0.0,
+            findings=fixes,
+            required_fixes=fixes,
+        )
+        return [
+            _staged_gate_review(
+                state,
+                run_dir,
+                "staged_manifest",
+                "分阶段论文清单审查子智能体",
+                report,
+            )
+        ]
+
     def _staged_contract_paths_for_review(
         run_dir: Path,
         paper_draft: dict[str, Any],
@@ -1281,7 +1316,7 @@ if __name__ == "__main__":
             if manifest_path.exists():
                 try:
                     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                     manifest = {}
                 raw_paths = manifest.get("subproblem_contract_paths") or []
 
@@ -1305,7 +1340,7 @@ if __name__ == "__main__":
         run_dir: Path,
         paper_draft: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        staged_reviews: list[dict[str, Any]] = []
+        staged_reviews: list[dict[str, Any]] = _review_staged_manifest(state, run_dir)
         for contract_path in _staged_contract_paths_for_review(run_dir, paper_draft):
             try:
                 contract = _load_solution_contract(contract_path)

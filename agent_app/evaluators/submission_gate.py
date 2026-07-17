@@ -42,6 +42,76 @@ def _read_artifact_text(artifact: ArtifactRef, artifact_root: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _is_under_root(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _manifest_contract_display(raw_path: object, artifact_root: Path) -> str:
+    try:
+        path = Path(raw_path)
+    except TypeError:
+        return str(raw_path)
+    if path.is_absolute():
+        try:
+            return str(path.resolve(strict=False).relative_to(artifact_root))
+        except ValueError:
+            return str(path)
+    return str(path)
+
+
+def staged_manifest_fixes(artifact_root: Path) -> list[str]:
+    fixes: list[str] = []
+    manifest_path = artifact_root / "staged_paper_manifest.json"
+    if not manifest_path.exists():
+        return fixes
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return [f"无法读取 staged_paper_manifest.json: {exc}"]
+    if not isinstance(payload, dict):
+        return ["无法读取 staged_paper_manifest.json: expected object"]
+
+    if "subproblem_contract_paths" not in payload:
+        fixes.append(
+            "staged_paper_manifest.json 的 subproblem_contract_paths 至少包含一个 staged 子问题合同"
+        )
+    else:
+        contract_paths = payload["subproblem_contract_paths"]
+        if not isinstance(contract_paths, list):
+            fixes.append("staged_paper_manifest.json 的 subproblem_contract_paths 必须是列表")
+        elif not contract_paths:
+            fixes.append(
+                "staged_paper_manifest.json 的 subproblem_contract_paths 至少包含一个 staged 子问题合同"
+            )
+        else:
+            for raw_path in contract_paths:
+                display_path = _manifest_contract_display(raw_path, artifact_root)
+                try:
+                    relative_path = Path(raw_path)
+                except TypeError:
+                    fixes.append(f"缺少 staged 子问题合同: {display_path}")
+                    continue
+                contract_path = (
+                    relative_path.resolve(strict=False)
+                    if relative_path.is_absolute()
+                    else (artifact_root / relative_path).resolve(strict=False)
+                )
+                if (
+                    not _is_under_root(contract_path, artifact_root)
+                    or not contract_path.is_file()
+                ):
+                    fixes.append(f"缺少 staged 子问题合同: {display_path}")
+
+    if payload.get("abstract_generated_after_results") is not True:
+        fixes.append("摘要必须在结果章节之后生成")
+    return fixes
+
+
 def evaluate_submission(
     artifacts: list[ArtifactRef],
     artifact_root: Path | None = None,
@@ -83,6 +153,7 @@ def evaluate_submission(
             if name == "paper.tex" and "\\section" not in text:
                 fixes.append("paper.tex 缺少论文分节内容")
 
+        fixes.extend(staged_manifest_fixes(artifact_root.resolve(strict=False)))
         fixes.extend(_staged_solution_contract_fixes(artifact_root))
 
     passed = not missing
