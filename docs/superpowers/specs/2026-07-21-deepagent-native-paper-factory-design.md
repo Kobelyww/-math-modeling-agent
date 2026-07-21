@@ -18,6 +18,12 @@ The design intentionally does not recreate a LangGraph-style fixed workflow arou
 DeepAgent. Readiness is artifact-driven. The main agent may choose and parallelize work
 as long as every tool's preconditions and permissions are satisfied.
 
+The cognitive loop adapts the publicly documented Claude Code pattern of gathering
+context, taking action, verifying results, and repeating while accepting user steering at
+any point. DeepAgent's native agent loop is the only component that chooses the next
+cognitive action. Application code may reject an unsafe action or an unsupported claim of
+completion, but it does not select the next tool or recreate a second workflow scheduler.
+
 The AutoSOTA-inspired optimization loop applies only to models, algorithms, and
 experiments. Paper writing uses a separate evidence-constrained review and revision
 loop, preventing the generator from gaming a paper score instead of improving the
@@ -86,6 +92,14 @@ current first 30-source shortlist satisfies the category allocation but contains
 two Chinese sources and many generic domain papers. A relevance and instructional-value
 gate is required before acquisition and indexing.
 
+### 2.8 The legacy agent loop is still a demo state machine
+
+The older `agent_app.agent_loop` path restricts the coordinator to a fixed action enum,
+keeps only the latest text output per role, falls back to a mostly fixed sequence, and
+stops after a small global step count. It has no authoritative artifact graph, durable
+tool transaction protocol, content-aware completion gate, or crash-safe continuation.
+Renaming this mechanism an agent loop does not make it a production agent harness.
+
 ## 3. Goals
 
 1. Use DeepAgent's native planning, delegation, skills, memory, filesystem, permissions,
@@ -106,6 +120,8 @@ gate is required before acquisition and indexing.
 9. Preserve existing public routes and core artifact paths during migration.
 10. Remain generic across CUMCM questions; no year- or question-letter production
     branch is permitted.
+11. Use one native cognitive loop with durable continuation, verification-driven stopping,
+    and user steering instead of a fixed action enum or global stage index.
 
 ## 4. Non-Goals
 
@@ -116,6 +132,8 @@ gate is required before acquisition and indexing.
 - Requiring a distributed microservice deployment for the first release.
 - Replacing deterministic validators with LLM judgments.
 - Treating the 2024 B problem as a universal problem template.
+- Copying leaked or proprietary Claude Code source, system prompts, or internal material.
+- Allowing recursive subagent delegation in the first production release.
 
 ## 5. Architectural Model
 
@@ -212,6 +230,139 @@ store persists approved cross-run memories and user preferences. Domain artifact
 the experiment ledger remain canonical business state; checkpoint state must not be the
 only copy of a result.
 
+### 6.5 Claude-Code-inspired native loop semantics
+
+The design adapts behavior described in Anthropic's public Claude Code documentation,
+not leaked implementation material. The relevant behavior is a blended loop:
+
+1. gather only the context needed for the current decision;
+2. take one or more actions through tools or isolated subagents;
+3. verify the observed result against executable or inspectable criteria;
+4. use each observation to choose the next action;
+5. accept user interruption or steering between actions;
+6. stop only when completion can be demonstrated.
+
+These are behavioral phases, not workflow states. A single DeepAgent turn may move among
+them repeatedly and may issue many tool calls. There is no replacement
+`AgentLoopDecision` action enum and no outer application loop that chooses a domain tool
+for the model. The application wraps native turn, tool, checkpoint, and stop boundaries
+only to enforce trusted invariants.
+
+### 6.6 Durable loop state
+
+The runtime persists seven state objects with distinct authority:
+
+| Object | Purpose and authority |
+| --- | --- |
+| `GoalEnvelope` | current user objective, constraints, mode, and acceptance criteria |
+| `TodoProjection` | DeepAgent's mutable plan for reasoning and display; never completion authority |
+| `ArtifactGraph` | versioned artifacts, dependencies, validity, provenance, and evidence links |
+| `EventLedger` | append-only record of material actions and state transitions |
+| `BudgetLedger` | token, time, retrieval, experiment, and financial reservations and consumption |
+| `SteeringInbox` | ordered user corrections, answers, pause, resume, and cancellation requests |
+| `ContextManifest` | derived compact snapshot of goals, valid references, blockers, and active work |
+
+DeepAgent checkpoints are authoritative for conversation and control continuation.
+`ArtifactGraph` and `EventLedger` are authoritative for business facts. A run must be
+reconstructible from the business ledgers even if a model checkpoint is unavailable;
+missing conversation context may require a new turn, but it must not erase or invent a
+completed experiment.
+
+Run state is one of `running`, `waiting_user`, `waiting_external`,
+`revision_required`, `partial`, `completed`, `cancelled`, or `failed`. Quality failure
+does not masquerade as infrastructure failure, and an individual tool completion does not
+complete the run.
+
+### 6.7 Tool lifecycle and policy hooks
+
+Every domain capability declares a `ToolContract` containing:
+
+- input and output schemas;
+- permitted roles and side-effect class;
+- required artifact names and minimum versions;
+- expected read and write scopes;
+- idempotency, timeout, retry, and budget policies;
+- expected artifact effects and deterministic verifier.
+
+Before execution, policy middleware validates identity and schema, applies deny-before-
+ask-before-allow permission precedence, checks artifact versions, reserves budget,
+acquires write leases, and snapshots locally reversible file edits. Publishing, expanding
+approved budgets, changing protected evaluators, or making uncheckpointable external
+changes requires the configured interrupt.
+
+After execution, middleware normalizes the structured result, verifies actual files and
+exit state, settles budget, commits the event and artifact version atomically, releases
+leases, invalidates stale descendants, and emits a bounded Web event. Tool failures use
+machine-readable reasons such as `permission_denied`, `precondition_missing`,
+`version_conflict`, `retryable_provider_error`, `execution_failed`,
+`verification_failed`, and `budget_exhausted`. DeepAgent decides what to do with that
+observation.
+
+For filesystem artifacts, "atomic" means a prepare-and-commit protocol: write to a
+run-scoped temporary path, verify and hash it, atomically rename it into the versioned
+artifact path, then commit artifact metadata and its event in one ledger transaction. A
+durable prepared record allows recovery to reconcile the narrow rename-to-ledger crash
+window. Backends that cannot provide these guarantees must expose a reconciliation token
+and may not report success until reconciliation completes.
+
+Every material call carries an idempotency key, input digest, expected write set, and
+causation identifier. Recovery after a committed success returns the existing result
+instead of repeating an experiment, paid request, or package write.
+
+### 6.8 Completion supervision and continuation
+
+DeepAgent proposes completion through structured `CoordinatorResult`; it cannot directly
+set the run to `completed`. A read-only completion supervisor checks that:
+
+- the current `GoalEnvelope` and every recognized subproblem are covered;
+- required artifacts exist, are current, and passed deterministic validation;
+- executable work actually ran and produced frozen results;
+- material claims resolve to content-valid evidence;
+- blocking reviews and fact checks pass;
+- the submission package references current artifact versions.
+
+The `final_verifier` subagent may produce an independent `FinalVerification`, but the
+supervisor is the deterministic policy aggregator that enforces its hard findings and all
+non-LLM validators. The reviewer cannot approve around a failed deterministic gate.
+
+When the proposal is premature, the supervisor emits a `ContinuationDirective` containing
+only unsatisfied conditions, stale artifacts, available capabilities, and remaining
+budget. It does not prescribe the next tool. DeepAgent resumes from the same checkpoint
+and chooses the repair path.
+
+Progress is measured by new or changed valid artifacts, resolved conditions, improved
+verified metrics, or newly accepted evidence. Three consecutive continuation attempts
+with the same failure signature and no such progress end in `revision_required`,
+`waiting_user`, or `partial` according to the blocker. This bounds no-progress behavior
+without imposing a demo-style global step limit.
+
+### 6.9 Context management and compaction
+
+Context is layered:
+
+1. standing context contains the goal, invariants, permissions, and budget summary;
+2. index context contains todos, artifact references, evidence references, and Skill
+   descriptions;
+3. on-demand context contains selected files, Skill bodies, experiment diagnostics, and
+   section packets;
+4. offloaded context contains large tables, complete logs, historical reviews, and
+   intermediate derivations stored as artifacts.
+
+Compaction must preserve the current objective and acceptance conditions, latest user
+steering, current artifact versions, unresolved blockers, failed approaches and their
+causes, remaining budgets, and active subagents. Older raw tool output is offloaded before
+conversation summarization. Repeated immediate refilling after compaction is treated as
+context thrashing and causes a bounded task split or user interrupt instead of an
+infinite compact loop.
+
+### 6.10 User steering
+
+User messages are appended to `SteeringInbox` while work is running. Pause and cancel
+requests attempt to stop a cancellable tool immediately; otherwise the tool may finish,
+but its result is revalidated against the newest goal before being applied. Corrections
+and answers are consumed before the next cognitive action. Resume continues the same
+checkpoint and ledger rather than creating a new run.
+
 ## 7. Backend And Permission Layout
 
 A `CompositeBackend` presents a virtual filesystem with explicit routes:
@@ -261,6 +412,38 @@ structured response schema.
 Subagents may use `RubricMiddleware` for bounded self-correction. Final reviewers and the
 final verifier do not revise the artifacts they evaluate.
 
+### 8.1 Task envelopes and result isolation
+
+Every delegation uses a `TaskEnvelope` containing the task and parent run identifiers,
+objective, input artifact references and version digest, expected output schema,
+acceptance checks, allowed tools, read and write scopes, budget, and deadline. The
+subagent receives this bounded packet instead of the full parent transcript.
+
+A subagent result contains structured output, created or changed artifact references,
+executed verification evidence, unresolved issues, confidence, and the input version
+digest it actually used. If an upstream input changes before merge, the result is stale
+and must be revalidated or rerun.
+
+Independent subproblems, candidate methods, searches, and reviews may run concurrently.
+Competing writers use isolated candidate paths; shared artifact writes require a lease
+and optimistic version check. The coordinator receives only structured summaries and
+artifact references, while full logs remain in the event ledger.
+
+The first production release permits one delegation level:
+`coordinator -> subagent`. Subagents do not receive the native delegation tool. This
+prevents recursive task trees and unbounded budget multiplication while preserving
+native isolated execution and parallelism.
+
+### 8.2 Capability-based model routing
+
+Model selection is policy-driven rather than encoded in the goal graph. The initial
+policy routes multimodal PDF and table reconstruction, plus configured online literature
+retrieval, to Mimo 2.5-class models. DeepSeek handles orchestration, mathematical
+reasoning, experiment design, implementation, review, and section writing. Every call
+records the selected capability, model, provider, and fallback reason without recording
+credentials. Providers remain replaceable as long as they satisfy the same subagent and
+tool contracts.
+
 ## 9. Artifact-Driven Readiness
 
 There is no global fixed stage index. Every domain action declares prerequisites and
@@ -277,6 +460,31 @@ Examples:
 
 The policy middleware rejects an ineligible operation with a machine-readable
 precondition report. The main agent uses that report to schedule missing work.
+
+### 9.1 Goal and subproblem graph
+
+The problem analyst creates a `GoalGraph` from the actual statement. It records an
+arbitrary number of subproblems, dependencies, required data, and acceptance conditions;
+it never assumes four questions or routes on a year or problem letter.
+
+Each subproblem normally evolves through versioned artifacts rather than a fixed stage:
+
+```text
+SubproblemContract
+  -> ModelCandidateSet
+  -> SelectedModel
+  -> AlgorithmArtifact
+  -> ExperimentLedger
+  -> FrozenResultSet
+  -> ClaimSet
+  -> SectionDraft
+  -> ReviewerVerdict
+```
+
+The coordinator may revisit context, models, code, experiments, or prose whenever an
+observation warrants it. Independent branches may run in parallel; a dependent branch
+waits only for the specific upstream artifact it needs. A changed frozen result
+invalidates dependent claims, tables, sections, reviews, and packages automatically.
 
 ## 10. AutoSOTA-Inspired Experiment Optimization
 
@@ -340,7 +548,8 @@ paths, budgets, evidence requirements, or safety rules.
 
 Paper construction is evidence-first and section-scoped.
 
-1. Front matter that does not require final results is drafted from the problem contract.
+1. Problem background, problem restatement, and initial assumptions are drafted from the
+   problem contract before result-dependent subproblem sections.
 2. Each subproblem section is drafted after its result set is frozen.
 3. Symbols are merged from subproblem deltas after actual use.
 4. Result interpretation is expanded from claim-evidence links and validation reports.
@@ -408,7 +617,20 @@ verdict and never erases disagreement.
 
 New or extended contracts include:
 
+- `GoalEnvelope`
+- `GoalGraph`
+- `TodoProjection`
+- `ArtifactGraph`
+- `ArtifactVersion`
+- `EventRecord`
+- `BudgetLedger`
+- `SteeringCommand`
+- `ContextManifest`
+- `ToolContract`
+- `TaskEnvelope`
+- `SubagentResult`
 - `CoordinatorResult`
+- `ContinuationDirective`
 - `ArtifactPreconditionReport`
 - `OptimizationObjective`
 - `CandidateIdea`
@@ -478,21 +700,34 @@ pilot index. Language and category deviations are explicit acceptance evidence.
 
 ## 16. Web And Conversation Experience
 
-The Web stream exposes native DeepAgent and domain events:
+The Web stream projects committed ledger events, including:
 
-- todo creation and completion;
-- subagent launch, completion, failure, and structured summary;
-- tool execution and artifact creation;
-- experiment iteration, metrics, guardrails, and best-version promotion;
-- rubric evaluations and bounded self-revision;
-- reviewer verdicts, evidence locators, disagreement, and arbitration;
-- revision tasks and stale-artifact propagation;
-- human interrupts, pause, resume, ask, and steer actions;
-- final verification and package status.
+- `goal.created` and `goal.updated`;
+- `todo.updated`;
+- `agent.turn_started` and `agent.turn_completed`;
+- `subagent.started`, `subagent.completed`, and `subagent.failed`;
+- `tool.started`, `tool.completed`, `tool.failed`, and `tool.denied`;
+- `artifact.created`, `artifact.versioned`, and `artifact.invalidated`;
+- experiment trial, guardrail, rejection, and promotion events;
+- verification, review, fact-check, disagreement, and arbitration events;
+- `continuation.requested` and context-compaction events;
+- interrupt, pause, resume, cancel, ask, and steer events;
+- final verification and package disposition.
 
-The UI presents decision summaries, evidence, tool outcomes, and audit history. It does
-not expose hidden chain-of-thought. Existing routes and SSE event names remain available
-through a compatibility projector during migration.
+Each event has a monotonic sequence ID, run and actor IDs, correlation and causation IDs,
+timestamp, status, bounded decision summary, artifact and evidence references, and a
+budget snapshot. SSE honors `Last-Event-ID`, so reconnecting clients replay missed events
+without mutating state twice.
+
+The UI centers on an action timeline, versioned artifacts, experiment ledger, reviewer
+workspace, and one conversation surface for steering. It presents decision summaries,
+evidence, tool outcomes, and audit history, but not hidden chain-of-thought. Completing a
+tool completes only that action; run state changes only from committed business events and
+completion supervision.
+
+Existing routes and SSE event names remain available through a compatibility projector
+during migration. The old stage board is a read-only compatibility view derived from the
+artifact graph. It is never an input to scheduling and cannot mark the run complete.
 
 ## 17. Modes And Human Control
 
@@ -512,7 +747,12 @@ Changing mode modifies interrupt policy, not the workflow graph.
 | subagent timeout | record failed task, retry within policy, then choose fallback or partial |
 | malformed structured output | bounded schema repair; never coerce silently |
 | model provider unavailable | preserve checkpoint and pending task; do not fabricate output |
+| artifact precondition missing | return a machine-readable gap; let DeepAgent choose the repair |
+| concurrent version conflict | reject the stale write and re-read the current artifact version |
 | sandbox execution failure | persist stdout/stderr and failed trial; do not promote |
+| committed tool result lost before response | return the existing idempotent result on recovery |
+| artifact renamed before ledger commit | reconcile the prepared record and digest before retrying |
+| event and artifact metadata commit failure | expose no success; roll back or reconcile before resume |
 | protected path changed | invalidate trial and raise security finding |
 | guardrail regression | reject promotion even if primary metric improves |
 | reviewer disagreement | invoke arbiter or configured human interrupt |
@@ -520,13 +760,16 @@ Changing mode modifies interrupt policy, not the workflow graph.
 | knowledge index unavailable | continue no-RAG where permitted and record degradation |
 | stale upstream result | invalidate dependent claims, sections, reviews, and package |
 | context overflow | rely on files, subagent isolation, and native summarization/offloading |
+| repeated compaction refill | split the task or interrupt; do not compact indefinitely |
+| steering arrives during a tool | cancel when safe or revalidate the result against the new goal |
 | repeated no progress | terminate bounded loop with partial status and explicit blocker |
 
 ## 19. Observability And Audit
 
 Every material action records:
 
-- run, thread, task, subagent, and tool identifiers;
+- monotonic sequence, run, thread, task, subagent, and tool identifiers;
+- correlation, causation, and idempotency identifiers;
 - input contract and artifact digests;
 - model/provider identifiers without secrets;
 - selected skill names, versions, sources, and hashes;
@@ -536,7 +779,8 @@ Every material action records:
 - revisions, invalidations, and final disposition.
 
 Audit events are immutable and bounded. Prompts, third-party full text, credentials, and
-private reasoning are not copied into general logs.
+private reasoning are not copied into general logs. The event ledger is the source for
+run status and Web replay; UI acknowledgements and legacy stage projections are not.
 
 ## 20. Compatibility And Migration
 
@@ -544,15 +788,20 @@ Migration is incremental behind a runtime option such as
 `deepagent_native_runtime=True`.
 
 1. Characterize and freeze current public API, event, and artifact compatibility tests.
-2. Add native contracts, backend composition, permissions, and checkpoints.
-3. Register real declarative subagents and native skills.
-4. Replace fixed stage middleware with artifact-precondition policy middleware.
-5. Add the experiment optimizer and protected evaluation ledger.
-6. Add independent review, fact checking, arbitration, and revision.
-7. Project native events into existing SSE/Web contracts and add richer views.
-8. Run old/new benchmark comparisons.
-9. Make the native runtime default only after acceptance.
-10. Remove obsolete fixed-sequence code after a compatibility window.
+2. Add `GoalEnvelope`, artifact, event, budget, steering, and context contracts.
+3. Add `ToolContract`, lifecycle hooks, idempotent execution, and completion supervision.
+4. Compose the native DeepAgent runtime with backend, permissions, checkpoints, store,
+   memory, Skills, structured output, and interrupts.
+5. Register real declarative subagents, task envelopes, and one-level delegation policy.
+6. Replace fixed stage middleware with artifact-precondition and invalidation policy.
+7. Add the experiment optimizer and protected evaluation ledger.
+8. Add independent review, fact checking, arbitration, and revision.
+9. Project committed events into existing SSE/Web contracts and add the action-oriented
+   views and steering controls.
+10. Run old/new benchmark comparisons and make the native runtime default only after
+    acceptance.
+11. Remove the fixed nine-tool sequence and legacy action-enum loop after the
+    compatibility window.
 
 No unrelated dirty files are rewritten as part of the migration.
 
@@ -561,9 +810,14 @@ No unrelated dirty files are rewritten as part of the migration.
 ### 21.1 Unit tests
 
 - contracts and serialization invariants;
+- goal, artifact, event, budget, steering, and context state invariants;
 - skill manifest and license policy;
 - backend path routing and permissions;
+- tool lifecycle, permission precedence, leases, and idempotency;
 - artifact preconditions and invalidation;
+- event replay and run-state reconstruction;
+- completion checks, continuation directives, and no-progress signatures;
+- compaction preservation and thrashing detection;
 - optimization objective and guardrail decisions;
 - protected-path digest checks;
 - review aggregation and arbitration triggers;
@@ -573,9 +827,13 @@ No unrelated dirty files are rewritten as part of the migration.
 
 - native subagent delegation is exercised, not mocked as Markdown generation;
 - independent subagents receive isolated packets and permissions;
+- native DeepAgent instances are the only cognitive next-action selectors; application
+  code never selects the next domain action;
+- subagents cannot recursively delegate in the first release;
 - todo planning can choose different legal orders;
 - SkillsMiddleware loads only selected skills;
 - checkpoints resume interrupted agent and experiment work;
+- an early completion proposal is rejected without the supervisor choosing the repair tool;
 - interrupt policy differs correctly between autopilot and manual modes;
 - RubricMiddleware revisions terminate within configured limits.
 
@@ -583,9 +841,13 @@ No unrelated dirty files are rewritten as part of the migration.
 
 - arbitrary subproblem count and dependency topology;
 - parallel independent subproblems;
+- crash recovery before and after tool-result commit without duplicate side effects;
+- concurrent write conflict and stale subagent result rejection;
 - model trial failure, recovery, and best-version promotion;
 - result changes invalidate downstream claims and sections;
 - review failure generates targeted revision and re-review;
+- pause, steer, resume, and cancel against the same run checkpoint;
+- SSE replay from `Last-Event-ID` without duplicate state transitions;
 - no-RAG fallback and pinned-RAG runs;
 - existing API, route, SSE, artifact, and package compatibility.
 
@@ -610,35 +872,65 @@ simulation, and engineering/signal types. Old and new runtimes are compared on:
 
 The redesign is accepted only when:
 
-1. The production coordinator uses native DeepAgent subagents, skills, memory, backend,
-   permissions, checkpointer, store, and structured output where applicable.
-2. The coordinator is not constrained to one fixed tool sequence.
-3. At least two independent subproblems can be delegated concurrently.
-4. The model/experiment optimizer maintains a durable ledger, enforces budgets and
+1. The production coordinator uses native DeepAgent subagents, Skills, memory, backend,
+   permissions, checkpointer, store, interrupts, and structured output where applicable.
+2. DeepAgent is the only cognitive next-action loop; no application action enum, fixed
+   tool sequence, or global stage index selects the next domain action.
+3. A completion supervisor rejects unsupported completion and returns conditions without
+   prescribing the next tool.
+4. `ArtifactGraph` and `EventLedger` can reconstruct business state independently of the
+   conversation checkpoint.
+5. At least two independent subproblems can be delegated concurrently, while first-release
+   subagents cannot recursively delegate.
+6. The model/experiment optimizer maintains a durable ledger, enforces budgets and
    guardrails, protects evaluators, resumes after interruption, and promotes only verified
    improvements.
-5. Model, experiment, and paper reviewers are real isolated subagents.
-6. Material claims resolve to evidence that is validated for content, not only existence.
-7. Review disagreement is preserved and arbitrated.
-8. Failed review can drive bounded, dependency-aware revision and re-review.
-9. Skills are native, lazily loaded, versioned, licensed, hashed, and audited.
-10. Web supports streaming subagent, experiment, review, revision, and steering events
+7. Model, experiment, and paper reviewers are real isolated subagents.
+8. Material claims resolve to evidence that is validated for content, not only existence.
+9. Review disagreement is preserved and arbitrated.
+10. Failed review can drive bounded, dependency-aware revision and re-review.
+11. Skills are native, lazily loaded, versioned, licensed, hashed, and audited.
+12. Web supports replayable streaming subagent, tool, artifact, experiment, review,
+    revision, continuation, and steering events
     without exposing private reasoning.
-11. Existing public routes and required artifact paths remain compatible during migration.
-12. Full tests and unseen-problem evaluations show no regression in workflow completion
+13. A single tool completion cannot complete unrelated actions or the whole run.
+14. Pause, correction, and resume operate on the same checkpoint and business ledger.
+15. Existing public routes and required artifact paths remain compatible during migration.
+16. Full tests and unseen-problem evaluations show no regression in workflow completion
     and measurable improvement in evidence-grounded paper quality.
-13. Pilot knowledge sources pass both rights and usefulness gates before indexing.
-14. Production index publication remains an explicit, audited action.
+17. Pilot knowledge sources pass both rights and usefulness gates before indexing.
+18. Production index publication remains an explicit, audited action.
 
 ## 23. Implementation Sequence
 
 The implementation plan should split this design into independently testable milestones:
 
-1. Native runtime foundation and compatibility characterization.
-2. Backend, permissions, checkpoint, store, and artifact preconditions.
-3. Declarative subagents, native Skills, and structured contracts.
-4. AutoSOTA-inspired experiment optimization.
-5. Independent review, fact checking, arbitration, and revision.
-6. Web event projection, review workspace, and steering.
-7. Knowledge relevance admission and Milestone 30 continuation.
-8. Benchmark comparison, native-default cutover, and obsolete-path removal.
+1. Compatibility characterization and native-loop test harness.
+2. Goal, artifact, event, budget, steering, and context ledgers.
+3. Tool contracts, policy hooks, idempotency, and completion supervision.
+4. Native DeepAgent composition, context management, and recovery.
+5. Declarative subagents, task envelopes, native Skills, and model routing.
+6. Artifact-driven mathematical-modeling goal graph.
+7. AutoSOTA-inspired experiment optimization.
+8. Independent review, fact checking, arbitration, and revision.
+9. Web event projection, review workspace, conversation steering, and compatibility.
+10. Knowledge relevance admission, benchmarks, native-default cutover, and obsolete-path
+    removal.
+
+## 24. Public Design Basis
+
+The Claude Code influence in this design is limited to publicly documented behavior and
+general agent-harness patterns. No leaked source or proprietary prompt is an input.
+
+- [How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works): blended
+  gather-context, take-action, verify-results loop; tool observations; steering; context
+  compaction; checkpoints and permissions.
+- [Best practices for Claude Code](https://code.claude.com/docs/en/best-practices):
+  executable verification, deterministic stop checks, fresh-context review, and bounded
+  unattended work.
+- [Create custom subagents](https://code.claude.com/docs/en/sub-agents): isolated context,
+  scoped tools and permissions, structured delegation, and work isolation.
+- [Checkpointing](https://code.claude.com/docs/en/checkpointing): reversible local edits,
+  session resume, and the boundary between local snapshots and external side effects.
+- [Permissions](https://code.claude.com/docs/en/permissions): deny-first rules, runtime
+  hooks, workspace scope, and sandbox layering.
